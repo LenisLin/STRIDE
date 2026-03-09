@@ -1,5 +1,5 @@
 """
-Module: tasks.benchmark_A.arm3_uq_stress
+Module: tasks.task_A.arm3_uq_stress
 """
 import copy
 import pandas as pd

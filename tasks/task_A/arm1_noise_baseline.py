@@ -1,5 +1,5 @@
 """
-Module: tasks.benchmark_A.arm1_noise_baseline
+Module: tasks.task_A.arm1_noise_baseline
 """
 import pandas as pd
 from typing import Dict, Any, Sequence

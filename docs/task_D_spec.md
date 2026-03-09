@@ -1,10 +1,10 @@
-# Benchmark D Proposal v1.0
+# Task D Proposal v1.0
 
 ## Cross-modality vignette on ST Visium: Primary → Liver Metastasis (PDAC)
 
 ### Role in the evidence chain (pre-registered)
 
-Benchmark D is a **cross-modality generalization vignette** (placed at the end of the paper / Box or Supplementary). Its goal is to demonstrate that SLOTAR’s **measure alignment abstraction** can be instantiated on spatial transcriptomics (Visium) and applied to **disease progression** (primary→metastasis), without claiming causal treatment effects or making strong cross-organ calibration assumptions.
+Task D is a **cross-modality generalization vignette** (placed at the end of the paper / Box or Supplementary). Its goal is to demonstrate that SLOTAR’s **measure alignment abstraction** can be instantiated on spatial transcriptomics (Visium) and applied to **disease progression** (primary→metastasis), without claiming causal treatment effects or making strong cross-organ calibration assumptions.
 All cohort-level inferential claims are minimal; primary outputs emphasize **runability, auditability, remapping, and sensitivity to regularization**.
 
 ---

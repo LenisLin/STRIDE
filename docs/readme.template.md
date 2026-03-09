@@ -20,9 +20,9 @@ AVCP (Agentic Version Control Protocol) is a practical operating model for build
 
 ```text
 prompts/                 # pinned system prompt
-config/                  # runtime configuration source-of-truth
+config/                  # task-layer config templates / examples
 docs/                    # memory, constraints, decisions, contracts
-src/avcp_template/       # installable package
+src/slotar/              # installable package
 scripts/dev/             # README/changelog maintenance tooling
 tests/                   # verification suite
 ```
@@ -40,11 +40,12 @@ tests/                   # verification suite
   - `docs/avcp_guidelines.md`
 
 ### 2) Configuration contract
-- Runtime paths/parameters must come from `config/config.yaml`.
+- The repository may provide config templates, but concrete config reading and interpretation must happen in `tasks/task_*/`.
+- `src/slotar/` only accepts explicit parameters and does not parse yaml/config.
 - Hardcoded paths are contract violations.
 
 ### 3) Data handoff contract
-- Use `src/avcp_template/io/bridge.py::save_for_r()` for Python->R handoffs.
+- Use `src/slotar/io/bridge.py::save_for_r()` for Python->R handoffs.
 - Require explicit primary key + `<stem>_meta.json` sidecar.
 
 ### 4) Documentation contract
@@ -144,7 +145,7 @@ No large refactor in this step.
 
 Ask the agent to:
 1. scan `src/` for hardcoded paths/parameters,
-2. move them to `config/config.yaml`,
+2. move them into task-layer config templates / task entrypoints,
 3. add fail-fast validation,
 4. update `docs/api_specs.md` / `docs/data_contracts.md` if behavior/schema changes.
 
@@ -169,7 +170,7 @@ Then enforce this in CI/pre-commit.
 Migration is complete when:
 1. startup prompt is repeatable,
 2. decisions/constraints/specs are current in `docs/`,
-3. runtime config is centralized in `config/config.yaml`,
+3. runtime config is task-scoped and interpreted only in `tasks/task_*/`,
 4. output contracts are explicit and testable,
 5. CI passes lint/type/test/README checks.
 
@@ -261,4 +262,4 @@ python scripts/dev/update_changelog.py --entry "chore(docs): update guide"
 ## Repository Architecture: Library vs. Tasks
 This repository enforces a strict boundary between the algorithmic engine and clinical/experimental applications:
 1. **`src/slotar/`**: Contains pure, stateless functions for optimal transport, spatial representations, and uncertainty quantification. It knows nothing about "patients", "pCR", or "clinical cohorts".
-2. **`tasks/`**: Contains end-to-end pipelines tailored to specific benchmarks or clinical datasets. Here, domain-specific logic (e.g., Two-part GLMM inference, drift synthesis for Benchmark A, grouping definitions) is orchestrated using the primitives from `src/slotar`.
+2. **`tasks/`**: Contains end-to-end pipelines tailored to specific tasks or clinical datasets. Here, domain-specific logic (e.g., Two-part GLMM inference, drift synthesis for Task A, grouping definitions, config parsing, and runtime path decisions) is orchestrated using the primitives from `src/slotar`.

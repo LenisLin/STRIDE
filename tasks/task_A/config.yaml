@@ -1,5 +1,5 @@
-# tasks/benchmark_A/config.yaml
-task_name: "Benchmark A v2.1: Single-timepoint IMC Selection-aware Stress Test"
+# tasks/task_A/config.yaml
+task_name: "Task A v2.1: Single-timepoint IMC Selection-aware Stress Test"
 
 data:
   # 统一物理尺度约束：严格禁止在管线中混用不同的质量单位

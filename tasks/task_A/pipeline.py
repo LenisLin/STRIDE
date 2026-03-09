@@ -1,5 +1,5 @@
 """
-Module: tasks.benchmark_A.pipeline
+Module: tasks.task_A.pipeline
 """
 import yaml
 import anndata as ad
@@ -40,8 +40,8 @@ def main(config_path: str, data_path: str, output_dir: str) -> None:
     
     out_dir = Path(output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
-    df_pairs.to_parquet(out_dir / "benchmark_A_pairs.parquet")
-    df_arm3.to_parquet(out_dir / "benchmark_A_uq.parquet")
+    df_pairs.to_parquet(out_dir / "task_A_pairs.parquet")
+    df_arm3.to_parquet(out_dir / "task_A_uq.parquet")
     
     # 5. 最终统计验收
     evaluate_task_a(df_pairs, df_arm3, config)

@@ -1,13 +1,16 @@
 # AVCP Guidelines
 
 ## Bridge
-**Rule:** Any Python→R handover must be produced via `src/avcp_template/io/bridge.py::save_for_r()` unless explicitly waived in `docs/constraints.md`.
+**Rule:** Any Python→R handover must be produced via `src/slotar/io/bridge.py::save_for_r()` unless explicitly waived in `docs/constraints.md`.
 
 Output rules:
-- Location: `paths.interim_viz_dir` from `config/config.yaml` (default: `data/interim_viz`)
-- Format: `.parquet` for large, `.csv` for small
+- Location: explicitly chosen by `tasks/task_*/` and passed into the bridge
+- File name / stem: explicitly chosen by `tasks/task_*/`
+- Primary key: explicitly chosen by `tasks/task_*/`
+- Format: `.parquet` for large, `.csv` for small, explicitly chosen by `tasks/task_*/`
 - Sidecar: always generate `<stem>_meta.json` with `file`, `primary_key`, `columns`, `provenance`
 - No implicit index: always have an explicit primary key column
+- `src/slotar/` only receives explicit arguments; it does not parse yaml/config to discover output directories, file names, or export mode.
 
 ## Git and SemVer
 SemVer applies to release artifacts (repo-level or component-level), not individual files.
@@ -38,7 +41,7 @@ All new or modified executable scripts under `scripts/` must include this header
 # Side Effects:
 #   - <created/modified paths>
 # Config Dependencies:
-#   - config/config.yaml::<key.path>
+#   - task-layer config template / CLI args::<key.path or arg>
 # Execution:
 #   - python <script> [args]
 # Failure Modes:
@@ -48,7 +51,8 @@ All new or modified executable scripts under `scripts/` must include this header
 
 Rules:
 - Keep it synchronized with actual script behavior in the same patch.
-- Do not hardcode absolute paths; reference `config/config.yaml` keys.
+- Repository-level config templates are allowed, but they are task-layer instantiation references only.
+- Do not hardcode absolute paths; reference task-layer config keys or explicit runtime arguments.
 - If a field is not applicable, write `N/A` explicitly.
 
 ## 4.2 AI Role Positioning: Objectivity and Evidence

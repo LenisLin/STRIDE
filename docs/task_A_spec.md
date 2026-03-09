@@ -1,4 +1,4 @@
-# Benchmark A Specification (v1.1 Locked)
+# Task A Specification (v1.1 Locked)
 **Title:** Single-timepoint IMC Selection-aware Stress Test
 
 ## 1. Global Constraints
@@ -25,4 +25,4 @@
 - **Constraint**: The drift vector passed to the alignment module must be the injected ground truth $\delta$ mapped through the robust scaler, NOT estimated from sparse anchors.
 
 ## 3. Required Outputs
-- `benchmark_A_metrics.parquet`: Contains `arm`, `k_bias`/`coverage`/`drift`, $U$, $M$, $R$, $\log\_scale$, CI width, drift_aligned_ratio.
+- `task_A_metrics.parquet`: Contains `arm`, `k_bias`/`coverage`/`drift`, $U$, $M$, $R$, $\log\_scale$, CI width, drift_aligned_ratio.

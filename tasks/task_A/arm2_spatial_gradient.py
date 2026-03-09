@@ -1,5 +1,5 @@
 """
-Module: tasks.benchmark_A.arm2_spatial_gradient
+Module: tasks.task_A.arm2_spatial_gradient
 """
 import numpy as np
 import pandas as pd
