@@ -12,6 +12,6 @@
 - **Data**: Main multi-ROI Gastric Cancer IMC (pCR vs NR) + External site replication.
 - **Purpose**: Provide mechanism-level attribution (RTB/AB remapping) and demonstrate the tool's indispensability in handling severe asymmetric sampling and compartmental structural zeros.
 
-## 4. Task D (Optional Vignette): Cross-modality Generalization
-- **Data**: Public PDAC Spatial Transcriptomics (Primary -> Metastasis).
-- **Purpose**: Prove the mathematical abstraction of "measure alignment" is independent of protein panels and treatment interventions.
+## 4. Task D: Public External Validation / Extensibility Task
+- **Data**: Public PDAC Visium spatial transcriptomics (Primary -> Liver Metastasis).
+- **Purpose**: Provide a bounded public-dataset external validation and extensibility test for SLOTAR outside the main IMC setting, supporting spatial transcriptomics applicability, metastasis-scenario transfer, and cross-scenario / cross-modality framework extension without overstating biological discovery claims.

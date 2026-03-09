@@ -1,22 +1,24 @@
 # Project State
 
-- Stage: Contract and task-scaffold stabilization
-- Current Focus: Document and naming consistency alignment only; no new method design, no implementation expansion, no test back-compat workarounds
+- Stage: Task-spec stabilization and validation planning
 - Current Repo Status:
-  - `src/slotar/` already exists as the benchmark-agnostic library boundary
-  - task-side pipeline skeletons already exist in `tasks/`
-  - Python is the structured-output producer (`.csv` / parquet), and R remains the visualization side
-- Current Naming Status:
-  - active scaffold renamed to `tasks/task_A`
-  - concrete task naming is being aligned away from legacy benchmark-based labels where they referred to specific task directories or task labels
+  - the repository surface has already migrated to `task_*` naming
+  - `docs/task_A_spec.md` through `docs/task_D_spec.md` already exist
+  - `src/slotar/` is the benchmark-agnostic / task-agnostic library boundary
+  - Python remains the structured-output producer (`.csv` / parquet), and R remains the visualization side
+- Task Scaffold Status:
+  - `tasks/task_A` is the only populated task scaffold
+  - `tasks/task_B`, `tasks/task_C`, and `tasks/task_D` currently exist as placeholders only
 - Configuration Boundary:
   - the repository may ship config templates for task instantiation
   - actual config reading, interpretation, and path resolution must happen only in `tasks/task_*/`
   - `src/slotar/` receives explicit parameters only
-- Current Planning Boundary:
-  - the project has not entered Task C definition yet
-  - this patch does not define Task C
-- Non-Goals for This Patch:
-  - no changes to mathematical contracts
-  - no new library/task implementation
-  - no test rewrites
+- Current Priority:
+  - finalize Task D as a public-dataset external validation / extensibility protocol
+  - keep Task D scoped to auditable framework transfer claims on public Visium metastasis data
+- Current Non-Priority:
+  - the project is no longer in an early naming-alignment-only phase
+  - Task C is not the active focus of the current patch
+- Next Milestone:
+  - finalize the Task D protocol
+  - then decide whether to materialize a real `tasks/task_D` scaffold beyond the current placeholder
