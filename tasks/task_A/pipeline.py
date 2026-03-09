@@ -18,7 +18,12 @@ def main(config_path: str, data_path: str, output_dir: str) -> None:
         config = yaml.safe_load(f)
         
     adata = ad.read_h5ad(data_path)
-    validate_adata_inputs(adata, require_representation=True, require_cost_scale=True)
+    validate_adata_inputs(
+        adata,
+        require_representation=True,
+        require_cost_scale=True,
+        require_cost_matrix=True,
+    )
     
     # 2. 组装全局 UOT 配置 (传递给各 Arm)
     uot_cfg = UOTSolveConfig(
