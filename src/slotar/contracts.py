@@ -75,6 +75,7 @@ def validate_adata_inputs(
     require_representation: bool = False,
     require_prototypes: bool = False,
     require_cost_scale: bool = False,
+    require_cost_matrix: bool = False,
 ) -> None:
     """
     Validates AnnData against SLOTAR data_contracts.
@@ -118,6 +119,21 @@ def validate_adata_inputs(
                 f"adata.uns: missing cost scale key (expected '{CANONICAL_COST_SCALE_KEY}' "
                 f"or aliases {list(COST_SCALE_ALIASES)})"
             )
+
+    if require_cost_matrix:
+        if "cost_matrix" not in adata.uns:
+            raise DataContractError("adata.uns: missing required key 'cost_matrix'")
+        try:
+            cost_matrix = np.asarray(adata.uns["cost_matrix"], dtype=float)
+        except (TypeError, ValueError) as exc:
+            raise DataContractError("adata.uns['cost_matrix'] must be numeric / array-like") from exc
+
+        if cost_matrix.ndim != 2:
+            raise DataContractError("adata.uns['cost_matrix'] must be 2D")
+        if cost_matrix.shape[0] != cost_matrix.shape[1]:
+            raise DataContractError("adata.uns['cost_matrix'] must be square")
+        if not np.isfinite(cost_matrix).all():
+            raise DataContractError("adata.uns['cost_matrix'] contains NaN/Inf")
 
 
 def validate_uot_inputs(
