@@ -1,4 +1,4 @@
-# Benchmark C Specification (Gastric Cancer Main & E1/E2 Replication)
+# Task C Specification (Gastric Cancer Main & E1/E2 Replication)
 **Version:** v3.0 (Final Locked)
 
 ## 1. Evidence Tiers & Cohorts
