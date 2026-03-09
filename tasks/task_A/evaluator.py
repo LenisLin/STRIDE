@@ -1,5 +1,5 @@
 """
-Module: tasks.benchmark_A.evaluator
+Module: tasks.task_A.evaluator
 """
 import pandas as pd
 from typing import Dict, Any
@@ -25,7 +25,7 @@ def evaluate_task_a(df_pairs: pd.DataFrame, df_uq: pd.DataFrame, config: Dict[st
     # 4. Arm A3 UQ 诚实度与消融检验
     _assert_uq_honesty_and_ablation(df_uq)
     
-    print(">>> Benchmark A v2.1 全数理验证通过 <<<")
+    print(">>> Task A v2.1 全数理验证通过 <<<")
 
 def _assert_spatial_gradient(df: pd.DataFrame) -> None:
     # 聚合到患者层级
