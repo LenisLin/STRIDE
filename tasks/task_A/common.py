@@ -1,5 +1,5 @@
 """
-Module: tasks.benchmark_A.common
+Module: tasks.task_A.common
 """
 from typing import Sequence, Tuple, Dict, Any
 import numpy as np
