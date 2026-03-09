@@ -1,24 +1,28 @@
 # Project State
 
-- Stage: Task-spec stabilization and validation planning
+- Stage: Final document alignment before Codex implementation
 - Current Repo Status:
   - the repository surface has already migrated to `task_*` naming
   - `docs/task_A_spec.md` through `docs/task_D_spec.md` already exist
+  - repository contract direction is already V2-oriented
   - `src/slotar/` is the benchmark-agnostic / task-agnostic library boundary
   - Python remains the structured-output producer (`.csv` / parquet), and R remains the visualization side
 - Task Scaffold Status:
   - `tasks/task_A` is the only populated task scaffold
   - `tasks/task_B`, `tasks/task_C`, and `tasks/task_D` currently exist as placeholders only
+  - implementation/scaffold completeness remains uneven across tasks
 - Configuration Boundary:
   - the repository may ship config templates for task instantiation
   - actual config reading, interpretation, and path resolution must happen only in `tasks/task_*/`
   - `src/slotar/` receives explicit parameters only
 - Current Priority:
-  - finalize Task D as a public-dataset external validation / extensibility protocol
+  - freeze cross-document consistency before local coding
   - keep Task D scoped to auditable framework transfer claims on public Visium metastasis data
-- Current Non-Priority:
-  - the project is no longer in an early naming-alignment-only phase
-  - Task C is not the active focus of the current patch
+- Constraint Alignment Status:
+  - Task A constraints: aligned
+  - Task B constraints: aligned
+  - Task D constraints: aligned
+- Deferred Work:
+  - Task C is intentionally deferred from active implementation because the private queue is not ready yet
 - Next Milestone:
-  - finalize the Task D protocol
-  - then decide whether to materialize a real `tasks/task_D` scaffold beyond the current placeholder
+  - preserve document-level consistency while local implementation catches up task by task
