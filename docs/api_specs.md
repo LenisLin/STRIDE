@@ -35,6 +35,22 @@
 3. **Task layer assembles final solver batches** as `A`, `B`, and `lambda_pl`.
 4. **Library batched UOT consumes the final `[N, K]` tensors**.
 
+### `precompute_logKernels(C: np.ndarray, eps_schedule: Sequence[float], s_C: float = 1.0) -> list[np.ndarray]`
+- **Inputs**:
+  - `C`: Cost matrix on the shared state/prototype axis.
+  - `eps_schedule`: Epsilon-scaling schedule used for batched UOT.
+  - `s_C`: Positive finite cost-scale divisor applied before kernel precomputation.
+- **Preconditions (Strict)**:
+  - `C` MUST be array-like, numeric, finite, 2D, and square.
+  - `eps_schedule` MUST be a non-empty positive 1D schedule.
+  - `s_C` MUST be finite and strictly positive.
+  - Invalid programmer-level inputs MUST raise `DataContractError`.
+- **Outputs**:
+  - `kernels`: List of precomputed log-domain kernels, one per epsilon in the schedule.
+- **Constraints**:
+  - This is the kernel-preparation step used before `batched_uot_solve(...)`.
+  - Caller responsibility for supplying `C` and `s_C` is stage-conditional: once a pipeline enters kernel precomputation / UOT execution, the shared-axis cost geometry must already be available.
+
 ### `batched_uot_solve(A: np.ndarray, B: np.ndarray, lambda_pl: np.ndarray, kernels: list, solver_config: dict) -> Tuple[dict, np.ndarray]`
 - **Inputs**: 
   - `A`, `B`: Non-negative ROI-/sample-level mass tensors of shape `[N, K]` on the shared state/prototype axis (where `N` is the batch dimension: paired ROI/sample items, lambdas, or bootstrap replicates).
