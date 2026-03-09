@@ -1,11 +1,11 @@
-# Task D Proposal v1.0
+# Task D Protocol v1.1
 
-## Cross-modality vignette on ST Visium: Primary → Liver Metastasis (PDAC)
+## Public Visium External Validation: Primary → Liver Metastasis (PDAC)
 
 ### Role in the evidence chain (pre-registered)
 
-Task D is a **cross-modality generalization vignette** (placed at the end of the paper / Box or Supplementary). Its goal is to demonstrate that SLOTAR’s **measure alignment abstraction** can be instantiated on spatial transcriptomics (Visium) and applied to **disease progression** (primary→metastasis), without claiming causal treatment effects or making strong cross-organ calibration assumptions.
-All cohort-level inferential claims are minimal; primary outputs emphasize **runability, auditability, remapping, and sensitivity to regularization**.
+Task D is a **public-dataset external validation and extensibility task**. Its goal is to demonstrate that SLOTAR’s **measure alignment abstraction** can be instantiated on spatial transcriptomics (Visium) and applied to a **public metastasis use case** (primary→liver metastasis) outside the main IMC setting, without claiming causal treatment effects or making strong cross-organ calibration assumptions.
+This task supports **framework-level cross-scenario and cross-modality transfer** with bounded cohort-level interpretation. Primary outputs emphasize **runability, auditability, remapping, and sensitivity to regularization**, not standalone biological discovery claims.
 
 ---
 
@@ -19,8 +19,10 @@ All cohort-level inferential claims are minimal; primary outputs emphasize **run
 ### D0.2 Cohort definition for this vignette
 
 * Patients: 13 PDAC patients (as per GEO description).
-* Sites: **Primary (Pri)** and **Liver metastasis (LiM)** only. Other metastatic sites are excluded for this vignette.
+* **Primary analysis cohort**: first-pass paired samples only, with `A = Pri` and `B = LiM` as the default operational mapping for the main cohort.
+* Sites: **Primary (Pri)** and **Liver metastasis (LiM)** only for the default primary analysis. Other metastatic sites are excluded from that main cohort.
 * ROI: each Visium section/sample (GSM) is treated as **one ROI**.
+* Additional samples (`Pri2/Pri3`, `C/D/E`, `PDX`) are retained only for audit, replicate sanity checks, or optional sensitivity analyses; they are not part of the default primary analysis cohort.
 
 ---
 
@@ -28,7 +30,8 @@ All cohort-level inferential claims are minimal; primary outputs emphasize **run
 
 ### D1.1 Data pairing (Primary analysis)
 
-* **Paired-only**: include only patients with ≥1 Pri ROI and ≥1 LiM ROI.
+* **Paired-only, first-pass default**: include only patients with a first-pass `A/B` pair, where `A = Pri` and `B = LiM`.
+* If either the `A` or `B` sample is missing or technically unusable, exclude that patient from the default primary analysis cohort and retain the sample only in audit outputs or optional sensitivity work.
 * **Slide matching**:
 
   * If `slide_id` is identifiable: retain only Pri–LiM pairs that are **same-slide matched**.
@@ -42,8 +45,9 @@ All cohort-level inferential claims are minimal; primary outputs emphasize **run
 
 ### D1.3 Inclusion/exclusion
 
-* Include **Pri2/Pri3** (additional primary sections) as within-patient Pri replicates for baseline/UQ if present.
-* Exclude **PDX** samples and non-liver metastases.
+* Include only first-pass `A/B` samples in the **default primary analysis cohort**.
+* Treat **Pri2/Pri3** as auxiliary primary replicates for audit, replicate sanity checks, or optional sensitivity analyses only; they are not part of the default primary analysis cohort.
+* Exclude **PDX** samples, non-liver metastases, and non-`A/B` labels from the default primary analysis cohort.
 
 ### D1.4 Grouping g
 
@@ -55,6 +59,7 @@ All cohort-level inferential claims are minimal; primary outputs emphasize **run
 * kNN = 20 (fixed)
 * K = 25 (fixed)
 * Cost scaling (s_C) fixed per dictionary.
+* The default primary path uses the minimal contract-compatible Visium representation in Section D4; any more selective representation choice remains task-scoped and sensitivity-only unless separately frozen.
 
 ---
 
@@ -134,6 +139,7 @@ This preserves the API contract (field exists) while avoiding unsupported biolog
 
 * `delta_mode="spot_density"`: derive local spot density from tissue-spot kNN radius to capture missing-spot boundary effects.
 * `p_mode="soft_comp"`: use deconvolution/module score as a soft composition proxy (explicitly labeled as proxy; not primary).
+* Deconvolution-aware, purity-aware, or tumor-restricted representation variants are acceptable as task-scoped sensitivity analyses if they still terminate in the canonical SLOTAR-ready contract; they are not the default primary representation path.
 
 ---
 
@@ -210,7 +216,7 @@ We summarize stability of:
 * top events (rank correlation across λ)
 
 **Optional reference λ (audit only, not “truth”)**
-If a patient has Pri replicates (Pri2/3), we may compute a within-patient Pri–Pri calibration curve and report a “reference λ” for audit (`calibration_mode="within_patient_pri_reference"`), without using it to make cross-organ biological claims.
+If auxiliary Pri replicates (Pri2/3) are retained for sensitivity work, we may compute a within-patient Pri–Pri calibration curve and report a “reference λ” for audit (`calibration_mode="within_patient_pri_reference"`), without using it to make cross-organ biological claims or redefining the default `A/B` main cohort.
 
 ### D7.3 τ definition (retention labeling; fixed per λ or fixed globally)
 
@@ -251,6 +257,7 @@ For ((p,t)) with ≥2 ROIs:
 
 * resample ROIs with replacement, recompute (a_{p,t}), (\bar a_{p,t}), and downstream UOT metrics across λ grid.
 * output CI and event reproducibility.
+* Whether this is estimable in practice depends on the final audited paired cohort and any explicitly enabled auxiliary-replicate sensitivity design.
 
 ### D8.2 Single-ROI (within-section) frozen block bootstrap (spot-block)
 
