@@ -1,24 +1,52 @@
 # Project State
 
-- Stage: Task-spec stabilization and validation planning
+- Stage: TaskA-Arm2 interpretation and integrated follow-up after startup implementation.
 - Current Repo Status:
-  - the repository surface has already migrated to `task_*` naming
-  - `docs/task_A_spec.md` through `docs/task_D_spec.md` already exist
-  - `src/slotar/` is the benchmark-agnostic / task-agnostic library boundary
-  - Python remains the structured-output producer (`.csv` / parquet), and R remains the visualization side
-- Task Scaffold Status:
-  - `tasks/task_A` is the only populated task scaffold
-  - `tasks/task_B`, `tasks/task_C`, and `tasks/task_D` currently exist as placeholders only
+  - `tasks/task_A` is the active task scaffold.
+  - Stage 0 is complete enough for the current Task-A track and remains closed.
+  - The current local Arm-I stage is implemented, runnable, and analyzed on the real Stage-0 artifact at `K=25`.
+  - Task-A Arm I remains documented and closed at the current local stage, not reopened.
+  - The current local Arm-II startup slice is implemented, runnable, and analyzed on the real Stage-0 artifact at `K=25`.
+- Current Task-A Arm-I status:
+  - Official Arm-I null = constrained repeated random-vs-random within-patient, same-compartment pairing on `TC / IM / PT`, with upstream `TLS` exclusion and `m=1`.
+  - Broken comparator = anchored broken-locality reference with side A preserved from the constrained slot context and side B forced to break both patient and compartment locality.
+  - Current task-fixed `lambda` / `tau` scaffolding remains assigned from `compartment_a`.
+  - Under the current local Task-A scaffold, constrained baseline versus anchored broken-locality reference shows meaningful separation on the main MRTU comparison metrics.
+  - A minority of patient-compartment groups still warrant manual review, but they do not block closing the current Arm-I stage in documentation.
+  - The current Arm-I stage is not thereby the completion of all Task A and does not finalize `lambda` / `tau` calibration.
+- Current Task-A Arm-II startup contract:
+  - arm = `A2_cross_compartment`
+  - within-patient only
+  - `k=1` only
+  - `count` mode only
+  - deterministic exhaustive ordered pairing
+  - unordered pair families = `TC-IM`, `IM-PT`, `TC-PT`
+  - ordered directions = `TC->IM`, `IM->TC`, `IM->PT`, `PT->IM`, `TC->PT`, `PT->TC`
+  - one shared `lambda_pl` per unordered pair family, jointly calibrated using both directions of that family
+  - `tau_mode="unavailable"` with `tau` / `R` left `NA` on ok rows
+  - same-pair task-layer Balanced OT comparator required via `M_balanced`
+  - direction-specific rows are retained for audit, but primary hierarchy summaries are family-level
+- Scientific interpretation boundary for startup Arm II:
+  - Arm-I null is the best-matched baseline.
+  - Current project interpretation: `IM` is treated as the interface / transition zone between `TC` and `PT` for the current local Task-A track.
+  - `TC->IM` is the current positive anchor family.
+  - `TC->PT` is the current negative anchor family.
+  - `IM->PT` remains analyzed but is currently treated as the secondary tension-check family.
+  - Balanced OT remains the required same-pair stress comparator for Arm-II. Under the current startup slice, raw `M_balanced > M` is treated as a secondary readout rather than a sole primary mechanism gate, because `M_balanced` and UOT `M` are not a like-for-like primary burden comparison in the current local implementation.
+  - The next Arm-II step is one integrated analysis-only follow-up combining family-level scalar readouts with prototype-level transport plausibility on the frozen Stage-0 representation.
 - Configuration Boundary:
   - the repository may ship config templates for task instantiation
   - actual config reading, interpretation, and path resolution must happen only in `tasks/task_*/`
   - `src/slotar/` receives explicit parameters only
 - Current Priority:
-  - finalize Task D as a public-dataset external validation / extensibility protocol
-  - keep Task D scoped to auditable framework transfer claims on public Visium metastasis data
-- Current Non-Priority:
-  - the project is no longer in an early naming-alignment-only phase
-  - Task C is not the active focus of the current patch
-- Next Milestone:
-  - finalize the Task D protocol
-  - then decide whether to materialize a real `tasks/task_D` scaffold beyond the current placeholder
+  - revise the Arm-II interpretation in local docs
+  - run the integrated analysis-only scalar + prototype follow-up on the frozen Stage-0 artifact and the existing Arm-II metrics parquet
+  - do not reopen Arm I, Stage 0, representation learning, or bridge/export work
+- Local Path Policy:
+  - project code and project docs stay in `/home/lenislin/Experiment/projects/SLOTAR`
+  - raw and project data stay in `/mnt/NAS_21T/ProjectData/SLOTAR`
+  - temporary scripts, intermediate outputs, reports, analysis products, and generated result artifacts stay in `/mnt/NAS_21T/ProjectResult/SLOTAR`
+- Deferred Work:
+  - final lambda/tau redesign/calibration beyond the Arm-II startup slice
+  - Arm III / Arm IV
+  - canonical bridge-based export compliance

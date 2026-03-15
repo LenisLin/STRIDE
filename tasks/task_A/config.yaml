@@ -1,24 +1,20 @@
-# tasks/task_A/config.yaml
-task_name: "Task A v2.1: Single-timepoint IMC Selection-aware Stress Test"
+task_name: "Task A Patch-2: Arm II cross-compartment startup slice"
+
+enabled_arms:
+  - "A2_cross_compartment"
 
 data:
-  # 统一物理尺度约束：严格禁止在管线中混用不同的质量单位
-  mass_mode: "counts"  # 可选: "counts", "density", "proportion"
+  mass_mode: "count"
   k_full: 25
 
 uot_params:
-  eps_schedule: [1.0, 0.5, 0.1, 0.05, 0.01]
-  eta_floor: 1e-12
-  tau_mode: "pi_weighted_q25"
-  tau_q: 0.25
+  eps_schedule: [1.0, 0.5, 0.1]
+  max_iter: 4000
+  tol: 1.0e-8
+  eta_floor: 1.0e-12
+  n_min_proto: 0.0
+  tau_mode: "external_fixed_by_task"
 
-baselines:
-  # 解决陷阱一：强制声明 Balanced OT 的统一物理尺度计算方式
-  balanced_mass_scale_mode: "project_B_to_A"  # 可选: "project_B_to_A", "min_mass_restore"
-  balanced_eps: 0.01
-
-arm3_uq:
-  coverage_list: [0.8, 0.4, 0.2, 0.1]
-  # 解决陷阱三：通过纯参数驱动的冻结与动态消融 (不改动底层求解器 API)
-  n_min_proto_frozen: 0.0      # 强制保留未采样特征 (Topology Frozen)
-  n_min_proto_dynamic: 1.0     # counts=1，触发引擎内部的动态裁剪 (Dynamic Pruning)
+arm2:
+  target_alpha: 0.05
+  lambda_grid: [0.05, 0.1, 0.5, 1.0, 2.0, 5.0, 10.0]
