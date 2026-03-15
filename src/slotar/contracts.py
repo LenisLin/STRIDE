@@ -8,10 +8,12 @@ Constraints:
 """
 from __future__ import annotations
 
-from typing import Any, Mapping, Sequence
+from collections.abc import Mapping, Sequence
+from typing import Any
 
 import numpy as np
 import pandas as pd
+from anndata import AnnData
 
 from .exceptions import (
     ERR_UOT_EMPTY_MASS_SOURCE,
@@ -19,11 +21,6 @@ from .exceptions import (
     ERR_UOT_EMPTY_SUPPORT,
     ERR_UOT_NUMERICAL,
 )
-
-try:
-    from anndata import AnnData
-except ImportError:  # pragma: no cover
-    AnnData = Any  # type: ignore[misc,assignment]
 
 # ---- Canonical column/field names (Locked per V2.0 conventions) ----
 REQUIRED_OBS_COLS: tuple[str, ...] = ("patient_id", "timepoint", "roi_id", "compartment")
@@ -109,16 +106,13 @@ def validate_adata_inputs(
     if not isinstance(roi_areas, Mapping):
         raise DataContractError("adata.uns['roi_areas'] must be a mapping roi_id -> area_mm2")
 
-    if require_cost_scale:
-        if CANONICAL_COST_SCALE_KEY in adata.uns:
-            pass
-        elif any(k in adata.uns for k in COST_SCALE_ALIASES):
-            pass
-        else:
-            raise DataContractError(
-                f"adata.uns: missing cost scale key (expected '{CANONICAL_COST_SCALE_KEY}' "
-                f"or aliases {list(COST_SCALE_ALIASES)})"
-            )
+    if require_cost_scale and CANONICAL_COST_SCALE_KEY not in adata.uns and not any(
+        k in adata.uns for k in COST_SCALE_ALIASES
+    ):
+        raise DataContractError(
+            f"adata.uns: missing cost scale key (expected '{CANONICAL_COST_SCALE_KEY}' "
+            f"or aliases {list(COST_SCALE_ALIASES)})"
+        )
 
     if require_cost_matrix:
         if "cost_matrix" not in adata.uns:

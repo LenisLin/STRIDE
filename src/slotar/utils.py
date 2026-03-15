@@ -8,11 +8,26 @@ from __future__ import annotations
 
 import numpy as np
 
-def compute_active_mask(
-    mass_source: np.ndarray, 
-    mass_target: np.ndarray, 
+
+def _active_mask_from_combined_mass(
+    combined_mass: np.ndarray,
     n_min_proto: float,
-    eta_floor: float = 1e-12
+) -> np.ndarray:
+    """
+    Shared semantic rule for active-support inclusion.
+
+    Accepts either a single [K] combined mass vector or a batched [N, K] combined
+    mass tensor and applies the same inclusive threshold semantics.
+    """
+    combined = np.asarray(combined_mass, dtype=float)
+    return float(n_min_proto) <= combined
+
+
+def compute_active_mask(
+    mass_source: np.ndarray,
+    mass_target: np.ndarray,
+    n_min_proto: float,
+    eta_floor: float = 1e-12,
 ) -> tuple[np.ndarray, float]:
     """
     Computes the mathematical active support mask for optimal transport, decoupling
@@ -34,14 +49,29 @@ def compute_active_mask(
            `eta_floor` padding is applied.
         3. Do NOT add `eta_floor` to the returned mask or manipulate the mass tensors here.
     """
-    raise NotImplementedError(
-        "Codex: Implement the pure mathematical active mask and mass pruned ratio logic here."
-    )
+    del eta_floor  # Numerical guards are intentionally excluded from mask semantics.
+
+    source = np.asarray(mass_source, dtype=float)
+    target = np.asarray(mass_target, dtype=float)
+    if source.shape != target.shape:
+        raise ValueError("mass_source and mass_target must have the same shape")
+
+    combined = source + target
+    active_mask = _active_mask_from_combined_mass(combined, n_min_proto)
+
+    total_mass = float(np.sum(combined, dtype=float))
+    if not np.isfinite(total_mass) or total_mass <= 0.0:
+        return active_mask, 0.0
+
+    pruned_mass = float(np.sum(combined[~active_mask], dtype=float))
+    mass_pruned_ratio = pruned_mass / total_mass
+    return active_mask, mass_pruned_ratio
+
 
 def weighted_quantile(
-    values: np.ndarray, 
-    weights: np.ndarray, 
-    q: float
+    values: np.ndarray,
+    weights: np.ndarray,
+    q: float,
 ) -> float:
     """
     Computes a weighted quantile, used for setting the retention threshold (tau).
@@ -54,6 +84,33 @@ def weighted_quantile(
     Returns:
         The interpolated weighted quantile value.
     """
-    raise NotImplementedError(
-        "Codex: Implement standard weighted quantile logic. Handle cases where sum(weights) == 0."
-    )
+    vals = np.asarray(values, dtype=float).reshape(-1)
+    wts = np.asarray(weights, dtype=float).reshape(-1)
+
+    if vals.shape != wts.shape:
+        raise ValueError("values and weights must have the same shape")
+    if not 0.0 <= q <= 1.0:
+        raise ValueError("q must lie in [0, 1]")
+
+    finite = np.isfinite(vals) & np.isfinite(wts)
+    vals = vals[finite]
+    wts = wts[finite]
+    if vals.size == 0:
+        return float(np.nan)
+    if (wts < 0.0).any():
+        raise ValueError("weights must be non-negative")
+
+    total_weight = float(np.sum(wts, dtype=float))
+    if total_weight <= 0.0:
+        return float(np.nan)
+
+    order = np.argsort(vals, kind="mergesort")
+    vals = vals[order]
+    wts = wts[order]
+
+    cumulative = np.cumsum(wts, dtype=float)
+    centers = (cumulative - 0.5 * wts) / total_weight
+
+    if vals.size == 1:
+        return float(vals[0])
+    return float(np.interp(q, centers, vals, left=vals[0], right=vals[-1]))

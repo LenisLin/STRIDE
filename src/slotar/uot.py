@@ -4,14 +4,16 @@ Architecture: Library Level (Domain-Agnostic Mathematical Engine)
 Constraints:
 - STRICTLY NO references to `tasks`, `config.yaml`, or clinical metadata.
 - Implements Batched Unbalanced Optimal Transport (Decision D005).
-- Relies on pure matrix/tensor operations to eliminate N-dimensional Python loops.
+- Solves the compacted valid batch jointly via batched masked log-domain
+  epsilon-scaling while preserving the external [N, K] tensor contract.
 """
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Sequence
 
 import numpy as np
+from scipy.special import logsumexp
 
 from .contracts import DataContractError, validate_uot_inputs
 from .exceptions import (
@@ -20,6 +22,7 @@ from .exceptions import (
     ERR_UOT_EMPTY_SUPPORT,
     ERR_UOT_NUMERICAL,
 )
+from .utils import _active_mask_from_combined_mass
 
 STATUS_OK: str = "ok"
 MICRO_METRICS: tuple[str, ...] = ("T", "D_pos", "B_pos", "d_rel", "b_rel", "M", "R", "tau")
@@ -30,6 +33,7 @@ class UOTSolveConfig:
     """
     Numerical configuration for Batched UOT solve.
     """
+
     eps_schedule: Sequence[float]
     max_iter: int = 2000
     tol: float = 1e-6
@@ -37,6 +41,16 @@ class UOTSolveConfig:
     n_min_proto: float = 0.0  # Maintained as float to support both density and count thresholds
     tau_q: float = 0.25
     tau_mode: str = "pi_weighted_q25"
+
+
+@dataclass(frozen=True)
+class _WorkingBatch:
+    row_idx: np.ndarray
+    A: np.ndarray
+    B: np.ndarray
+    mask: np.ndarray
+    lambda_pl: np.ndarray
+    tau: np.ndarray | None
 
 
 def precompute_logKernels(C: np.ndarray, eps_schedule: Sequence[float], s_C: float = 1.0) -> list[np.ndarray]:
@@ -61,8 +75,390 @@ def precompute_logKernels(C: np.ndarray, eps_schedule: Sequence[float], s_C: flo
     return [-(scaled_C / eps) for eps in eps_arr]
 
 
+def calibrate_joint_lambda(
+    A: np.ndarray,
+    B: np.ndarray,
+    lambda_grid: Sequence[float],
+    kernels: Sequence[np.ndarray],
+    cfg: UOTSolveConfig,
+    target_alpha: float = 0.05,
+) -> float:
+    """
+    Calibrate one shared lambda on a task-provided pair pool.
+
+    The current local Arm-II startup slice uses this helper to scan a fixed
+    candidate grid, solve UOT without an external tau, and choose the lambda
+    whose median unmatched ratio is closest to the task-level target.
+    """
+    A = np.asarray(A, dtype=float)
+    B = np.asarray(B, dtype=float)
+    candidates = np.asarray(tuple(lambda_grid), dtype=float)
+
+    if A.ndim != 2 or B.ndim != 2 or A.shape != B.shape:
+        raise DataContractError("A and B must be 2D arrays with the same shape")
+    if A.shape[0] == 0:
+        raise ValueError("Calibration requires at least one pair row")
+    if candidates.ndim != 1 or candidates.size == 0:
+        raise DataContractError("lambda_grid must be a non-empty 1D sequence")
+    if not np.isfinite(candidates).all() or (candidates <= 0.0).any():
+        raise DataContractError("lambda_grid values must be finite and strictly positive")
+    if not np.isfinite(target_alpha):
+        raise DataContractError("target_alpha must be finite")
+
+    best_lambda: float | None = None
+    best_error = np.inf
+
+    for candidate in candidates:
+        lambda_pl = np.full(A.shape[0], float(candidate), dtype=float)
+        metrics, status = batched_uot_solve(
+            A=A,
+            B=B,
+            lambda_pl=lambda_pl,
+            kernels=kernels,
+            cfg=cfg,
+            tau_external=None,
+        )
+        ok_mask = status == STATUS_OK
+        if not np.any(ok_mask):
+            continue
+
+        denom = (
+            metrics["T"][ok_mask]
+            + metrics["B_pos"][ok_mask]
+            + metrics["D_pos"][ok_mask]
+        )
+        unmatched_ratio = np.divide(
+            metrics["B_pos"][ok_mask] + metrics["D_pos"][ok_mask],
+            denom,
+            out=np.full_like(denom, np.nan, dtype=float),
+            where=denom > 0.0,
+        )
+        family_median = float(np.nanmedian(unmatched_ratio))
+        if not np.isfinite(family_median):
+            continue
+
+        error = abs(family_median - float(target_alpha))
+        if error < best_error:
+            best_error = error
+            best_lambda = float(candidate)
+
+    if best_lambda is None:
+        raise ValueError("No lambda candidate produced a finite calibration summary")
+    return best_lambda
+
+
 def _nan_metrics(n_items: int) -> dict[str, np.ndarray]:
     return {name: np.full(n_items, np.nan, dtype=float) for name in MICRO_METRICS}
+
+
+def _scaled_cost_from_kernel(log_kernel: np.ndarray, eps: float) -> np.ndarray:
+    return -np.asarray(log_kernel, dtype=float) * float(eps)
+
+
+def _validate_runtime_inputs(
+    *,
+    kernels: Sequence[np.ndarray],
+    cfg: UOTSolveConfig,
+    n_items: int,
+    tau_external: np.ndarray | None,
+) -> np.ndarray | None:
+    if len(kernels) != len(tuple(cfg.eps_schedule)):
+        raise DataContractError("kernels length must match cfg.eps_schedule length exactly")
+
+    if tau_external is None:
+        return None
+
+    tau_arr = np.asarray(tau_external, dtype=float)
+    if tau_arr.shape != (n_items,):
+        raise DataContractError(f"tau_external must have shape {(n_items,)}, got {tau_arr.shape}")
+    return tau_arr
+
+
+def _subset_optional(array: np.ndarray | None, keep: np.ndarray) -> np.ndarray | None:
+    if array is None:
+        return None
+    return array[keep]
+
+
+def _subset_working_batch(batch: _WorkingBatch, keep: np.ndarray) -> _WorkingBatch:
+    return _WorkingBatch(
+        row_idx=batch.row_idx[keep],
+        A=batch.A[keep],
+        B=batch.B[keep],
+        mask=batch.mask[keep],
+        lambda_pl=batch.lambda_pl[keep],
+        tau=_subset_optional(batch.tau, keep),
+    )
+
+
+def _screen_batch(
+    A: np.ndarray,
+    B: np.ndarray,
+    lambda_pl: np.ndarray,
+    cfg: UOTSolveConfig,
+    tau_external: np.ndarray | None,
+    status: np.ndarray,
+) -> _WorkingBatch | None:
+    with np.errstate(over="ignore", invalid="ignore"):
+        source_mass = np.sum(A, axis=1, dtype=float)
+        target_mass = np.sum(B, axis=1, dtype=float)
+        active_mask = _active_mask_from_combined_mass(A + B, cfg.n_min_proto)
+        active_source_mass = np.sum(np.where(active_mask, A, 0.0), axis=1, dtype=float)
+        active_target_mass = np.sum(np.where(active_mask, B, 0.0), axis=1, dtype=float)
+
+    numerical = ~np.isfinite(source_mass) | ~np.isfinite(target_mass)
+    status[numerical] = ERR_UOT_NUMERICAL
+
+    source_empty = (status == STATUS_OK) & (source_mass <= 0.0)
+    status[source_empty] = ERR_UOT_EMPTY_MASS_SOURCE
+
+    target_empty = (status == STATUS_OK) & (target_mass <= 0.0)
+    status[target_empty] = ERR_UOT_EMPTY_MASS_TARGET
+
+    active_nonfinite = (status == STATUS_OK) & (
+        ~np.isfinite(active_source_mass) | ~np.isfinite(active_target_mass)
+    )
+    status[active_nonfinite] = ERR_UOT_NUMERICAL
+
+    no_active_support = np.count_nonzero(active_mask, axis=1) == 0
+    empty_support = (status == STATUS_OK) & (
+        no_active_support | (active_source_mass <= 0.0) | (active_target_mass <= 0.0)
+    )
+    status[empty_support] = ERR_UOT_EMPTY_SUPPORT
+
+    row_idx = np.flatnonzero(status == STATUS_OK)
+    if row_idx.size == 0:
+        return None
+
+    return _WorkingBatch(
+        row_idx=row_idx,
+        A=A[row_idx],
+        B=B[row_idx],
+        mask=active_mask[row_idx],
+        lambda_pl=lambda_pl[row_idx],
+        tau=_subset_optional(tau_external, row_idx),
+    )
+
+
+def _log_mass_tensor(mass: np.ndarray, positive_mask: np.ndarray) -> np.ndarray:
+    log_mass = np.full(mass.shape, -np.inf, dtype=float)
+    with np.errstate(divide="ignore"):
+        log_mass[positive_mask] = np.log(mass[positive_mask])
+    return log_mass
+
+
+def _invalid_scaling_rows(
+    log_u: np.ndarray,
+    log_v: np.ndarray,
+    mask: np.ndarray,
+    source_positive: np.ndarray,
+    target_positive: np.ndarray,
+) -> np.ndarray:
+    bad_u = (source_positive & ~np.isfinite(log_u)) | (mask & (np.isnan(log_u) | np.isposinf(log_u)))
+    bad_v = (target_positive & ~np.isfinite(log_v)) | (mask & (np.isnan(log_v) | np.isposinf(log_v)))
+    return np.any(bad_u | bad_v, axis=1)
+
+
+def _rowwise_max_update(
+    log_u_prev: np.ndarray,
+    log_u_next: np.ndarray,
+    log_v_prev: np.ndarray,
+    log_v_next: np.ndarray,
+    source_positive: np.ndarray,
+    target_positive: np.ndarray,
+) -> np.ndarray:
+    delta_u = np.zeros(log_u_prev.shape, dtype=float)
+    delta_v = np.zeros(log_v_prev.shape, dtype=float)
+
+    valid_u = source_positive & np.isfinite(log_u_prev) & np.isfinite(log_u_next)
+    valid_v = target_positive & np.isfinite(log_v_prev) & np.isfinite(log_v_next)
+
+    delta_u[valid_u] = np.abs(log_u_next[valid_u] - log_u_prev[valid_u])
+    delta_v[valid_v] = np.abs(log_v_next[valid_v] - log_v_prev[valid_v])
+
+    return np.maximum(np.max(delta_u, axis=1), np.max(delta_v, axis=1))
+
+
+def _batched_log_sinkhorn_eps_scaling(
+    batch: _WorkingBatch,
+    kernels: Sequence[np.ndarray],
+    cfg: UOTSolveConfig,
+    status: np.ndarray,
+) -> tuple[_WorkingBatch, np.ndarray, np.ndarray, np.ndarray, float] | None:
+    source_positive = batch.mask & (batch.A > 0.0)
+    target_positive = batch.mask & (batch.B > 0.0)
+    log_a = _log_mass_tensor(batch.A, source_positive)
+    log_b = _log_mass_tensor(batch.B, target_positive)
+    log_u = np.where(batch.mask, 0.0, -np.inf)
+    log_v = np.where(batch.mask, 0.0, -np.inf)
+
+    last_log_kernel: np.ndarray | None = None
+    last_eps: float | None = None
+
+    for eps, log_kernel in zip(cfg.eps_schedule, kernels, strict=True):
+        if batch.row_idx.size == 0:
+            return None
+
+        last_eps = float(eps)
+        last_log_kernel = np.asarray(log_kernel, dtype=float)
+        theta = batch.lambda_pl[:, None] / (batch.lambda_pl[:, None] + last_eps)
+        row_delta = np.full(batch.row_idx.shape, np.inf, dtype=float)
+        converged = False
+
+        for _ in range(cfg.max_iter):
+            with np.errstate(invalid="ignore"):
+                log_kv = logsumexp(last_log_kernel[None, :, :] + log_v[:, None, :], axis=2)
+                log_u_next = theta * (log_a - log_kv)
+                log_u_next = np.where(batch.mask, log_u_next, -np.inf)
+
+                log_ktu = logsumexp(last_log_kernel.T[None, :, :] + log_u_next[:, None, :], axis=2)
+                log_v_next = theta * (log_b - log_ktu)
+                log_v_next = np.where(batch.mask, log_v_next, -np.inf)
+
+            invalid_rows = _invalid_scaling_rows(
+                log_u=log_u_next,
+                log_v=log_v_next,
+                mask=batch.mask,
+                source_positive=source_positive,
+                target_positive=target_positive,
+            )
+            if np.any(invalid_rows):
+                status[batch.row_idx[invalid_rows]] = ERR_UOT_NUMERICAL
+                keep = ~invalid_rows
+                batch = _subset_working_batch(batch, keep)
+                log_a = log_a[keep]
+                log_b = log_b[keep]
+                source_positive = source_positive[keep]
+                target_positive = target_positive[keep]
+                log_u = log_u[keep]
+                log_v = log_v[keep]
+                log_u_next = log_u_next[keep]
+                log_v_next = log_v_next[keep]
+                theta = theta[keep]
+                if batch.row_idx.size == 0:
+                    return None
+
+            row_delta = _rowwise_max_update(
+                log_u_prev=log_u,
+                log_u_next=log_u_next,
+                log_v_prev=log_v,
+                log_v_next=log_v_next,
+                source_positive=source_positive,
+                target_positive=target_positive,
+            )
+            log_u = log_u_next
+            log_v = log_v_next
+
+            if np.all(row_delta <= cfg.tol):
+                converged = True
+                break
+
+        if not converged:
+            not_converged = row_delta > cfg.tol
+            if np.any(not_converged):
+                status[batch.row_idx[not_converged]] = ERR_UOT_NUMERICAL
+                keep = ~not_converged
+                batch = _subset_working_batch(batch, keep)
+                log_a = log_a[keep]
+                log_b = log_b[keep]
+                source_positive = source_positive[keep]
+                target_positive = target_positive[keep]
+                log_u = log_u[keep]
+                log_v = log_v[keep]
+                if batch.row_idx.size == 0:
+                    return None
+
+    if last_log_kernel is None or last_eps is None or batch.row_idx.size == 0:
+        return None
+
+    return batch, log_u, log_v, last_log_kernel, last_eps
+
+
+def _extract_batched_metrics(
+    batch: _WorkingBatch,
+    log_u: np.ndarray,
+    log_v: np.ndarray,
+    last_log_kernel: np.ndarray,
+    last_eps: float,
+    status: np.ndarray,
+) -> tuple[np.ndarray, dict[str, np.ndarray]]:
+    log_pi = log_u[:, :, None] + last_log_kernel[None, :, :] + log_v[:, None, :]
+    row_shift = np.max(log_pi, axis=(1, 2))
+
+    finite_rows = np.isfinite(row_shift)
+    if not np.all(finite_rows):
+        status[batch.row_idx[~finite_rows]] = ERR_UOT_NUMERICAL
+        batch = _subset_working_batch(batch, finite_rows)
+        log_pi = log_pi[finite_rows]
+        row_shift = row_shift[finite_rows]
+        if batch.row_idx.size == 0:
+            return np.empty(0, dtype=int), _nan_metrics(0)
+
+    with np.errstate(over="ignore", under="ignore", invalid="ignore"):
+        plan_scaled = np.exp(log_pi - row_shift[:, None, None])
+        scale = np.exp(row_shift)
+
+    transport_scaled = np.sum(plan_scaled, axis=(1, 2), dtype=float)
+    pre_scaled = np.sum(plan_scaled, axis=2, dtype=float)
+    post_scaled = np.sum(plan_scaled, axis=1, dtype=float)
+    transport_mass = scale * transport_scaled
+    pre_marginal = scale[:, None] * pre_scaled
+    post_marginal = scale[:, None] * post_scaled
+
+    a_masked = np.where(batch.mask, batch.A, 0.0)
+    b_masked = np.where(batch.mask, batch.B, 0.0)
+    source_mass = np.sum(a_masked, axis=1, dtype=float)
+    target_mass = np.sum(b_masked, axis=1, dtype=float)
+    final_cost = _scaled_cost_from_kernel(last_log_kernel, last_eps)
+
+    destruction = np.sum(np.maximum(a_masked - pre_marginal, 0.0), axis=1, dtype=float)
+    creation = np.sum(np.maximum(b_masked - post_marginal, 0.0), axis=1, dtype=float)
+    d_rel = destruction / source_mass
+    b_rel = creation / target_mass
+    metric_m = np.sum(final_cost[None, :, :] * plan_scaled, axis=(1, 2), dtype=float) / transport_scaled
+
+    tau_metric = np.full(batch.row_idx.size, np.nan, dtype=float)
+    retention = np.full(batch.row_idx.size, np.nan, dtype=float)
+    if batch.tau is not None:
+        finite_tau = np.isfinite(batch.tau)
+        tau_metric[finite_tau] = batch.tau[finite_tau]
+        if np.any(finite_tau):
+            retained_mass = np.sum(
+                plan_scaled * (final_cost[None, :, :] <= batch.tau[:, None, None]),
+                axis=(1, 2),
+                dtype=float,
+            )
+            retention[finite_tau] = retained_mass[finite_tau] / transport_scaled[finite_tau]
+
+    core_finite = (
+        np.isfinite(transport_mass)
+        & (transport_mass > 0.0)
+        & np.isfinite(destruction)
+        & np.isfinite(creation)
+        & np.isfinite(d_rel)
+        & np.isfinite(b_rel)
+        & np.isfinite(metric_m)
+    )
+    tau_finite_or_missing = np.ones(batch.row_idx.size, dtype=bool)
+    if batch.tau is not None:
+        tau_finite_or_missing = ~np.isfinite(batch.tau) | np.isfinite(retention)
+
+    valid_rows = core_finite & tau_finite_or_missing
+    if not np.all(valid_rows):
+        status[batch.row_idx[~valid_rows]] = ERR_UOT_NUMERICAL
+
+    row_idx = batch.row_idx[valid_rows]
+    metrics = {
+        "T": transport_mass[valid_rows],
+        "D_pos": destruction[valid_rows],
+        "B_pos": creation[valid_rows],
+        "d_rel": d_rel[valid_rows],
+        "b_rel": b_rel[valid_rows],
+        "M": metric_m[valid_rows],
+        "R": retention[valid_rows],
+        "tau": tau_metric[valid_rows],
+    }
+    return row_idx, metrics
 
 
 def batched_uot_solve(
@@ -71,9 +467,10 @@ def batched_uot_solve(
     lambda_pl: np.ndarray,
     kernels: Sequence[np.ndarray],
     cfg: UOTSolveConfig,
+    tau_external: np.ndarray | None = None,
 ) -> tuple[dict[str, np.ndarray], np.ndarray]:
     """
-    Solves entropic unbalanced OT in a batched manner using log-domain Sinkhorn.
+    Solve entropic unbalanced OT under the batched [N, K] contract.
 
     Args:
         A: Source mass tensor of shape [N, K]. Must be non-negative.
@@ -81,6 +478,8 @@ def batched_uot_solve(
         lambda_pl: Regularization parameters of shape [N].
         kernels: List of precomputed log-kernels (-C/eps), each of shape [K, K].
         cfg: UOTSolveConfig object containing numerical parameters.
+        tau_external: Optional externally calibrated retention thresholds of shape [N].
+            If omitted, `tau` and `R` are returned as NaN for otherwise-successful rows.
 
     Returns:
         metrics: Dictionary containing output 1D tensors (e.g., 'T', 'D_pos', 'B_pos') each of shape [N].
@@ -93,113 +492,48 @@ def batched_uot_solve(
 
     A = np.asarray(A, dtype=float)
     B = np.asarray(B, dtype=float)
-    N, _ = A.shape
+    lambda_arr = np.asarray(lambda_pl, dtype=float)
+    n_items, _ = A.shape
+    tau_arr = _validate_runtime_inputs(
+        kernels=kernels,
+        cfg=cfg,
+        n_items=n_items,
+        tau_external=tau_external,
+    )
 
-    metrics = _nan_metrics(N)
-    status = np.full(N, STATUS_OK, dtype=object)
+    metrics = _nan_metrics(n_items)
+    status = np.full(n_items, STATUS_OK, dtype=object)
 
-    with np.errstate(over="ignore", invalid="ignore"):
-        source_mass = A.sum(axis=1, dtype=float)
-        target_mass = B.sum(axis=1, dtype=float)
-
-    numerical_mass = ~np.isfinite(source_mass) | ~np.isfinite(target_mass)
-    status[numerical_mass] = ERR_UOT_NUMERICAL
-
-    unresolved = ~numerical_mass
-    empty_source = unresolved & (source_mass <= 0.0)
-    status[empty_source] = ERR_UOT_EMPTY_MASS_SOURCE
-
-    empty_target = unresolved & ~empty_source & (target_mass <= 0.0)
-    status[empty_target] = ERR_UOT_EMPTY_MASS_TARGET
-
-    with np.errstate(over="ignore", invalid="ignore"):
-        active_mask = (A + B) >= float(cfg.n_min_proto)
-    support_nonempty = active_mask.any(axis=1)
-    empty_support = unresolved & ~empty_source & ~empty_target & ~support_nonempty
-    status[empty_support] = ERR_UOT_EMPTY_SUPPORT
-
-    solve_mask = status == STATUS_OK
-    if not np.any(solve_mask):
+    batch = _screen_batch(
+        A=A,
+        B=B,
+        lambda_pl=lambda_arr,
+        cfg=cfg,
+        tau_external=tau_arr,
+        status=status,
+    )
+    if batch is None:
         return metrics, status
 
-    A_valid = A[solve_mask]
-    B_valid = B[solve_mask]
-    active_valid = active_mask[solve_mask]
-    solve_indices = np.flatnonzero(solve_mask)
-
-    A_pruned = np.where(active_valid, A_valid, 0.0)
-    B_pruned = np.where(active_valid, B_valid, 0.0)
-    with np.errstate(over="ignore", invalid="ignore"):
-        source_pruned = A_pruned.sum(axis=1, dtype=float)
-        target_pruned = B_pruned.sum(axis=1, dtype=float)
-
-    pruned_numerical = ~np.isfinite(source_pruned) | ~np.isfinite(target_pruned)
-    if np.any(pruned_numerical):
-        status[solve_indices[pruned_numerical]] = ERR_UOT_NUMERICAL
-
-    pruned_empty = (source_pruned <= 0.0) | (target_pruned <= 0.0)
-    if np.any(pruned_empty):
-        status[solve_indices[pruned_empty]] = ERR_UOT_EMPTY_SUPPORT
-
-    solve_mask = status == STATUS_OK
-    if not np.any(solve_mask):
+    solve_state = _batched_log_sinkhorn_eps_scaling(
+        batch=batch,
+        kernels=kernels,
+        cfg=cfg,
+        status=status,
+    )
+    if solve_state is None:
         return metrics, status
 
-    A_core = A[solve_mask]
-    B_core = B[solve_mask]
-    active_core = active_mask[solve_mask]
-    core_indices = np.flatnonzero(solve_mask)
-
-    with np.errstate(over="ignore", invalid="ignore", divide="ignore"):
-        source_core = A_core.sum(axis=1, dtype=float)
-        target_core = B_core.sum(axis=1, dtype=float)
-        delta = target_core - source_core
-
-        T = np.abs(delta)
-        D_pos = np.maximum(delta, 0.0)
-        B_pos = np.maximum(-delta, 0.0)
-        d_rel = np.divide(
-            D_pos,
-            target_core,
-            out=np.full_like(D_pos, np.nan, dtype=float),
-            where=target_core > 0.0,
-        )
-        b_rel = np.divide(
-            B_pos,
-            source_core,
-            out=np.full_like(B_pos, np.nan, dtype=float),
-            where=source_core > 0.0,
-        )
-        M = np.minimum(source_core, target_core)
-        denom = np.maximum(source_core, target_core)
-        R = np.divide(
-            M,
-            denom,
-            out=np.full_like(M, np.nan, dtype=float),
-            where=denom > 0.0,
-        )
-
-    combined_core = np.where(active_core, A_core + B_core, np.nan)
-    tau = np.full(core_indices.shape[0], np.nan, dtype=float)
-    for i in range(combined_core.shape[0]):
-        vals = combined_core[i, np.isfinite(combined_core[i])]
-        if vals.size > 0:
-            tau[i] = float(np.quantile(vals, cfg.tau_q))
-
-    core_metrics = np.column_stack((T, D_pos, B_pos, d_rel, b_rel, M, R, tau))
-    row_is_finite = np.isfinite(core_metrics).all(axis=1)
-    if np.any(~row_is_finite):
-        status[core_indices[~row_is_finite]] = ERR_UOT_NUMERICAL
-
-    if np.any(row_is_finite):
-        ok_idx = core_indices[row_is_finite]
-        metrics["T"][ok_idx] = T[row_is_finite]
-        metrics["D_pos"][ok_idx] = D_pos[row_is_finite]
-        metrics["B_pos"][ok_idx] = B_pos[row_is_finite]
-        metrics["d_rel"][ok_idx] = d_rel[row_is_finite]
-        metrics["b_rel"][ok_idx] = b_rel[row_is_finite]
-        metrics["M"][ok_idx] = M[row_is_finite]
-        metrics["R"][ok_idx] = R[row_is_finite]
-        metrics["tau"][ok_idx] = tau[row_is_finite]
+    solved_batch, log_u, log_v, last_log_kernel, last_eps = solve_state
+    row_idx, row_metrics = _extract_batched_metrics(
+        batch=solved_batch,
+        log_u=log_u,
+        log_v=log_v,
+        last_log_kernel=last_log_kernel,
+        last_eps=last_eps,
+        status=status,
+    )
+    for metric_name, values in row_metrics.items():
+        metrics[metric_name][row_idx] = values
 
     return metrics, status

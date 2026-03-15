@@ -24,10 +24,19 @@
 
 ## Module 2: UOT Engine & Calibration (`slotar.uot`)
 
-### `calibrate_lambdas(adata: AnnData, target_alpha: float = 0.05) -> Tuple[Dict, Dict]`
-- **Inputs**: Annotated `adata` with prototype counts or equivalent ROI-/sample-level masses on the shared state axis, together with task-defined baseline-compatible grouping context.
-- **Outputs**: Returns two dictionaries `{group: lambda}` for density and shape levels.
-- **Constraints**: Uses baseline-compatible task context (for example, subset/group definitions) rather than running in isolation before task metadata is defined. Calibration precedes final batch assembly, but depends on task-provided context.
+### `calibrate_joint_lambda(A: np.ndarray, B: np.ndarray, lambda_grid: Sequence[float], kernels: list[np.ndarray], cfg: UOTSolveConfig, target_alpha: float = 0.05) -> float`
+- **Inputs**:
+  - `A`, `B`: Task-assembled ROI-/sample-level mass tensors of shape `[N, K]` on the shared state/prototype axis.
+  - `lambda_grid`: Finite positive candidate grid scanned in task-defined order.
+  - `kernels`: Precomputed log-domain kernels for the inference epsilon schedule.
+  - `cfg`: `UOTSolveConfig` used for the matching batched UOT solve.
+  - `target_alpha`: Target unmatched-ratio calibration level for the current task slice.
+- **Outputs**: Returns one scalar lambda chosen for the provided task-level pair pool.
+- **Constraints**:
+  - This is the current local narrow calibration helper used by the Arm-II startup slice.
+  - It is array-based and does NOT take `AnnData` directly.
+  - Task layer defines the pair pool first, then calls the helper, then broadcasts the chosen scalar into `lambda_pl`.
+  - The current local Arm-II startup implementation calibrates one shared lambda per unordered pair family using both ordered directions in that family jointly.
 
 ### Calibration and Pairing Order
 1. **Task layer defines baseline subsets / grouping / pairing metadata**.
@@ -51,11 +60,12 @@
   - This is the kernel-preparation step used before `batched_uot_solve(...)`.
   - Caller responsibility for supplying `C` and `s_C` is stage-conditional: once a pipeline enters kernel precomputation / UOT execution, the shared-axis cost geometry must already be available.
 
-### `batched_uot_solve(A: np.ndarray, B: np.ndarray, lambda_pl: np.ndarray, kernels: list, solver_config: dict) -> Tuple[dict, np.ndarray]`
+### `batched_uot_solve(A: np.ndarray, B: np.ndarray, lambda_pl: np.ndarray, kernels: list, solver_config: dict, tau_external: Optional[np.ndarray] = None) -> Tuple[dict, np.ndarray]`
 - **Inputs**: 
   - `A`, `B`: Non-negative ROI-/sample-level mass tensors of shape `[N, K]` on the shared state/prototype axis (where `N` is the batch dimension: paired ROI/sample items, lambdas, or bootstrap replicates).
   - `lambda_pl`: Array of shape `[N]` containing the regularization parameter for each batch item.
   - `kernels`: Precomputed log-domain kernels for the $\varepsilon$-scaling schedule.
+  - `tau_external`: Optional externally supplied tau array of shape `[N]`.
 - **Preconditions (Strict)**: 
   - `validate_uot_inputs(...)` MUST run before solve logic.
   - Programmer-level contract violations MUST raise `DataContractError` (shape mismatch, negative mass, NaN/Inf, invalid `lambda_pl` shape, invalid kernel shape).
@@ -71,6 +81,7 @@
 - **Constraints**: 
   - Batch dimension `[N]` MUST be preserved; failed items are not dropped inside library code.
   - If `status_array[i] != "ok"`, all micro metrics for item `i` MUST be `NaN`.
+  - If `tau_external` is omitted, `tau` and `R` remain `NaN` on otherwise-ok rows. The current local Task-A Arm-II startup slice relies on this optional behavior with `tau_mode="unavailable"`.
 
 ## Module 3: Uncertainty Quantification (`slotar.uq`)
 
