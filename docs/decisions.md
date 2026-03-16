@@ -91,3 +91,8 @@
   3. **Identifiability Diagnostics**: The pipeline must evaluate the heterogeneity of the $\{s_i^2\}$ distribution before drawing inference claims.
   4. **Strict Zero Stratification**: Only biologically justified "True Zeros" (e.g., compartment collapse) may enter the hurdle model's zero component. Engineering failures or pruning-induced zeros must be strictly logged as `NaN` (Missing Data).
   5. **Bias-Variance Boundary**: This model absorbs sampling variance, not systemic sampling bias.
+
+## D010 — Task A Arm-III Documentation Boundary and Density-Primary Lock
+- **Context**: Task-A Arm-II startup was intentionally implemented as a count-only startup slice on the frozen Stage-0 artifact so the ordered-pair scaffold, same-pair Balanced OT comparator, and initial Arm-II interpretation could be audited before the final coverage-stress contract was locked.
+- **Decision**: Task-A Arm-III is now locked as a density-primary coverage-reduction stress test aligned to SLOTAR V1.6 area-weighted physical semantics. The execution contract lives in `docs/task_A_spec.md`; the historical rationale for the Arm-II startup slice and the Arm-III density-primary lock lives here in `docs/decisions.md`.
+- **Consequences**: The Task-A spec stays operational and non-historical, while the repo retains a concise record of why Arm-II startup remained count-only and why Arm-III now uses density as the primary mass semantics.
