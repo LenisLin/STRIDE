@@ -32,6 +32,7 @@ Do NOT pass density tensors to freeze_support_masks.
 from __future__ import annotations
 
 from collections.abc import Sequence
+import warnings
 
 import numpy as np
 import pandas as pd
@@ -410,7 +411,12 @@ def extract_prototype_event_marginals(
     df_result: pd.DataFrame,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """
-    Compute per-prototype marginal event masses via proportional allocation.
+    Deprecated compatibility fallback for proportional event allocation.
+
+    Arm-3 main execution must use exact solver-derived event tensors from
+    batched_uot_solve(...).details via run_uot_batch_with_events(...).
+    This helper is retained only for compatibility with older exploratory code
+    paths and must not be used as the primary Arm-3 event path.
 
     Allocates the row-level scalar transport/creation/destruction masses
     (T, B_pos, D_pos) across prototype dimensions using the source and target
@@ -445,6 +451,13 @@ def extract_prototype_event_marginals(
     D_k : np.ndarray, shape (N, K)
         Per-prototype destruction (death) mass.
     """
+    warnings.warn(
+        "extract_prototype_event_marginals() is deprecated; Arm-3 main execution "
+        "must use exact solver-derived event tensors instead of proportional allocation.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+
     for col in ("T", "B_pos", "D_pos", "uot_status"):
         if col not in df_result.columns:
             raise ValueError(
@@ -568,6 +581,16 @@ _ARM3_MICRO_METRICS: tuple[str, ...] = (
 )
 
 
+def _get_solver_detail(
+    details: dict[str, np.ndarray],
+    *names: str,
+) -> np.ndarray:
+    for name in names:
+        if name in details:
+            return np.asarray(details[name], dtype=float)
+    raise KeyError(f"Solver details missing required keys; tried {names}")
+
+
 def run_uot_batch_with_events(
     A: np.ndarray,
     B: np.ndarray,
@@ -576,10 +599,11 @@ def run_uot_batch_with_events(
     uot_cfg: UOTSolveConfig,
     pair_meta: pd.DataFrame,
     tau_external: np.ndarray | None = None,
+    external_support_mask: np.ndarray | None = None,
 ) -> tuple[pd.DataFrame, np.ndarray, np.ndarray, np.ndarray]:
     """
     Run the batched UOT solver ONCE and return both a scalar metrics DataFrame
-    and per-prototype event mass tensors.
+    and exact per-prototype event mass tensors.
 
     This helper directly calls slotar.uot.batched_uot_solve (bypassing
     run_uot_batch_safe in common.py) so that prototype-level event masses can
@@ -587,18 +611,13 @@ def run_uot_batch_with_events(
     twice for the same A/B tensors.
 
     Scalar DataFrame is column-compatible with common.run_uot_batch_safe.
-    Prototype event masses are computed via extract_prototype_event_marginals
-    using the locked proportional-allocation formulas:
+    Prototype event masses are taken directly from solver details:
+        T_k = exact source-side transport marginal
+        D_k = max(0, A_masked - T_k)
+        B_k = max(0, B_masked - target_transport_marginal)
 
-        T_k[i, k] = T[i]     * A[i, k] / (S_src[i] + eps)   — pi1 approximation
-        D_k[i, k] = D_pos[i] * A[i, k] / (S_src[i] + eps)   — max(0, A-pi1) approx
-        B_k[i, k] = B_pos[i] * B[i, k] / (S_tgt[i] + eps)   — max(0, B-pi2) approx
-
-    These are equivalent to the locked definitions:
-        T_k = pi1_{i,k}
-        D_k = max(0, A_{i,k} - pi1_{i,k})
-        B_k = max(0, B_{i,k} - pi2_{i,k})
-    under the proportional-allocation approximation of pi1 and pi2.
+    When `external_support_mask` is provided, it is the authoritative frozen
+    semantic support mask and is passed through to the solver unchanged.
 
     Non-ok rows receive NaN for all prototype event masses.
 
@@ -618,6 +637,10 @@ def run_uot_batch_with_events(
         Pair metadata aligned to the batch dimension.
     tau_external : np.ndarray, shape (N,) or None
         Per-row tau thresholds for retention computation.
+    external_support_mask : np.ndarray, shape (N, K) or None
+        Frozen semantic support mask, typically built from full-coverage COUNT
+        tensors via freeze_support_masks. When provided, the solver must use it
+        instead of recomputing support from the density tensors.
 
     Returns
     -------
@@ -644,17 +667,23 @@ def run_uot_batch_with_events(
         raise ValueError(
             "run_uot_batch_with_events: tau_external must have shape [N] matching pair_meta"
         )
+    if external_support_mask is not None and external_support_mask.shape != A.shape:
+        raise ValueError(
+            "run_uot_batch_with_events: external_support_mask must have shape [N, K] "
+            "matching A/B"
+        )
 
     # ------------------------------------------------------------------
     # Single solver call — no re-solve below
     # ------------------------------------------------------------------
-    solver_metrics, status = batched_uot_solve(
+    solver_metrics, details, status = batched_uot_solve(
         A=A,
         B=B,
         lambda_pl=lambda_pl,
         kernels=kernels,
         cfg=uot_cfg,
         tau_external=tau_external,
+        external_support_mask=external_support_mask,
     )
 
     # ------------------------------------------------------------------
@@ -704,13 +733,11 @@ def run_uot_batch_with_events(
     result.loc[not_ok, "U"] = np.nan
 
     # ------------------------------------------------------------------
-    # Prototype event extraction — uses already-computed scalar results;
-    # no additional solver call.
-    # Formulas (locked):
-    #   T_k[i,k] = T[i] * A[i,k] / (S_src[i] + eps)
-    #   D_k[i,k] = D_pos[i] * A[i,k] / (S_src[i] + eps)
-    #   B_k[i,k] = B_pos[i] * B[i,k] / (S_tgt[i] + eps)
+    # Exact prototype event extraction from solver details — no re-solve and
+    # no proportional reconstruction.
     # ------------------------------------------------------------------
-    T_k, B_k, D_k = extract_prototype_event_marginals(A, B, result)
+    T_k = _get_solver_detail(details, "T_k", "source_transport_marginal", "source_marginal")
+    B_k = _get_solver_detail(details, "B_k")
+    D_k = _get_solver_detail(details, "D_k")
 
     return result, T_k, B_k, D_k

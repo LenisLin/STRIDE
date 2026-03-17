@@ -16,12 +16,11 @@ This module orchestrates the 8-phase Arm-3 execution sequence:
     Phase 5 — Pseudo-ROI bootstrap                    [IMPLEMENTED]
     Phase 6 — Arm-3 inference                         [IMPLEMENTED]
     Phase 7 — Continuous retention summary            [IMPLEMENTED]
-    Phase 8 — Prototype stability and Memo            [NOT IMPLEMENTED]
+    Phase 8 — Prototype summary and descriptive memo  [IMPLEMENTED]
 
-Current tranche: Phase 0–7. The runner writes Phase 0–3 validation, Phase 4
-calibration, Phase 5–6 inference packages, and Phase 7 degradation summary to
-result_root, then stops intentionally with a NotImplementedError at the Phase 8
-boundary.
+Current tranche: Phase 0–8. The runner writes Phase 0–3 validation, Phase 4
+calibration, Phase 5–6 inference packages, Phase 7 summaries, and the Phase 8
+prototype summary / descriptive memo outputs to result_root.
 
 Design constraints:
 - Arm-3 stays entirely in the Task layer. Nothing is moved into src/slotar/.
@@ -71,9 +70,13 @@ from .arm3.inference import (
     broadcast_frozen_tau,
     compute_arm3_density_metrics,
     compute_floor_dominated_flags,
-    extract_prototype_event_marginals,
     freeze_support_masks,
     run_uot_batch_with_events,
+)
+from .arm3.output import (
+    build_arm3_memo,
+    build_prototype_stability_table,
+    write_phase8_outputs,
 )
 from .arm3.pseudo_roi import run_bootstrap_pass
 from .arm3.retention import (
@@ -131,19 +134,8 @@ _PHASE7_CONTRAST_FILENAME = "arm3_phase7_contrast_summary"          # .parquet +
 # Phase 8 output file names
 # ---------------------------------------------------------------------------
 
-_PHASE8_STABILITY_FILENAME = "arm3_phase8_prototype_stability"  # .parquet + .csv
-_PHASE8_MEMO_FILENAME = "arm3_phase8_memo.md"
 # Patch 2B: prototype contrast prep table for Phase 8
 _PHASE8_PROTO_CONTRAST_FILENAME = "arm3_phase8_prototype_contrast_prep"  # .parquet
-
-# ---------------------------------------------------------------------------
-# Locked prototype audit set (Phase 8)
-# ---------------------------------------------------------------------------
-
-_PROTOTYPE_AUDIT_LABELS: list[str] = [
-    "Mono_CD11c", "TC_EpCAM", "Macro_CD163", "UNKNOWN", "NK"
-]
-
 
 # ---------------------------------------------------------------------------
 # Public runner (Phase 0–4)
@@ -156,15 +148,13 @@ def run_arm3(
     result_root: Path | str,
 ) -> None:
     """
-    Run the Arm-3 Phase 0–7 pipeline and write validation, calibration,
-    inference packages, and the continuous retention summary.
+    Run the Arm-3 Phase 0–8 pipeline and write validation, calibration,
+    inference packages, Phase 7 summaries, and Phase 8 summary outputs.
 
     Accepts the frozen Stage-0 artifact path, task config, and an externally
     provided result root. Writes Phase 0–3 validation, Phase 4 calibration,
-    Phase 5–6 inference files, and Phase 7 degradation summary to result_root,
-    then raises NotImplementedError at the Phase 8 boundary.
-
-    Phase 8 (Prototype stability and Memo) is NOT implemented in this tranche.
+    Phase 5–6 inference files, Phase 7 summaries, and the Phase 8 prototype
+    summary / descriptive memo outputs to result_root.
 
     Parameters
     ----------
@@ -311,6 +301,7 @@ def run_arm3(
     # Build UOT config and kernels from config + frozen cost geometry
     uot_cfg = _build_uot_cfg(config)
     kernels = precompute_logKernels(cost_matrix, uot_cfg.eps_schedule, s_C=float(s_C))
+    scaled_cost_matrix = np.asarray(cost_matrix, dtype=float) / float(s_C)
 
     # Resolve lambda grid: arm3.lambda_grid → arm2.lambda_grid → error
     arm2_cfg = config.get("arm2", {})
@@ -364,6 +355,7 @@ def run_arm3(
         roi_compartment_map=roi_compartment_map,
         roi_patient_map=roi_patient_map,
         k_full=k_full,
+        scaled_cost_matrix=scaled_cost_matrix,
         frozen_lambdas=lambda_dens,
         uot_cfg=uot_cfg,
         kernels=kernels,
@@ -465,6 +457,7 @@ def run_arm3(
         uot_cfg=uot_cfg,
         pair_meta=pair_meta_anchor,
         tau_external=tau_arr,
+        external_support_mask=support_masks,
     )
     df_full = compute_arm3_density_metrics(df_full, A_full, B_full)
 
@@ -525,6 +518,7 @@ def run_arm3(
                 uot_cfg=uot_cfg,
                 pair_meta=pair_meta_anchor,
                 tau_external=tau_arr,
+                external_support_mask=support_masks,
             )
             df_rep = compute_arm3_density_metrics(df_rep, A_rep, B_rep)
 
@@ -802,13 +796,78 @@ def run_arm3(
     )
 
     # -----------------------------------------------------------------------
-    # Intentional stop — Phase 8 not implemented in this tranche
+    # Phase 8 — Prototype summary table and descriptive memo
     # -----------------------------------------------------------------------
-    raise NotImplementedError(
-        "Arm-3 Phase 8 (Prototype stability and Memo) not implemented in this tranche. "
-        "Phase 7 contrast summary and prototype contrast prep table are available at "
-        f"{_PHASE7_CONTRAST_FILENAME} and {_PHASE8_PROTO_CONTRAST_FILENAME}."
+    print("[Arm-3 Phase 8] Building prototype summary table and descriptive memo...")
+    df_phase8, _ = finalize_arm3_phase8(
+        result_root=result_root,
+        df_degradation=df_degradation,
+        df_contrast=df_contrast,
+        df_proto_contrast=df_proto_contrast,
     )
+    print(
+        f"[Arm-3 Phase 8] Outputs written "
+        f"({len(df_phase8)} prototype-by-coverage rows)."
+    )
+
+
+def finalize_arm3_phase8(
+    result_root: Path | str,
+    df_degradation: pd.DataFrame | None = None,
+    df_contrast: pd.DataFrame | None = None,
+    df_proto_contrast: pd.DataFrame | None = None,
+    calibration_record: dict[str, Any] | None = None,
+) -> tuple[pd.DataFrame, str]:
+    """
+    Finalize Phase 8 from in-memory tables or by loading existing artifacts.
+
+    This function is reusable for:
+    - the live `run_arm3(...)` path after Phase 7 / prep tables are built, and
+    - a Phase-8-only closure pass on an existing result root.
+    """
+    result_root = Path(result_root)
+
+    if df_degradation is None:
+        df_degradation = pd.read_parquet(
+            result_root / f"{_PHASE7_DEGRADATION_FILENAME}.parquet"
+        )
+    else:
+        df_degradation = df_degradation.copy()
+
+    if df_contrast is None:
+        df_contrast = pd.read_parquet(
+            result_root / f"{_PHASE7_CONTRAST_FILENAME}.parquet"
+        )
+    else:
+        df_contrast = df_contrast.copy()
+
+    if df_proto_contrast is None:
+        df_proto_contrast = pd.read_parquet(
+            result_root / f"{_PHASE8_PROTO_CONTRAST_FILENAME}.parquet"
+        )
+    else:
+        df_proto_contrast = df_proto_contrast.copy()
+
+    if calibration_record is None:
+        with open(result_root / _CALIBRATION_RECORD_FILENAME, "r", encoding="utf-8") as fh:
+            calibration_record = json.load(fh)
+    else:
+        calibration_record = dict(calibration_record)
+
+    df_prototype_stability = build_prototype_stability_table(df_proto_contrast)
+    memo_text = build_arm3_memo(
+        result_root=result_root,
+        df_degradation=df_degradation,
+        df_contrast=df_contrast,
+        df_prototype_stability=df_prototype_stability,
+        calibration_record=calibration_record,
+    )
+    write_phase8_outputs(
+        result_root=result_root,
+        df_prototype_stability=df_prototype_stability,
+        memo_text=memo_text,
+    )
+    return df_prototype_stability, memo_text
 
 
 # ---------------------------------------------------------------------------
@@ -1234,8 +1293,8 @@ def _write_phase0_3_outputs(
         "n_pairs_full": len(pair_meta_full),
         "n_pairs_anchor": len(pair_meta_anchor),
         "run_utc": datetime.now(tz=timezone.utc).isoformat(),
-        "phase_implemented": "0-3",
-        "phase_4_plus": "NOT_IMPLEMENTED",
+        "phase_implemented": "0-8",
+        "phase_4_plus": "IMPLEMENTED",
     }
     with open(result_root / _MANIFEST_FILENAME, "w", encoding="utf-8") as fh:
         json.dump(manifest, fh, indent=2)
@@ -1472,10 +1531,10 @@ def _write_phase4_outputs(
         "tau_by_compartment_calibrated": True,
         "tau_by_compartment": tau_by_compartment,
         "tau_q": tau_q,
-        "tau_calibration_rule": "pi_weighted_quantile_of_M_across_within_patient_same_compartment_pairs",
+        "tau_calibration_rule": "pi_weighted_pooled_cost_quantile_across_within_patient_same_compartment_pairs",
         "run_utc": datetime.now(tz=timezone.utc).isoformat(),
         "outputs_written": outputs_written,
-        "phase_5_plus": "NOT_IMPLEMENTED",
+        "phase_5_plus": "IMPLEMENTED",
     }
     with open(result_root / _CALIBRATION_RECORD_FILENAME, "w", encoding="utf-8") as fh:
         json.dump(record, fh, indent=2)
