@@ -1,5 +1,7 @@
 # Task A Arm-3 Script Skeleton Plan
 
+> Historical note: preserved Arm-3 planning/implementation artifact. Live methodology: `docs/task_A_spec.md`. Live API: `docs/api_specs.md`. Live current-output contracts: `docs/data_contracts.md`.
+
 ## 1. Executive Summary
 
 This document defines the script-level skeleton plan for Task A Arm-3: the density-primary coverage-reduction and UQ stress test on the frozen Stage-0 artifact. It is designed for human review before any code is written.

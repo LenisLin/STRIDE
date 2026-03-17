@@ -123,7 +123,7 @@ def run_uot_batch_safe(
     if tau_external is not None and tau_external.shape != (pair_meta.shape[0],):
         raise ValueError("tau_external must have shape [N] matching pair_meta")
 
-    solver_metrics, status = batched_uot_solve(
+    solver_metrics, _details, status = batched_uot_solve(
         A=A,
         B=B,
         lambda_pl=lambda_pl,

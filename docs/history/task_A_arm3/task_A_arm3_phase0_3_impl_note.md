@@ -1,5 +1,7 @@
 # Task A Arm-3 Phase 0–3 Implementation Note
 
+> Historical note: preserved Arm-3 planning/implementation artifact. Live methodology: `docs/task_A_spec.md`. Live API: `docs/api_specs.md`. Live current-output contracts: `docs/data_contracts.md`.
+
 **Date:** 2026-03-15
 **Branch:** chore/slotar-library-tasks
 **Status:** Phase 0–3 implemented; Phase 4+ remains NotImplementedError.

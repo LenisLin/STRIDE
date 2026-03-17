@@ -1,5 +1,7 @@
 # Task A Arm-3 Local Manifest
 
+> Historical note: preserved Arm-3 planning/implementation artifact. Live methodology: `docs/task_A_spec.md`. Live API: `docs/api_specs.md`. Live current-output contracts: `docs/data_contracts.md`.
+
 ## A. Exact local files and paths
 
 ### Operative frozen Stage-0 bundle used by current Task A

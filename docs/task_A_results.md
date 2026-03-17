@@ -4,7 +4,9 @@
 
 This document records the current local Task-A results state.
 
-Task A currently contains completed Arm-I current-stage evidence and current-stage Arm-II evidence, while Arm-III remains the next robustness step.
+Task A currently contains completed Arm-I current-stage evidence, current-stage Arm-II evidence, and a completed Arm-III Phase 0-8 engineering execution package.
+
+The present summary separates engineering execution from scientific interpretation. Arm-III Phase 0-8 is closed at the execution level, but the scientific interpretation remains partial and does not close Task A.
 
 The present summary is stage-limited and startup-slice bounded. It is not a claim of full Task-A completion.
 
@@ -69,22 +71,42 @@ The current prototype-level readout therefore supports the interpretation that U
 - Arm-I establishes the current entry condition by showing separation between locality-preserving constrained pairing and locality-breaking pairing under the present metric set.
 - Arm-II, on the current startup slice and on confirmatory `TC-IM` versus `TC-PT`, provides a biologically ordered validation layer rather than a generic OT-versus-UOT score contest.
 - The current supported Arm-II claim is that UOT provides a distinct and biologically interpretable perspective relative to same-pair Balanced OT.
-- This claim is bounded to the current startup slice, current frozen Stage-0 artifact, current patient set, and current focused outputs.
+- Arm-III tests whether key Arm-II structure remains usable under reduced coverage on the frozen Stage-0 representation.
+- The current supported Arm-III contribution is bounded to the UQ / coverage-robustness layer of Task A.
+- Under reduced coverage, the confirmatory unmatched-burden ordering remains visible; at the tissue level, `TC-PT` continues to show greater unmatched burden than `TC-IM` across the reduced coverage ladder.
+- At the patient level, reduced-coverage degradation and contrast summaries remain directionally usable rather than collapsing.
+- At the prototype level, the main signals remain trackable across coverage levels, although some prototypes weaken more clearly at 25% coverage.
+- These claims remain bounded to the current startup slice, current frozen Stage-0 artifact, current patient set, and current focused outputs.
 
 ## 8. Non-claims
 
 - This is not a claim that Arm-II is fully passed.
+- This is not a claim that Arm-III is a total scientific pass.
 - This is not a claim that Task A is complete.
 - This is not a generic claim that UOT beats Balanced OT.
 - This is not a claim of mechanism, causality, or full biological closure.
 - This is not a confirmatory claim based on `IM-PT`.
-- This is not a robustness claim under coverage reduction or drift.
+- This is not a claim that Arm-III fully revalidates every Arm-II endpoint.
+- This is not a claim that Arm-III cleanly re-establishes the current Arm-II transport-side claim in the same form.
+- This is not a claim that Task A is ready for Arm IV.
 
 ## 9. Arm-III relation
 
-Arm-III is the next robustness step. Its purpose is to test stability of the current Arm-II pattern under coverage reduction.
+- Arm I establishes the locality-sensitive entry condition.
+- Arm II establishes the current biologically ordered interpretation on the startup slice.
+- Arm III tests whether key Arm-II structure remains usable under reduced coverage.
+- Arm III currently supports the unmatched-burden / robustness side of that progression, but not full transport-side revalidation.
+- Arm IV should therefore be deferred until the current Arm-II / Arm-III transport-side endpoint-definition problem is resolved.
 
-## 10. Supporting Arm-II outputs
+## 10. Current readiness judgement
+
+The current readiness judgement is:
+
+- `INSUFFICIENT_EVIDENCE_FOR_ARM4`
+
+The key unresolved issue is a TaskA-Arm2 / Arm-3 transport-side density-definition mismatch. The current Arm-3 density-route transportability endpoint does not cleanly align with the current Arm-2 transport-side ordering at full coverage. The next scientific task is therefore to revisit this Arm-2 / Arm-3 endpoint-definition problem before moving to Arm IV.
+
+## 11. Supporting Arm-II outputs
 
 The current Arm-II evidence record is supported by the focused output package at `/mnt/NAS_21T/ProjectResult/SLOTAR/task_A/arm2_cross_compartment/analysis/focused`.
 

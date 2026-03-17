@@ -2,7 +2,9 @@ from __future__ import annotations
 
 # ruff: noqa: E402, I001
 
+import importlib.util
 import sys
+import types
 from pathlib import Path
 
 import numpy as np
@@ -13,10 +15,22 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
+if importlib.util.find_spec("anndata") is None:
+    anndata_stub = types.ModuleType("anndata")
+    anndata_stub.__spec__ = importlib.util.spec_from_loader("anndata", loader=None)
+
+    class _AnnData:  # pragma: no cover - import stub only
+        pass
+
+    anndata_stub.AnnData = _AnnData
+    sys.modules["anndata"] = anndata_stub
+
 from slotar.contracts import DataContractError
 from slotar.exceptions import ERR_UOT_EMPTY_SUPPORT
 from slotar.uot import UOTSolveConfig, batched_uot_solve, precompute_logKernels
 from slotar.utils import compute_active_mask
+
+DETAIL_NAMES = ("source_transport_marginal", "target_transport_marginal", "T_k", "D_k", "B_k")
 
 
 def _run_singletons(
@@ -26,26 +40,41 @@ def _run_singletons(
     kernels: list[np.ndarray],
     cfg: UOTSolveConfig,
     tau_external: np.ndarray | None = None,
-) -> tuple[dict[str, np.ndarray], np.ndarray]:
+    external_support_mask: np.ndarray | None = None,
+    return_plan: bool = False,
+) -> tuple[dict[str, np.ndarray], dict[str, np.ndarray], np.ndarray]:
     metric_names = ("T", "D_pos", "B_pos", "d_rel", "b_rel", "M", "R", "tau")
     metrics = {name: np.full(A.shape[0], np.nan, dtype=float) for name in metric_names}
+    details = {
+        name: np.full((A.shape[0], A.shape[1]), np.nan, dtype=float)
+        for name in DETAIL_NAMES
+    }
+    if return_plan:
+        details["Pi"] = np.full((A.shape[0], A.shape[1], A.shape[1]), np.nan, dtype=float)
     status = np.empty(A.shape[0], dtype=object)
 
     for idx in range(A.shape[0]):
         tau_arg = None if tau_external is None else tau_external[idx : idx + 1]
-        row_metrics, row_status = batched_uot_solve(
+        support_arg = None if external_support_mask is None else external_support_mask[idx : idx + 1]
+        row_metrics, row_details, row_status = batched_uot_solve(
             A=A[idx : idx + 1],
             B=B[idx : idx + 1],
             lambda_pl=lambda_pl[idx : idx + 1],
             kernels=kernels,
             cfg=cfg,
             tau_external=tau_arg,
+            external_support_mask=support_arg,
+            return_plan=return_plan,
         )
         status[idx] = row_status[0]
         for name in metric_names:
             metrics[name][idx] = row_metrics[name][0]
+        for name in DETAIL_NAMES:
+            details[name][idx] = row_details[name][0]
+        if return_plan:
+            details["Pi"][idx] = row_details["Pi"][0]
 
-    return metrics, status
+    return metrics, details, status
 
 
 def test_batched_uot_solve_lambda_affects_outputs() -> None:
@@ -56,14 +85,14 @@ def test_batched_uot_solve_lambda_affects_outputs() -> None:
     cfg = UOTSolveConfig(eps_schedule=[1.0, 0.2], max_iter=5000)
     kernels = precompute_logKernels(cost, cfg.eps_schedule)
 
-    batched_metrics, batched_status = batched_uot_solve(
+    batched_metrics, _batched_details, batched_status = batched_uot_solve(
         A=A,
         B=B,
         lambda_pl=np.array([0.05, 10.0], dtype=float),
         kernels=kernels,
         cfg=cfg,
     )
-    singleton_metrics, singleton_status = _run_singletons(
+    singleton_metrics, _singleton_details, singleton_status = _run_singletons(
         A=A,
         B=B,
         lambda_pl=np.array([0.05, 10.0], dtype=float),
@@ -88,7 +117,7 @@ def test_batched_uot_solve_omitted_tau_external_returns_nan_tau_and_r() -> None:
     cfg = UOTSolveConfig(eps_schedule=[1.0, 0.2], max_iter=5000)
     kernels = precompute_logKernels(cost, cfg.eps_schedule)
 
-    metrics, status = batched_uot_solve(
+    metrics, details, status = batched_uot_solve(
         A=A,
         B=B,
         lambda_pl=np.array([1.0], dtype=float),
@@ -101,6 +130,13 @@ def test_batched_uot_solve_omitted_tau_external_returns_nan_tau_and_r() -> None:
     assert np.isnan(metrics["R"][0])
     assert np.isfinite(metrics["T"][0])
     assert np.isfinite(metrics["M"][0])
+    assert isinstance(details, dict)
+    assert "Pi" not in details
+    assert details["source_transport_marginal"].shape == (1, 2)
+    assert details["target_transport_marginal"].shape == (1, 2)
+    assert np.isclose(np.sum(details["T_k"][0]), metrics["T"][0])
+    assert np.isclose(np.sum(details["D_k"][0]), metrics["D_pos"][0])
+    assert np.isclose(np.sum(details["B_k"][0]), metrics["B_pos"][0])
 
 
 def test_batched_uot_solve_uses_external_tau_for_retention() -> None:
@@ -111,7 +147,7 @@ def test_batched_uot_solve_uses_external_tau_for_retention() -> None:
     kernels = precompute_logKernels(cost, cfg.eps_schedule)
     lambda_pl = np.array([10.0], dtype=float)
 
-    low_tau_metrics, low_tau_status = batched_uot_solve(
+    low_tau_metrics, _low_tau_details, low_tau_status = batched_uot_solve(
         A=A,
         B=B,
         lambda_pl=lambda_pl,
@@ -119,7 +155,7 @@ def test_batched_uot_solve_uses_external_tau_for_retention() -> None:
         cfg=cfg,
         tau_external=np.array([0.0], dtype=float),
     )
-    high_tau_metrics, high_tau_status = batched_uot_solve(
+    high_tau_metrics, _high_tau_details, high_tau_status = batched_uot_solve(
         A=A,
         B=B,
         lambda_pl=lambda_pl,
@@ -167,28 +203,28 @@ def test_batched_uot_solve_eps_schedule_affects_outputs() -> None:
     coarse_kernels = precompute_logKernels(cost, coarse_cfg.eps_schedule)
     fine_kernels = precompute_logKernels(cost, fine_cfg.eps_schedule)
 
-    coarse_metrics, coarse_status = batched_uot_solve(
+    coarse_metrics, _coarse_details, coarse_status = batched_uot_solve(
         A=A,
         B=B,
         lambda_pl=lambda_pl,
         kernels=coarse_kernels,
         cfg=coarse_cfg,
     )
-    fine_metrics, fine_status = batched_uot_solve(
+    fine_metrics, _fine_details, fine_status = batched_uot_solve(
         A=A,
         B=B,
         lambda_pl=lambda_pl,
         kernels=fine_kernels,
         cfg=fine_cfg,
     )
-    coarse_singleton_metrics, coarse_singleton_status = _run_singletons(
+    coarse_singleton_metrics, _coarse_singleton_details, coarse_singleton_status = _run_singletons(
         A=A,
         B=B,
         lambda_pl=lambda_pl,
         kernels=coarse_kernels,
         cfg=coarse_cfg,
     )
-    fine_singleton_metrics, fine_singleton_status = _run_singletons(
+    fine_singleton_metrics, _fine_singleton_details, fine_singleton_status = _run_singletons(
         A=A,
         B=B,
         lambda_pl=lambda_pl,
@@ -237,7 +273,7 @@ def test_compute_active_mask_threshold_is_inclusive_and_matches_solver_screening
     active_mask, _ = compute_active_mask(A[0], B[0], cfg.n_min_proto)
     assert active_mask.tolist() == [True, True, False]
 
-    metrics, status = batched_uot_solve(
+    metrics, _details, status = batched_uot_solve(
         A=A,
         B=B,
         lambda_pl=np.ones(2, dtype=float),
@@ -281,21 +317,21 @@ def test_batched_uot_solve_active_mask_pruning_is_exercised() -> None:
     pruned_kernels = precompute_logKernels(cost, pruned_cfg.eps_schedule)
     lambda_pl = np.ones(2, dtype=float)
 
-    loose_metrics, loose_status = batched_uot_solve(
+    loose_metrics, _loose_details, loose_status = batched_uot_solve(
         A=A,
         B=B,
         lambda_pl=lambda_pl,
         kernels=loose_kernels,
         cfg=loose_cfg,
     )
-    pruned_metrics, pruned_status = batched_uot_solve(
+    pruned_metrics, _pruned_details, pruned_status = batched_uot_solve(
         A=A,
         B=B,
         lambda_pl=lambda_pl,
         kernels=pruned_kernels,
         cfg=pruned_cfg,
     )
-    pruned_singleton_metrics, pruned_singleton_status = _run_singletons(
+    pruned_singleton_metrics, _pruned_singleton_details, pruned_singleton_status = _run_singletons(
         A=A,
         B=B,
         lambda_pl=lambda_pl,
@@ -320,3 +356,136 @@ def test_batched_uot_solve_active_mask_pruning_is_exercised() -> None:
         atol=1e-8,
     )
     assert not np.isclose(loose_metrics["T"][0], pruned_metrics["T"][0])
+
+
+def test_batched_uot_solve_exact_details_and_plan_are_rowwise_consistent() -> None:
+    A = np.array(
+        [
+            [0.60, 0.40, 0.00],
+            [0.10, 0.40, 0.50],
+        ],
+        dtype=float,
+    )
+    B = np.array(
+        [
+            [0.20, 0.80, 0.00],
+            [0.30, 0.20, 0.50],
+        ],
+        dtype=float,
+    )
+    cost = np.array(
+        [
+            [0.0, 0.9, 1.8],
+            [0.9, 0.0, 0.7],
+            [1.8, 0.7, 0.0],
+        ],
+        dtype=float,
+    )
+    cfg = UOTSolveConfig(eps_schedule=[1.0, 0.2], max_iter=5000, tol=1e-8)
+    kernels = precompute_logKernels(cost, cfg.eps_schedule)
+    lambda_pl = np.array([0.8, 1.5], dtype=float)
+
+    metrics, details, status = batched_uot_solve(
+        A=A,
+        B=B,
+        lambda_pl=lambda_pl,
+        kernels=kernels,
+        cfg=cfg,
+    )
+    metrics_with_plan, details_with_plan, status_with_plan = batched_uot_solve(
+        A=A,
+        B=B,
+        lambda_pl=lambda_pl,
+        kernels=kernels,
+        cfg=cfg,
+        return_plan=True,
+    )
+
+    np.testing.assert_array_equal(status, status_with_plan)
+    np.testing.assert_allclose(metrics["T"], metrics_with_plan["T"], rtol=1e-6, atol=1e-8)
+    np.testing.assert_allclose(metrics["D_pos"], metrics_with_plan["D_pos"], rtol=1e-6, atol=1e-8)
+    np.testing.assert_allclose(metrics["B_pos"], metrics_with_plan["B_pos"], rtol=1e-6, atol=1e-8)
+    assert "Pi" not in details
+    assert details_with_plan["Pi"].shape == (2, 3, 3)
+    np.testing.assert_allclose(details["T_k"], details["source_transport_marginal"], equal_nan=True)
+
+    ok_idx = np.flatnonzero(status == "ok")
+    assert ok_idx.size == 2
+    np.testing.assert_allclose(
+        details["source_transport_marginal"][ok_idx].sum(axis=1),
+        metrics["T"][ok_idx],
+        rtol=1e-6,
+        atol=1e-8,
+    )
+    np.testing.assert_allclose(
+        details["target_transport_marginal"][ok_idx].sum(axis=1),
+        metrics["T"][ok_idx],
+        rtol=1e-6,
+        atol=1e-8,
+    )
+    np.testing.assert_allclose(
+        details["D_k"][ok_idx].sum(axis=1),
+        metrics["D_pos"][ok_idx],
+        rtol=1e-6,
+        atol=1e-8,
+    )
+    np.testing.assert_allclose(
+        details["B_k"][ok_idx].sum(axis=1),
+        metrics["B_pos"][ok_idx],
+        rtol=1e-6,
+        atol=1e-8,
+    )
+    np.testing.assert_allclose(
+        details_with_plan["Pi"][ok_idx].sum(axis=2),
+        details_with_plan["source_transport_marginal"][ok_idx],
+        rtol=1e-6,
+        atol=1e-8,
+    )
+    np.testing.assert_allclose(
+        details_with_plan["Pi"][ok_idx].sum(axis=1),
+        details_with_plan["target_transport_marginal"][ok_idx],
+        rtol=1e-6,
+        atol=1e-8,
+    )
+
+
+def test_batched_uot_solve_external_support_mask_is_authoritative() -> None:
+    A = np.array([[0.50, 0.50, 0.00]], dtype=float)
+    B = np.array([[0.50, 0.00, 0.50]], dtype=float)
+    cost = np.array(
+        [
+            [0.0, 1.0, 1.5],
+            [1.0, 0.0, 0.6],
+            [1.5, 0.6, 0.0],
+        ],
+        dtype=float,
+    )
+    cfg = UOTSolveConfig(eps_schedule=[1.0, 0.2], n_min_proto=0.0, max_iter=5000, tol=1e-8)
+    kernels = precompute_logKernels(cost, cfg.eps_schedule)
+    lambda_pl = np.array([5.0], dtype=float)
+    external_support_mask = np.array([[False, True, True]], dtype=bool)
+
+    internal_metrics, internal_details, internal_status = batched_uot_solve(
+        A=A,
+        B=B,
+        lambda_pl=lambda_pl,
+        kernels=kernels,
+        cfg=cfg,
+    )
+    external_metrics, external_details, external_status = batched_uot_solve(
+        A=A,
+        B=B,
+        lambda_pl=lambda_pl,
+        kernels=kernels,
+        cfg=cfg,
+        external_support_mask=external_support_mask,
+    )
+
+    assert internal_status[0] == "ok"
+    assert external_status[0] == "ok"
+    assert internal_details["source_transport_marginal"][0, 0] > 0.0
+    assert np.isclose(external_details["source_transport_marginal"][0, 0], 0.0)
+    assert np.isclose(external_details["target_transport_marginal"][0, 0], 0.0)
+    assert np.isclose(external_details["D_k"][0, 0], 0.0)
+    assert np.isclose(external_details["B_k"][0, 0], 0.0)
+    assert not np.isclose(internal_metrics["T"][0], external_metrics["T"][0])

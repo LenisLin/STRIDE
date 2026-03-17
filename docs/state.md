@@ -1,52 +1,26 @@
 # Project State
 
-- Stage: TaskA-Arm2 interpretation and integrated follow-up after startup implementation.
+- Stage: Tier-1 Arm-3 Phase 0-8 is landed locally; scientific interpretation consolidation is the current follow-up step.
 - Current Repo Status:
-  - `tasks/task_A` is the active task scaffold.
-  - Stage 0 is complete enough for the current Task-A track and remains closed.
-  - The current local Arm-I stage is implemented, runnable, and analyzed on the real Stage-0 artifact at `K=25`.
-  - Task-A Arm I remains documented and closed at the current local stage, not reopened.
-  - The current local Arm-II startup slice is implemented, runnable, and analyzed on the real Stage-0 artifact at `K=25`.
-- Current Task-A Arm-I status:
-  - Official Arm-I null = constrained repeated random-vs-random within-patient, same-compartment pairing on `TC / IM / PT`, with upstream `TLS` exclusion and `m=1`.
-  - Broken comparator = anchored broken-locality reference with side A preserved from the constrained slot context and side B forced to break both patient and compartment locality.
-  - Current task-fixed `lambda` / `tau` scaffolding remains assigned from `compartment_a`.
-  - Under the current local Task-A scaffold, constrained baseline versus anchored broken-locality reference shows meaningful separation on the main MRTU comparison metrics.
-  - A minority of patient-compartment groups still warrant manual review, but they do not block closing the current Arm-I stage in documentation.
-  - The current Arm-I stage is not thereby the completion of all Task A and does not finalize `lambda` / `tau` calibration.
-- Current Task-A Arm-II startup contract:
-  - arm = `A2_cross_compartment`
-  - within-patient only
-  - `k=1` only
-  - `count` mode only
-  - deterministic exhaustive ordered pairing
-  - unordered pair families = `TC-IM`, `IM-PT`, `TC-PT`
-  - ordered directions = `TC->IM`, `IM->TC`, `IM->PT`, `PT->IM`, `TC->PT`, `PT->TC`
-  - one shared `lambda_pl` per unordered pair family, jointly calibrated using both directions of that family
-  - `tau_mode="unavailable"` with `tau` / `R` left `NA` on ok rows
-  - same-pair task-layer Balanced OT comparator required via `M_balanced`
-  - direction-specific rows are retained for audit, but primary hierarchy summaries are family-level
-- Scientific interpretation boundary for startup Arm II:
-  - Arm-I null is the best-matched baseline.
-  - Current project interpretation: `IM` is treated as the interface / transition zone between `TC` and `PT` for the current local Task-A track.
-  - `TC->IM` is the current positive anchor family.
-  - `TC->PT` is the current negative anchor family.
-  - `IM->PT` remains analyzed but is currently treated as the secondary tension-check family.
-  - Balanced OT remains the required same-pair stress comparator for Arm-II. Under the current startup slice, raw `M_balanced > M` is treated as a secondary readout rather than a sole primary mechanism gate, because `M_balanced` and UOT `M` are not a like-for-like primary burden comparison in the current local implementation.
-  - The next Arm-II step is one integrated analysis-only follow-up combining family-level scalar readouts with prototype-level transport plausibility on the frozen Stage-0 representation.
-- Configuration Boundary:
-  - the repository may ship config templates for task instantiation
-  - actual config reading, interpretation, and path resolution must happen only in `tasks/task_*/`
-  - `src/slotar/` receives explicit parameters only
+  - `tasks/task_A` remains the active task scaffold.
+  - Stage 0 remains closed for the current Task-A track.
+  - Arm-I remains documented and closed at the current local stage.
+  - Arm-II startup remains implemented and analyzed on the frozen Stage-0 artifact.
+  - Arm-III Phase 0-8 is now implemented in the local task-layer runner.
+  - Arm-III engineering execution is therefore closed locally, but scientific interpretation remains open.
+- Landed Tier-1 Arm-3 facts:
+  - `src/slotar/uot.py::batched_uot_solve(...)` is now the canonical solver entrypoint and returns `(metrics, details, status)`.
+  - The frozen support-mask path is landed: full-coverage COUNT-based support masks are passed into the solver as `external_support_mask`.
+  - Arm-3 main inference now uses exact solver-derived event details rather than proportional allocation as the main path.
+  - Full-coverage calibration is frozen before bootstrap; current Arm-3 uses family-level `lambda_dens` and compartment-level `tau`.
+- Latest smoke snapshot:
+  - `lambda_dens` remained `10.0` for `TC-IM`, `IM-PT`, and `TC-PT` on the exercised subset.
+  - `tau_by_compartment` became strictly positive after the diagonal-exclusion refinement.
+  - Exact-event Phase-6 behavior and Phase-8 output finalization remained healthy on the exercised subset.
 - Current Priority:
-  - revise the Arm-II interpretation in local docs
-  - run the integrated analysis-only scalar + prototype follow-up on the frozen Stage-0 artifact and the existing Arm-II metrics parquet
-  - do not reopen Arm I, Stage 0, representation learning, or bridge/export work
-- Local Path Policy:
-  - project code and project docs stay in `/home/lenislin/Experiment/projects/SLOTAR`
-  - raw and project data stay in `/mnt/NAS_21T/ProjectData/SLOTAR`
-  - temporary scripts, intermediate outputs, reports, analysis products, and generated result artifacts stay in `/mnt/NAS_21T/ProjectResult/SLOTAR`
+  - keep the live docs aligned with the landed Arm-3 Phase 0-8 implementation and current scientific boundary
+  - resolve the current Arm-II / Arm-III transport-side endpoint-definition mismatch before any Arm-IV transition
 - Deferred Work:
-  - final lambda/tau redesign/calibration beyond the Arm-II startup slice
-  - Arm III / Arm IV
+  - downstream scientific reconciliation of the Arm-II / Arm-III transport-side density-definition mismatch
+  - Arm IV, pending stronger transport-side revalidation
   - canonical bridge-based export compliance

@@ -1,5 +1,7 @@
 # Task A Arm-3 Phase 5/6 Implementation Note
 
+> Historical note: preserved Arm-3 planning/implementation artifact. Live methodology: `docs/task_A_spec.md`. Live API: `docs/api_specs.md`. Live current-output contracts: `docs/data_contracts.md`.
+
 **Date:** 2026-03-15
 **Branch:** chore/slotar-library-tasks
 **Status:** Phase 5 and Phase 6 fully implemented. Phase 7+ remains `NotImplementedError`.
@@ -13,7 +15,7 @@
 | `tasks/task_A/arm3/pseudo_roi.py` | Full implementation of `sample_blocks_to_coverage`, `build_pseudo_roi_density`, `run_bootstrap_pass`. Added `SIDE_B_SEED_OFFSET = 1_000_000` as an explicit named constant. |
 | `tasks/task_A/arm3/inference.py` | Full implementation of `assemble_density_tensors`, `freeze_support_masks`, `broadcast_frozen_tau`, `broadcast_frozen_lambda`, `compute_arm3_density_metrics`, `compute_floor_dominated_flags`. |
 | `tasks/task_A/arm3_uq_stress.py` | Extended `run_arm3` to run Phase 5 and Phase 6. Added imports for Phase 5/6 modules. Added Phase 5/6 output filename constants. Added helper functions `_select_full_coverage_columns`, `_build_support_mask_audit`, `_build_metric_summary_anchor`, `_write_phase5_6_outputs`. Updated `NotImplementedError` boundary from Phase 5 to Phase 7. |
-| `docs/task_A_arm3_phase5_6_impl_note.md` | This note. |
+| `docs/history/task_A_arm3/task_A_arm3_phase5_6_impl_note.md` | This note. |
 
 No other files were edited. `constants.py`, `block_partition.py`, `calibrate.py`, `output.py`, `retention.py`, `arm3/__init__.py`, `pipeline.py`, `src/slotar/`, and all spec/result docs are unchanged.
 

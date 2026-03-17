@@ -1,5 +1,7 @@
 # Task A Arm-3 Phase 7/8 Interface Patch Note
 
+> Historical note: preserved Arm-3 planning/implementation artifact. Live methodology: `docs/task_A_spec.md`. Live API: `docs/api_specs.md`. Live current-output contracts: `docs/data_contracts.md`.
+
 **Date:** 2026-03-16
 **Branch:** chore/slotar-library-tasks
 **Status:** Phase 7/8 interface patch applied.  Full Phase 8 memo not implemented.

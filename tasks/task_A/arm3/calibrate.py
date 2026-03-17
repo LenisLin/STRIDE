@@ -36,6 +36,7 @@ import numpy as np
 import pandas as pd
 
 from slotar.uot import STATUS_OK, UOTSolveConfig, batched_uot_solve, calibrate_joint_lambda
+from slotar.utils import weighted_quantile
 
 
 def calibrate_lambda_dens(
@@ -147,6 +148,7 @@ def calibrate_tau_by_compartment(
     roi_compartment_map: dict[str, str],
     roi_patient_map: dict[str, str],
     k_full: int,
+    scaled_cost_matrix: np.ndarray,
     frozen_lambdas: dict[str, float],
     uot_cfg: UOTSolveConfig,
     kernels: Sequence[np.ndarray],
@@ -160,10 +162,12 @@ def calibrate_tau_by_compartment(
     - Assemble all within-patient, same-compartment ordered ROI pairs from the
       full-coverage density reference pool. Pairs are within-patient only; no
       cross-patient pooling.
-    - Run batched_uot_solve on these pairs with tau_external=None to obtain the
-      unconstrained transport plans.
-    - The Pi-weighted mean cost per pair is M_i (returned directly by the solver).
-    - Compute tau_c = quantile({M_i : status == "ok"}, tau_q).
+    - Run batched_uot_solve on these pairs with tau_external=None and
+      return_plan=True to obtain the unconstrained transport plans.
+    - Pool the scaled cost entries C_jk across all successful plans, weighted by
+      the corresponding transport masses Pi_ijk, excluding diagonal self-transport
+      entries (j == k) from the quantile support.
+    - Compute tau_c as the weighted quantile of that pooled cost distribution.
 
     tau is compartment-specific and is assigned exclusively by compartment_a in
     all downstream Arm-3 inference. No family-level tau pooling.
@@ -180,6 +184,9 @@ def calibrate_tau_by_compartment(
         Maps roi_id -> patient_id. Used to enforce within-patient pairing.
     k_full : int
         Prototype axis dimension.
+    scaled_cost_matrix : np.ndarray, shape (K, K)
+        Explicit scaled cost matrix C used for Pi-weighted pooling.
+        This must be passed directly; it is not reconstructed from kernels.
     frozen_lambdas : dict[str, float]
         Family-level lambda_dens from calibrate_lambda_dens. Lambda for
         within-compartment pairs is the mean of all three family lambdas (since
@@ -189,8 +196,8 @@ def calibrate_tau_by_compartment(
     kernels : Sequence[np.ndarray]
         Pre-computed log-kernels.
     tau_q : float
-        Quantile level applied to the per-pair M distribution. Default 0.5
-        (median). Override via config key 'arm3.tau_q'.
+        Quantile level applied to the pooled non-diagonal Pi-weighted scaled-cost
+        distribution. Default 0.5 (median). Override via config key 'arm3.tau_q'.
 
     Returns
     -------
@@ -216,6 +223,14 @@ def calibrate_tau_by_compartment(
         )
     if not frozen_lambdas:
         raise ValueError("calibrate_tau_by_compartment: frozen_lambdas is empty")
+    scaled_cost = np.asarray(scaled_cost_matrix, dtype=float)
+    if scaled_cost.shape != (k_full, k_full):
+        raise ValueError(
+            "calibrate_tau_by_compartment: scaled_cost_matrix must have shape "
+            f"{(k_full, k_full)}, got {scaled_cost.shape}"
+        )
+    if not np.isfinite(scaled_cost).all():
+        raise ValueError("calibrate_tau_by_compartment: scaled_cost_matrix contains NaN/Inf")
 
     # Lambda for within-compartment pairs: mean over all calibrated family lambdas.
     # Within-compartment pairs (TC-TC, IM-IM, PT-PT) don't map to any
@@ -258,29 +273,84 @@ def calibrate_tau_by_compartment(
         n_pairs = A.shape[0]
         lambda_pl = np.full(n_pairs, mean_lambda, dtype=float)
 
-        metrics, status = batched_uot_solve(
+        _metrics, details, status = batched_uot_solve(
             A=A,
             B=B,
             lambda_pl=lambda_pl,
             kernels=kernels,
             cfg=uot_cfg,
             tau_external=None,
+            return_plan=True,
         )
 
-        # M_i is the Pi-weighted mean cost per pair: sum_jk C_jk * Pi_jk / T.
-        # Taking the tau_q quantile of {M_i} gives tau_c.
         ok_mask = status == STATUS_OK
-        M_ok = metrics["M"][ok_mask]
-        M_finite = M_ok[np.isfinite(M_ok)]
+        ok_plan = np.asarray(details["Pi"][ok_mask], dtype=float)
+        tau_c = _weighted_plan_cost_quantile(
+            plans=ok_plan,
+            scaled_cost_matrix=scaled_cost,
+            q=tau_q,
+        )
 
-        if M_finite.size == 0:
+        if not np.isfinite(tau_c):
             raise ValueError(
                 f"calibrate_tau_by_compartment: no valid UOT solutions for "
                 f"compartment={compartment!r} reference pool "
-                f"({n_pairs} pairs attempted, 0 succeeded). Cannot calibrate tau."
+                f"({n_pairs} pairs attempted, 0 yielded a positive finite pooled plan). "
+                "Cannot calibrate tau."
             )
 
-        tau_c = float(np.quantile(M_finite, tau_q))
-        result[compartment] = tau_c
+        result[compartment] = float(tau_c)
 
     return result
+
+
+def _weighted_plan_cost_quantile(
+    plans: np.ndarray,
+    scaled_cost_matrix: np.ndarray,
+    q: float,
+) -> float:
+    """
+    Compute a pooled Pi-weighted quantile over non-diagonal scaled cost entries.
+
+    Only finite strictly-positive plan entries contribute weight, and diagonal
+    self-transport is excluded from support because tau is intended to reflect
+    nontrivial within-compartment transport cost rather than identity-preserving
+    anchor mass. This avoids materialising zero-mass entries from every dense
+    [K, K] plan when pooling.
+    """
+    plan_arr = np.asarray(plans, dtype=float)
+    cost_arr = np.asarray(scaled_cost_matrix, dtype=float)
+
+    if plan_arr.ndim != 3:
+        raise ValueError(
+            f"_weighted_plan_cost_quantile: plans must be 3D [N, K, K], got {plan_arr.shape}"
+        )
+    if cost_arr.ndim != 2 or cost_arr.shape[0] != cost_arr.shape[1]:
+        raise ValueError(
+            "_weighted_plan_cost_quantile: scaled_cost_matrix must be a square [K, K] array"
+        )
+    if plan_arr.shape[1:] != cost_arr.shape:
+        raise ValueError(
+            "_weighted_plan_cost_quantile: plan K dimensions must match scaled_cost_matrix"
+        )
+
+    flat_cost = cost_arr.reshape(-1)
+    diagonal_mask = np.eye(cost_arr.shape[0], dtype=bool).reshape(-1)
+    eligible_cost = np.isfinite(flat_cost) & (~diagonal_mask)
+    pooled_cost_chunks: list[np.ndarray] = []
+    pooled_weight_chunks: list[np.ndarray] = []
+
+    for plan_row in plan_arr:
+        flat_plan = np.asarray(plan_row, dtype=float).reshape(-1)
+        keep = np.isfinite(flat_plan) & (flat_plan > 0.0) & eligible_cost
+        if not np.any(keep):
+            continue
+        pooled_cost_chunks.append(flat_cost[keep])
+        pooled_weight_chunks.append(flat_plan[keep])
+
+    if not pooled_weight_chunks:
+        return float("nan")
+
+    pooled_costs = np.concatenate(pooled_cost_chunks)
+    pooled_weights = np.concatenate(pooled_weight_chunks)
+    return float(weighted_quantile(pooled_costs, pooled_weights, q))
