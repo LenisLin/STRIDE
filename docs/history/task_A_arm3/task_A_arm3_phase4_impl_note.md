@@ -1,5 +1,7 @@
 # Task A Arm-3 Phase 4 Implementation Note
 
+> Historical note: preserved Arm-3 planning/implementation artifact. Live methodology: `docs/task_A_spec.md`. Live API: `docs/api_specs.md`. Live current-output contracts: `docs/data_contracts.md`.
+
 **Date:** 2026-03-15
 **Branch:** chore/slotar-library-tasks
 **Status:** Phase 4 fully implemented. `lambda_dens` and `tau_by_compartment` both calibrated.
@@ -12,7 +14,7 @@
 |------|-------------|
 | `tasks/task_A/arm3/calibrate.py` | Implemented `calibrate_lambda_dens` fully. Replaced the `calibrate_tau_by_compartment` `NotImplementedError` stub with a full within-patient same-compartment Pi-weighted quantile implementation. Updated signature: removed `tau_grid`/`target_retention`; added `roi_patient_map` and `tau_q`. |
 | `tasks/task_A/arm3_uq_stress.py` | Extended `run_arm3` to run Phase 4 (Phase 0–3 tranche). Fixed grid dimension bug in `_check_block_universe_integrity` (`max+1` → range-safe `max-min+1`). Updated tau section: removed `tau_grid`/`target_retention` config reading; reads `arm3.tau_q` (default 0.5); builds `roi_patient_map` from `roi_table`; calls updated `calibrate_tau_by_compartment`; updated `_write_phase4_outputs` signature. |
-| `docs/task_A_arm3_phase4_impl_note.md` | This note. |
+| `docs/history/task_A_arm3/task_A_arm3_phase4_impl_note.md` | This note. |
 
 No other files were edited. `constants.py`, `block_partition.py`, `inference.py`, `retention.py`, `output.py`, `pseudo_roi.py`, `arm3/__init__.py`, `pipeline.py`, `src/slotar/`, and all spec/result docs are unchanged.
 

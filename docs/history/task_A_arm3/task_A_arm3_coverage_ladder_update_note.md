@@ -1,14 +1,16 @@
 # Task A Arm-3 Coverage Ladder Update Note
 
+> Historical note: preserved Arm-3 planning/implementation artifact. Live methodology: `docs/task_A_spec.md`. Live API: `docs/api_specs.md`. Live current-output contracts: `docs/data_contracts.md`.
+
 **Date:** 2026-03-16
 
 ## Files edited
 
 - `docs/task_A_spec.md`
-- `docs/task_A_arm3_script_skeleton_plan.md`
-- `docs/task_A_arm3_phase0_3_impl_note.md`
-- `docs/task_A_arm3_phase4_impl_note.md`
-- `docs/task_A_arm3_phase5_6_impl_note.md`
+- `docs/history/task_A_arm3/task_A_arm3_script_skeleton_plan.md`
+- `docs/history/task_A_arm3/task_A_arm3_phase0_3_impl_note.md`
+- `docs/history/task_A_arm3/task_A_arm3_phase4_impl_note.md`
+- `docs/history/task_A_arm3/task_A_arm3_phase5_6_impl_note.md`
 - `tasks/task_A/arm3/constants.py`
 - `tasks/task_A/arm3_uq_stress.py`
 - `tasks/task_A/arm3/pseudo_roi.py`
@@ -35,6 +37,6 @@
 ## Intentional remaining `0.10` / `10%` references
 
 - `tasks/task_A/arm3/inference.py` retains `0.10` only for the floor-dominated rule threshold.
-- `docs/task_A_arm3_phase5_6_impl_note.md` retains `0.10` / `10%` only to document that same floor-dominated rule threshold.
+- `docs/history/task_A_arm3/task_A_arm3_phase5_6_impl_note.md` retains `0.10` / `10%` only to document that same floor-dominated rule threshold.
 
 These remaining references are not Arm-3 coverage levels.
