@@ -146,8 +146,12 @@ def test_run_arm1_supplies_fixed_lambda_and_tau_arrays(monkeypatch: pytest.Monke
         kernels: list[np.ndarray],
         cfg: UOTSolveConfig,
         tau_external: np.ndarray | None = None,
-    ) -> tuple[dict[str, np.ndarray], np.ndarray]:
+        external_support_mask: np.ndarray | None = None,
+        return_plan: bool = False,
+    ) -> tuple[dict[str, np.ndarray], dict[str, np.ndarray], np.ndarray]:
         del kernels, cfg
+        assert external_support_mask is None
+        assert return_plan is False
         captured["A"] = A.copy()
         captured["B"] = B.copy()
         captured["lambda_pl"] = lambda_pl.copy()
@@ -164,7 +168,14 @@ def test_run_arm1_supplies_fixed_lambda_and_tau_arrays(monkeypatch: pytest.Monke
             "R": np.full(n_rows, 0.75, dtype=float),
             "tau": tau_external.copy(),
         }
-        return metrics, np.full(n_rows, "ok", dtype=object)
+        details = {
+            "source_transport_marginal": np.full((n_rows, A.shape[1]), 0.5, dtype=float),
+            "target_transport_marginal": np.full((n_rows, A.shape[1]), 0.5, dtype=float),
+            "T_k": np.full((n_rows, A.shape[1]), 0.5, dtype=float),
+            "D_k": np.zeros((n_rows, A.shape[1]), dtype=float),
+            "B_k": np.zeros((n_rows, A.shape[1]), dtype=float),
+        }
+        return metrics, details, np.full(n_rows, "ok", dtype=object)
 
     monkeypatch.setattr("tasks.task_A.common.batched_uot_solve", fake_batched_uot_solve)
 
@@ -223,8 +234,12 @@ def test_run_broken_reference_anchors_lambda_and_tau_to_compartment_a(
         kernels: list[np.ndarray],
         cfg: UOTSolveConfig,
         tau_external: np.ndarray | None = None,
-    ) -> tuple[dict[str, np.ndarray], np.ndarray]:
+        external_support_mask: np.ndarray | None = None,
+        return_plan: bool = False,
+    ) -> tuple[dict[str, np.ndarray], dict[str, np.ndarray], np.ndarray]:
         del kernels, cfg
+        assert external_support_mask is None
+        assert return_plan is False
         captured["A"] = A.copy()
         captured["B"] = B.copy()
         captured["lambda_pl"] = lambda_pl.copy()
@@ -241,7 +256,14 @@ def test_run_broken_reference_anchors_lambda_and_tau_to_compartment_a(
             "R": np.full(n_rows, 0.75, dtype=float),
             "tau": tau_external.copy(),
         }
-        return metrics, np.full(n_rows, "ok", dtype=object)
+        details = {
+            "source_transport_marginal": np.full((n_rows, A.shape[1]), 0.5, dtype=float),
+            "target_transport_marginal": np.full((n_rows, A.shape[1]), 0.5, dtype=float),
+            "T_k": np.full((n_rows, A.shape[1]), 0.5, dtype=float),
+            "D_k": np.zeros((n_rows, A.shape[1]), dtype=float),
+            "B_k": np.zeros((n_rows, A.shape[1]), dtype=float),
+        }
+        return metrics, details, np.full(n_rows, "ok", dtype=object)
 
     monkeypatch.setattr("tasks.task_A.common.batched_uot_solve", fake_batched_uot_solve)
 

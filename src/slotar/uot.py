@@ -110,7 +110,7 @@ def calibrate_joint_lambda(
 
     for candidate in candidates:
         lambda_pl = np.full(A.shape[0], float(candidate), dtype=float)
-        metrics, status = batched_uot_solve(
+        metrics, _details, status = batched_uot_solve(
             A=A,
             B=B,
             lambda_pl=lambda_pl,
@@ -151,8 +151,68 @@ def _nan_metrics(n_items: int) -> dict[str, np.ndarray]:
     return {name: np.full(n_items, np.nan, dtype=float) for name in MICRO_METRICS}
 
 
+def _nan_details(
+    n_items: int,
+    n_proto: int,
+    *,
+    return_plan: bool,
+) -> dict[str, np.ndarray]:
+    source_transport = np.full((n_items, n_proto), np.nan, dtype=float)
+    target_transport = np.full((n_items, n_proto), np.nan, dtype=float)
+    destruction = np.full((n_items, n_proto), np.nan, dtype=float)
+    creation = np.full((n_items, n_proto), np.nan, dtype=float)
+
+    details: dict[str, np.ndarray] = {
+        "source_transport_marginal": source_transport,
+        "target_transport_marginal": target_transport,
+        "source_marginal": source_transport,
+        "target_marginal": target_transport,
+        "T_k": source_transport,
+        "D_k": destruction,
+        "B_k": creation,
+    }
+    if return_plan:
+        plan = np.full((n_items, n_proto, n_proto), np.nan, dtype=float)
+        details["Pi"] = plan
+        details["plan"] = plan
+    return details
+
+
 def _scaled_cost_from_kernel(log_kernel: np.ndarray, eps: float) -> np.ndarray:
     return -np.asarray(log_kernel, dtype=float) * float(eps)
+
+
+def _validate_external_support_mask(
+    external_support_mask: np.ndarray | None,
+    *,
+    n_items: int,
+    n_proto: int,
+) -> np.ndarray | None:
+    if external_support_mask is None:
+        return None
+
+    mask_arr = np.asarray(external_support_mask)
+    if mask_arr.shape != (n_items, n_proto):
+        raise DataContractError(
+            "external_support_mask must have shape "
+            f"{(n_items, n_proto)}, got {mask_arr.shape}"
+        )
+
+    if mask_arr.dtype == np.bool_ or np.issubdtype(mask_arr.dtype, np.bool_):
+        return mask_arr.astype(bool, copy=False)
+
+    try:
+        numeric_mask = np.asarray(mask_arr, dtype=float)
+    except (TypeError, ValueError) as exc:
+        raise DataContractError(
+            "external_support_mask must have boolean semantics (bool or 0/1-valued)"
+        ) from exc
+
+    if not np.isfinite(numeric_mask).all() or not np.all((numeric_mask == 0.0) | (numeric_mask == 1.0)):
+        raise DataContractError(
+            "external_support_mask must have boolean semantics (bool or 0/1-valued)"
+        )
+    return numeric_mask.astype(bool)
 
 
 def _validate_runtime_inputs(
@@ -160,18 +220,26 @@ def _validate_runtime_inputs(
     kernels: Sequence[np.ndarray],
     cfg: UOTSolveConfig,
     n_items: int,
+    n_proto: int,
     tau_external: np.ndarray | None,
-) -> np.ndarray | None:
+    external_support_mask: np.ndarray | None,
+) -> tuple[np.ndarray | None, np.ndarray | None]:
     if len(kernels) != len(tuple(cfg.eps_schedule)):
         raise DataContractError("kernels length must match cfg.eps_schedule length exactly")
 
+    support_mask_arr = _validate_external_support_mask(
+        external_support_mask,
+        n_items=n_items,
+        n_proto=n_proto,
+    )
+
     if tau_external is None:
-        return None
+        return None, support_mask_arr
 
     tau_arr = np.asarray(tau_external, dtype=float)
     if tau_arr.shape != (n_items,):
         raise DataContractError(f"tau_external must have shape {(n_items,)}, got {tau_arr.shape}")
-    return tau_arr
+    return tau_arr, support_mask_arr
 
 
 def _subset_optional(array: np.ndarray | None, keep: np.ndarray) -> np.ndarray | None:
@@ -197,12 +265,16 @@ def _screen_batch(
     lambda_pl: np.ndarray,
     cfg: UOTSolveConfig,
     tau_external: np.ndarray | None,
+    external_support_mask: np.ndarray | None,
     status: np.ndarray,
 ) -> _WorkingBatch | None:
     with np.errstate(over="ignore", invalid="ignore"):
         source_mass = np.sum(A, axis=1, dtype=float)
         target_mass = np.sum(B, axis=1, dtype=float)
-        active_mask = _active_mask_from_combined_mass(A + B, cfg.n_min_proto)
+        if external_support_mask is None:
+            active_mask = _active_mask_from_combined_mass(A + B, cfg.n_min_proto)
+        else:
+            active_mask = external_support_mask
         active_source_mass = np.sum(np.where(active_mask, A, 0.0), axis=1, dtype=float)
         active_target_mass = np.sum(np.where(active_mask, B, 0.0), axis=1, dtype=float)
 
@@ -381,7 +453,8 @@ def _extract_batched_metrics(
     last_log_kernel: np.ndarray,
     last_eps: float,
     status: np.ndarray,
-) -> tuple[np.ndarray, dict[str, np.ndarray]]:
+    return_plan: bool,
+) -> tuple[np.ndarray, dict[str, np.ndarray], dict[str, np.ndarray]]:
     log_pi = log_u[:, :, None] + last_log_kernel[None, :, :] + log_v[:, None, :]
     row_shift = np.max(log_pi, axis=(1, 2))
 
@@ -392,7 +465,7 @@ def _extract_batched_metrics(
         log_pi = log_pi[finite_rows]
         row_shift = row_shift[finite_rows]
         if batch.row_idx.size == 0:
-            return np.empty(0, dtype=int), _nan_metrics(0)
+            return np.empty(0, dtype=int), _nan_metrics(0), {}
 
     with np.errstate(over="ignore", under="ignore", invalid="ignore"):
         plan_scaled = np.exp(log_pi - row_shift[:, None, None])
@@ -448,6 +521,16 @@ def _extract_batched_metrics(
         status[batch.row_idx[~valid_rows]] = ERR_UOT_NUMERICAL
 
     row_idx = batch.row_idx[valid_rows]
+    source_transport_marginal = pre_marginal[valid_rows]
+    target_transport_marginal = post_marginal[valid_rows]
+    destruction_by_proto = np.maximum(
+        a_masked[valid_rows] - source_transport_marginal,
+        0.0,
+    )
+    creation_by_proto = np.maximum(
+        b_masked[valid_rows] - target_transport_marginal,
+        0.0,
+    )
     metrics = {
         "T": transport_mass[valid_rows],
         "D_pos": destruction[valid_rows],
@@ -458,7 +541,15 @@ def _extract_batched_metrics(
         "R": retention[valid_rows],
         "tau": tau_metric[valid_rows],
     }
-    return row_idx, metrics
+    details = {
+        "source_transport_marginal": source_transport_marginal,
+        "target_transport_marginal": target_transport_marginal,
+        "D_k": destruction_by_proto,
+        "B_k": creation_by_proto,
+    }
+    if return_plan:
+        details["Pi"] = scale[valid_rows, None, None] * plan_scaled[valid_rows]
+    return row_idx, metrics, details
 
 
 def batched_uot_solve(
@@ -468,7 +559,9 @@ def batched_uot_solve(
     kernels: Sequence[np.ndarray],
     cfg: UOTSolveConfig,
     tau_external: np.ndarray | None = None,
-) -> tuple[dict[str, np.ndarray], np.ndarray]:
+    external_support_mask: np.ndarray | None = None,
+    return_plan: bool = False,
+) -> tuple[dict[str, np.ndarray], dict[str, np.ndarray], np.ndarray]:
     """
     Solve entropic unbalanced OT under the batched [N, K] contract.
 
@@ -480,9 +573,13 @@ def batched_uot_solve(
         cfg: UOTSolveConfig object containing numerical parameters.
         tau_external: Optional externally calibrated retention thresholds of shape [N].
             If omitted, `tau` and `R` are returned as NaN for otherwise-successful rows.
+        external_support_mask: Optional boolean semantic support mask of shape [N, K].
+            When provided, this mask is authoritative and is not recomputed from A+B.
+        return_plan: If True, include the dense transport plan `Pi` in the details output.
 
     Returns:
         metrics: Dictionary containing output 1D tensors (e.g., 'T', 'D_pos', 'B_pos') each of shape [N].
+        details: Dictionary containing exact per-prototype transport marginals and event tensors.
         status: Object array of shape [N] containing "ok" or pure error strings.
 
     Programmer-level input contracts are validated up front via validate_uot_inputs(...).
@@ -493,15 +590,18 @@ def batched_uot_solve(
     A = np.asarray(A, dtype=float)
     B = np.asarray(B, dtype=float)
     lambda_arr = np.asarray(lambda_pl, dtype=float)
-    n_items, _ = A.shape
-    tau_arr = _validate_runtime_inputs(
+    n_items, n_proto = A.shape
+    tau_arr, support_mask_arr = _validate_runtime_inputs(
         kernels=kernels,
         cfg=cfg,
         n_items=n_items,
+        n_proto=n_proto,
         tau_external=tau_external,
+        external_support_mask=external_support_mask,
     )
 
     metrics = _nan_metrics(n_items)
+    details = _nan_details(n_items, n_proto, return_plan=return_plan)
     status = np.full(n_items, STATUS_OK, dtype=object)
 
     batch = _screen_batch(
@@ -510,10 +610,11 @@ def batched_uot_solve(
         lambda_pl=lambda_arr,
         cfg=cfg,
         tau_external=tau_arr,
+        external_support_mask=support_mask_arr,
         status=status,
     )
     if batch is None:
-        return metrics, status
+        return metrics, details, status
 
     solve_state = _batched_log_sinkhorn_eps_scaling(
         batch=batch,
@@ -522,18 +623,26 @@ def batched_uot_solve(
         status=status,
     )
     if solve_state is None:
-        return metrics, status
+        return metrics, details, status
 
     solved_batch, log_u, log_v, last_log_kernel, last_eps = solve_state
-    row_idx, row_metrics = _extract_batched_metrics(
+    row_idx, row_metrics, row_details = _extract_batched_metrics(
         batch=solved_batch,
         log_u=log_u,
         log_v=log_v,
         last_log_kernel=last_log_kernel,
         last_eps=last_eps,
         status=status,
+        return_plan=return_plan,
     )
     for metric_name, values in row_metrics.items():
         metrics[metric_name][row_idx] = values
+    if row_idx.size > 0:
+        details["source_transport_marginal"][row_idx] = row_details["source_transport_marginal"]
+        details["target_transport_marginal"][row_idx] = row_details["target_transport_marginal"]
+        details["D_k"][row_idx] = row_details["D_k"]
+        details["B_k"][row_idx] = row_details["B_k"]
+        if return_plan:
+            details["Pi"][row_idx] = row_details["Pi"]
 
-    return metrics, status
+    return metrics, details, status
