@@ -60,18 +60,22 @@
   - This is the kernel-preparation step used before `batched_uot_solve(...)`.
   - Caller responsibility for supplying `C` and `s_C` is stage-conditional: once a pipeline enters kernel precomputation / UOT execution, the shared-axis cost geometry must already be available.
 
-### `batched_uot_solve(A: np.ndarray, B: np.ndarray, lambda_pl: np.ndarray, kernels: list, solver_config: dict, tau_external: Optional[np.ndarray] = None) -> Tuple[dict, np.ndarray]`
+### `batched_uot_solve(A: np.ndarray, B: np.ndarray, lambda_pl: np.ndarray, kernels: Sequence[np.ndarray], cfg: UOTSolveConfig, tau_external: Optional[np.ndarray] = None, external_support_mask: Optional[np.ndarray] = None, return_plan: bool = False) -> Tuple[dict[str, np.ndarray], dict[str, np.ndarray], np.ndarray]`
 - **Inputs**: 
   - `A`, `B`: Non-negative ROI-/sample-level mass tensors of shape `[N, K]` on the shared state/prototype axis (where `N` is the batch dimension: paired ROI/sample items, lambdas, or bootstrap replicates).
   - `lambda_pl`: Array of shape `[N]` containing the regularization parameter for each batch item.
   - `kernels`: Precomputed log-domain kernels for the $\varepsilon$-scaling schedule.
+  - `cfg`: `UOTSolveConfig` carrying the numerical solver settings for the current batched solve.
   - `tau_external`: Optional externally supplied tau array of shape `[N]`.
+  - `external_support_mask`: Optional boolean semantic support mask of shape `[N, K]`. When provided, this mask is authoritative and solver-side support is not recomputed from `A + B`.
+  - `return_plan`: If `True`, include dense `Pi` in the detailed output channel.
 - **Preconditions (Strict)**: 
   - `validate_uot_inputs(...)` MUST run before solve logic.
   - Programmer-level contract violations MUST raise `DataContractError` (shape mismatch, negative mass, NaN/Inf, invalid `lambda_pl` shape, invalid kernel shape).
   - Per-item data degeneracies MUST NOT crash the batch and MUST be reported via per-item `status`.
 - **Outputs**: 
-  - `metrics_dict`: Dictionary of batched tensors for `T`, `B_pos`, `D_pos`, `d_rel`, `b_rel`, `M`, `R`, `tau`.
+  - `metrics_dict`: Dictionary of batched 1D tensors for `T`, `B_pos`, `D_pos`, `d_rel`, `b_rel`, `M`, `R`, and `tau`.
+  - `details_dict`: The single detailed-output channel. It carries exact per-prototype transport marginals and event tensors for the current solve, including `source_transport_marginal` / `T_k`, `target_transport_marginal`, `D_k`, and `B_k`. Dense `Pi` is included only when `return_plan=True`.
   - `status_array`: Array of shape `[N]` with values:
     - `"ok"`
     - `"ERR_UOT_EMPTY_MASS_SOURCE"`
@@ -79,9 +83,11 @@
     - `"ERR_UOT_EMPTY_SUPPORT"`
     - `"ERR_UOT_NUMERICAL"`
 - **Constraints**: 
+  - `src/slotar/uot.py::batched_uot_solve(...)` is the single canonical solver entrypoint for current local detailed and scalar UOT output. No parallel detailed solver API exists.
   - Batch dimension `[N]` MUST be preserved; failed items are not dropped inside library code.
   - If `status_array[i] != "ok"`, all micro metrics for item `i` MUST be `NaN`.
   - If `tau_external` is omitted, `tau` and `R` remain `NaN` on otherwise-ok rows. The current local Task-A Arm-II startup slice relies on this optional behavior with `tau_mode="unavailable"`.
+  - Current local Arm-3 exact-event inference consumes `details_dict` directly through `tasks/task_A/arm3/inference.py::run_uot_batch_with_events(...)`. Scalar-only task wrappers may still exist, but they are compatibility layers around this canonical solver path rather than separate canonical APIs.
 
 ## Module 3: Uncertainty Quantification (`slotar.uq`)
 

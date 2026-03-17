@@ -1,7 +1,10 @@
 # Task A Specification (v1.2 Locked)
 **Title:** Single-timepoint IMC Selection-aware Stress Test
 
-> Status note: the current local Task-A path has completed Stage 0 sufficiently for Arm-I work and has completed the current Arm-I constrained-vs-broken comparison stage on the Stage-0 `.h5ad` route at `K=25`. Arm I remains closed at that current local stage. The current Arm-II startup slice has been implemented, run, and analyzed on the frozen Stage-0 artifact. Arm III / IV remain scientifically specified but inactive. The current Task-A write path remains a temporary task-layer metrics parquet for validation and analysis, not the canonical AVCP bridge export.
+> Status note: the current local Task-A path has completed Stage 0 sufficiently for Arm-I work and has completed the current Arm-I constrained-vs-broken comparison stage on the Stage-0 `.h5ad` route at `K=25`. Arm I remains closed at that current local stage. The current Arm-II startup slice has been implemented, run, and analyzed on the frozen Stage-0 artifact. Arm III is now active locally through Phase 0-8 engineering execution. That execution closure does not by itself close the scientific interpretation or authorize Arm IV. The current Task-A write path remains task-layer output for validation and analysis, not the canonical AVCP bridge export.
+
+Historical Arm-3 tranche and planning notes are archived under `docs/history/task_A_arm3/` and are preserved for provenance only.
+
 
 ## 1. Global Constraints
 - **Data Source**: Single-timepoint IMC, $1\text{ mm}^2$ nominal area, 32 retained patients. Nominal local design language remains 3 `TC`, 3 `IM`, and 3 `PT` ROIs per retained patient where design intent is being described, but the active frozen Stage-0 artifact used for the current Arm-II slice contains retained non-nominal cases and is the operative analysis truth. Current local `TC` corresponds to older `CT` wording from earlier materials.
@@ -154,6 +157,12 @@
 - Full-coverage reference inference is run first on the original ROI family pairs. Coverage-reduced pseudo-ROI inference is then compared back to that frozen full-coverage reference.
 - Density is the primary Arm-III mass route. Shape may be derived from density when required by comparator analyses. Count is audit-only in Arm III.
 
+#### Current local implementation boundary
+- Arm III is active locally. Phases 0-8 are implemented in the current task-layer runner.
+- The current local Arm-III runner writes a Phase-8 prototype summary table and a descriptive memo.
+- This closes the current local engineering execution package, but not the downstream scientific interpretation.
+- Historical Arm-III notes may remain in the repository as tranche history, but this document is the live Task-A / Arm-III methodology contract.
+
 #### Frozen Arm-III objects
 - The following objects MUST be frozen before any pseudo-ROI inference: the Stage-0 representation artifact, frozen `kNN`, frozen community features, prototype dictionary (`K=25`), frozen prototype assignment, `cost_matrix`, `s_C`, the current ordered pair-generation logic, the confirmatory anchor directions used for Arm-III transportability analysis, the same-pair Balanced OT comparator definition, and all full-coverage calibration outputs.
 - Arm-III pseudo-ROI inference MUST NOT relearn community features, prototypes, prototype assignments, `cost_matrix`, or calibration parameters.
@@ -179,6 +188,11 @@
 
 - Arm III may report pseudo-count totals and total pseudo-area for audit, but pseudo-counts do not replace the density-primary route.
 
+#### Block geometry and area semantics
+- Arm III uses geometric block area only. Density is computed from frozen block counts divided by summed block area over the current block set.
+- The Arm-III area denominator is built from the ROI block universe and pseudo-ROI sampled blocks. It is not defined by the trivial current `uns['roi_areas']` values.
+- Zero-cell blocks are retained in the ROI block universe and therefore contribute area even when they contribute zero prototype counts.
+
 #### Semantic support and numerical floor
 - For each ordered full-coverage reference pair `r`, freeze the semantic active set on the original full-coverage pair before any coverage reduction:
 
@@ -187,6 +201,7 @@
   $$
 
 - `\mathcal{K}_r^{100}` is the Arm-III semantic support for every pseudo-ROI replicate derived from reference pair `r`. It MUST NOT shrink with coverage reduction.
+- In the current local implementation, this frozen support is built from full-coverage COUNT tensors and passed into `src/slotar/uot.py::batched_uot_solve(...)` as the authoritative `external_support_mask`.
 - `eta_floor` is numerical stabilization only. Within the frozen semantic support, Arm-III may apply:
 
   $$
@@ -200,6 +215,7 @@
 - All Arm-III calibration is performed once on the full-coverage original ROI reference pools and then frozen before pseudo-ROI inference.
 - `lambda_dens` MUST be calibrated once on the full-coverage original ROI family reference pool generated by the frozen ordered pair-generation logic. Arm-III pseudo-ROI inference MUST reuse those frozen family-level `lambda_dens` values and MUST NOT recalibrate `lambda_dens` on pseudo-ROIs.
 - `tau` MUST be available in Arm III. It MUST be calibrated once on the full-coverage original ROI compartment reference pool and stored as compartment-specific task-fixed values: `tau_TC`, `tau_IM`, and `tau_PT`.
+- In the current local implementation, the Arm-III tau calibration pool is within-compartment and within-patient, uses an explicit `scaled_cost_matrix`, pools scaled costs across successful solves with Pi weighting, and excludes diagonal self-transport entries from the quantile support.
 - For an ordered Arm-III inference row `A -> B`, assign `tau` by `compartment_a`. The ordered row inherits `tau_TC`, `tau_IM`, or `tau_PT` from its source compartment. Arm III MUST NOT introduce mixed family-level `tau` values such as pooled `TC-IM` thresholds built from `TC-TC` and `IM-IM` reference sets.
 - Side A remains the reference side for ordered Arm-III assignment. Frozen full-coverage calibration outputs are broadcast to all reduced-coverage pseudo-ROI inference without direction-specific retuning on the pseudo-ROIs.
 
@@ -282,19 +298,26 @@
 - Bootstrap confidence intervals do not replace the degradation, sign-consistency, and floor-dominance retention rules.
 
 #### Prototype stability and Balanced OT comparator
+- The current local Phase-6 main path uses exact solver-derived event outputs. Proportional prototype allocation may remain only as compatibility fallback and is not the live Arm-III execution path.
+- Arm III MUST keep scalar pair-level outputs and tensor / prototype-event outputs physically separated.
 - Arm III MUST freeze a prototype audit set from the full-coverage reference before pseudo-ROI inference.
-- Arm III MUST report prototype recurrence proportion, sign consistency, and correlation to the frozen 100% full-coverage reference for that locked prototype audit set.
+- The current local Phase-8 closure reports that audit set through a descriptive prototype summary table rather than a thresholded pass/fail verdict.
 - Balanced OT remains the same-pair, shape-only, forced-match comparator and MUST run on the exact same pseudo-ROI pairs and frozen geometry used by the Arm-III UOT layer where applicable.
 - Balanced OT is comparator context only. It provides slope / forced-match reference, does not provide unmatched semantics, and is not a primary confirmatory Arm-III endpoint.
 
-#### Required Arm-III outputs
+#### Current implemented scope vs pending scope
+- Current implemented scope includes: full-reference setup, block partition and density reference construction, full-coverage calibration freeze, pseudo-ROI bootstrap, exact-event Arm-III inference, same-pair Balanced OT comparator runs, Phase-7 continuous degradation / sign-consistency summaries, and Phase-8 prototype summary / descriptive memo outputs.
+- Pending scope includes: downstream scientific interpretation of the Phase-8 outputs, especially the Arm-II / Arm-III transport-side endpoint-definition reconciliation required before Arm IV.
+- Any historical note that describes Arm III as inactive, pre-implementation, or still using proportional event allocation as the main path is superseded by this section.
+
+#### Target Arm-III outputs
 - pseudo-ROI audit table
 - density family / direction summary
 - baseline scale audit summary
 - degradation / sign-consistency summary
 - prototype stability summary
 - Balanced OT comparator summary
-- one Arm-III memo stating retained findings, weakened findings, and unresolved findings
+- one descriptive Arm-III memo stating what was summarized, what remains deferred to downstream interpretation, and what is not claimed by the runner
 
 ### Arm IV: Synthetic Drift
 - **Action**: Inject known drift $\delta$ (offset/gain) into B.
@@ -331,5 +354,6 @@
 
 ## 5. Transition note
 - Arm I remains documented and closed at the current local stage.
-- The active local Task-A step is to revise the Arm-II interpretation and run the integrated analysis-only follow-up described above.
-- This document does not expand Arm III / IV beyond that transition boundary.
+- Arm-II startup interpretation remains part of the active local Task-A context.
+- Arm III is now active locally through Phase 0-8 engineering execution under the methodology contract above.
+- Arm IV remains scientific future scope.

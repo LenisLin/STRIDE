@@ -38,73 +38,86 @@ Any official or custom route must provide or imply:
 - These are execution-stage requirements, not universal requirements for every early preprocessing or audit-only step.
 
 ## 2. Output Artifact Contracts
-Generated via `src/slotar/io/bridge.py::save_for_r()` (Python -> R handoff).
+This section distinguishes between the future canonical bridge-oriented pathway and the current real local Arm-3 task-layer outputs.
 
-Canonical first-order SLOTAR outputs defined below are the stable interface consumed by both:
-- task-scoped downstream analyses in `tasks/`
-- benchmark-agnostic core inference modules in `src/slotar`
+### 2.1 Canonical / Bridge-Oriented Path
+- `src/slotar/io/bridge.py::save_for_r()` remains the intended compliant Python -> R handoff path for canonical exports.
+- That bridge is NOT the current live Arm-3 local write path.
+- The current local Arm-3 implementation writes task-scoped parquet / csv / json artifacts directly from `tasks/task_A/arm3_uq_stress.py`.
 
-This section does not introduce new exported artifacts; it clarifies interface usage only.
-These canonical outputs are derived from ROI-/sample-level mass distributions on a shared state/prototype axis, not from direct cell-level UOT.
+### 2.2 Current Local Arm-3 Scalar Result Tables
+Current Arm-3 scalar outputs are pair-level tables. They do not embed dense event tensors or dense transport plans.
 
-### 2.1 Metrics Table (`metrics_.csv`)
-Primary Key: `patient_group_id`
+**Primary pair-level result tables**
+- `arm3_phase6_full_coverage_results.parquet`
+  - One row per full-coverage anchor-direction pair.
+  - Core fields include pair identifiers / metadata (`pair_id`, `patient_id`, `pair_type`, `pair_family`, `compartment_a`, `compartment_b`), frozen calibration values (`lambda_dens`, `tau`), solver metrics (`T`, `B_pos`, `D_pos`, `uot_status`), and Arm-3 density summaries (`U_abs_dens`, `S_src`, `S_tgt`, `Delta_scale`, `scale_ratio`, `Q_src_dens`, `Q_tgt_dens`).
+- `arm3_phase6_bootstrap_results.parquet`
+  - One row per reduced-coverage replicate pair.
+  - Carries the same pair-level scalar contract as the full-coverage table plus bootstrap fields such as `coverage`, `replicate_id`, and `floor_dominated`.
 
-Core Metrics:
-- `S0`, `S1`, `scale_ratio`
-- `T`, `D_pos`, `B_pos`, `d_rel`, `b_rel`, `M`, `R`, `tau`
+**Additional scalar / audit tables currently written by Arm-3**
+- `arm3_phase5_pseudo_roi_audit.parquet`
+- `arm3_phase6_balanced_ot_results.parquet`
+- `arm3_phase6_support_mask_audit.parquet`
+- `arm3_phase6_metric_summary_anchor.parquet`
+- `arm3_phase7_degradation_summary.parquet` / `.csv`
+- `arm3_phase7_contrast_summary.parquet` / `.csv`
 
-UQ & Measurement Error Fields (V2.0):
-- `s2_log_error`: Empirical variance of log-transformed bootstrap replicates ($s_i^2$).
-- `s2_lower_bound_applied`: Boolean indicating if the numerical protection floor was triggered.
+### 2.3 Current Local Arm-3 Exact Prototype-Event Tables
+Current Arm-3 event outputs are prototype-level tables derived from exact solver details. They are physically separate from the pair-level scalar tables.
 
-Audit Fields:
-- `A_pre`, `A_post`, `area_mode`, `mass_pruned_ratio`, `tau_mode`
-- `uot_status`, `bypass_reason`
-- `drift_mode`, `slide_match`
-- `UQ_mode`, `n_blocks_valid`
+**Exact prototype-event tables**
+- `arm3_phase6_prototype_events_full.parquet`
+  - Full-coverage reference event table with sentinel `coverage=1.0` and `replicate_id=-1`.
+- `arm3_phase6_prototype_events_bootstrap.parquet`
+  - Reduced-coverage bootstrap event table across all coverage levels and replicates.
 
-**Bypass Contract (Plan B) & Zero Stratification**:
-- If `uot_status != "ok"`:
-  - All micro UOT metrics (`T`, `D_pos`, `B_pos`, `d_rel`, `b_rel`, `M`, `R`, `tau`) MUST be explicit `NaN` (-> `NA` in R).
-  - The corresponding `events` partition MUST be empty.
-- Required solver-status to task-level bypass mapping:
+**Event table schema**
+- Required fields:
+  - pair identity / metadata: `pair_id`, `patient_id`, `pair_type`, `pair_family`
+  - bootstrap markers: `coverage`, `replicate_id`
+  - prototype axis: `prototype_k`, `prototype_label`
+  - exact per-prototype masses: `T_mass`, `B_mass`, `D_mass`
+- These tables are generated from exact solver-derived per-prototype details returned by `src/slotar/uot.py::batched_uot_solve(...)` and consumed through `tasks/task_A/arm3/inference.py::run_uot_batch_with_events(...)`.
+- Dense `Pi` is optional internal solver detail. It is not a standard exported Arm-3 artifact.
+
+### 2.4 Current Local Arm-3 Calibration and Phase-8 Tables
+- `arm3_phase4_lambda_dens.json`
+- `arm3_phase4_tau_by_compartment.json`
+- `arm3_phase4_calibration_record.json`
+  - These record frozen calibration state for the live Arm-3 run.
+- `arm3_phase8_prototype_contrast_prep.parquet`
+  - This is the preparatory Phase-8 input table written after Phase 7 and consumed by the Phase-8 finalization step.
+- `arm3_phase8_prototype_stability.parquet` / `.csv`
+  - These are the current local Phase-8 prototype summary outputs. They are descriptive stability summaries indexed by `prototype_k` and reduced coverage level.
+- `arm3_phase8_memo.md`
+  - This is the current local descriptive Phase-8 memo. It summarizes file context and aggregate Phase 7 / 8 table structure without assigning thresholded or biological outcome labels.
+
+### 2.5 Scalar / Event Separation Rule
+- Pair-level scalar tables remain the primary location for transport metrics, scale summaries, calibration broadcasts, solver status, and bootstrap-level summary quantities.
+- Prototype-event tables remain the location for exact per-prototype `T`, `B`, and `D` masses.
+- Dense transport plans and other solver-internal tensors are not part of the standard exported Arm-3 local artifact surface unless a task explicitly writes a dedicated debug artifact.
+
+## 3. Global Audit Fields (Mandatory)
+- Current local Arm-3 pair-level tables may include: `lambda_dens`, `tau`, `uot_status`, `bypass_reason`, `mass_pruned_ratio`, `n_min_proto_used`, `coverage`, `replicate_id`, and `floor_dominated` where applicable.
+- The canonical solver status set remains:
+  - `ok`
+  - `ERR_UOT_EMPTY_MASS_SOURCE`
+  - `ERR_UOT_EMPTY_MASS_TARGET`
+  - `ERR_UOT_EMPTY_SUPPORT`
+  - `ERR_UOT_NUMERICAL`
+- Required task-layer bypass mapping remains:
   - `ERR_UOT_EMPTY_MASS_SOURCE -> S0_zero`
   - `ERR_UOT_EMPTY_MASS_TARGET -> S1_zero`
   - `ERR_UOT_EMPTY_SUPPORT -> empty_support_after_prune`
   - `ERR_UOT_NUMERICAL -> uot_numerical_failure`
-- Mapping responsibility:
-  - Mapping is applied in task pipelines, not in `src/slotar` solver code.
-  - Non-`ok` rows are omitted from downstream inference by task-layer logic.
-- **Hurdle Model Eligibility**:
-  - `bypass_reason == "S1_zero"` (with valid S0): Qualifies as a "True Zero" for the hurdle zero-component.
-  - `bypass_reason in {"empty_support_after_prune","uot_numerical_failure"}` or `S0=0`: MUST be treated strictly as Missing Data (`NaN`), prohibited from zero-component inference.
-  - If bypassed due to `empty_support_after_prune`, `mass_pruned_ratio` must be set to `1.0`.
-
-### 2.2 Events Table (`events_.parquet`)
-Primary Key: `event_id`
-
-Columns:
-- `source_proto`, `target_proto`, `mass`, `cost`,
-- `event_type` ∈ {'retention','remodeling','creation','destruction'},
-- `drift_aligned` (bool or NA),
-- `reproducibility` (float)
-
-### 2.3 Optional Task-Scoped Auxiliary Tables
-- Tasks may export optional auxiliary tables through the same compliant bridge path as task-scoped extensions.
-- Typical examples include baseline-comparison summaries or other benchmark-specific reporting tables.
-- These auxiliary tables are NOT core canonical SLOTAR artifacts and do not receive a universal required schema here.
-- If an auxiliary table reports baseline abundance comparators, it MUST stay on the same physical mass scale as the canonical SLOTAR mass table used in that task.
-
-## 3. Global Audit Fields (Mandatory)
-- `lambda_dens`, `lambda_shape`, `tau_g`, `s_C`, `eta_floor`, `n_min_proto`
-- `mass_pruned_ratio`, `eps_schedule_id`
-- `delta_mode`, `p_mode`
-- `group_mode` ∈ {"all", "provided"}
-- Implicit ROI-state clustering is forbidden.
-- If no explicit grouping is supplied by the task layer, fallback must be `group_mode="all"`.
-- `drift_mode` ∈ {"provided", "unavailable"}
-- `uot_status` ∈ {"ok","ERR_UOT_EMPTY_MASS_SOURCE","ERR_UOT_EMPTY_MASS_TARGET","ERR_UOT_EMPTY_SUPPORT","ERR_UOT_NUMERICAL"}
-- `bypass_reason` ∈ {"S0_zero","S1_zero","empty_support_after_prune","uot_numerical_failure", null}
-- `delta_log_stabilizer` (float): The $\delta$ constant used for log-transforming zero-bounded UQ replicates.
-- `s2_lower_bound` (float): The absolute minimum floor allowed for $s_i^2$ measurement error.
+- If `uot_status != "ok"`, scalar micro metrics for that row MUST remain explicit `NaN`.
+- Exact prototype-event tables are expected to carry `NaN` event masses on non-ok rows rather than fabricating fallback event values.
+- Method-level audit fields such as `s_C`, `eta_floor`, `eps_schedule_id`, grouping metadata, drift metadata, `delta_log_stabilizer`, and `s2_lower_bound` remain relevant where a task exports them, but they are not all materialized in every current local Arm-3 table.
+- Grouping defaults remain unchanged:
+  - `group_mode` ∈ {"all", "provided"}
+  - implicit ROI-state clustering is forbidden
+  - if no explicit grouping is supplied by the task layer, fallback must be `group_mode="all"`
+- Drift-mode conventions remain unchanged:
+  - `drift_mode` ∈ {"provided", "unavailable"}
