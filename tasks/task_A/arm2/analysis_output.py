@@ -28,6 +28,7 @@ from .analysis_contract import (
     RecurrenceAnalysisTables,
     TransportAnalysisTables,
 )
+from .analysis_response import build_corrected_output_package_from_legacy_package
 
 
 def _csv_output_filenames() -> tuple[str, ...]:
@@ -59,7 +60,7 @@ def build_minimal_appendix_audit_table(
     extracted_views: FocusedPrototypeViews,
 ) -> pd.DataFrame:
     """
-    Build the minimal appendix/audit table for public output `08`.
+    Build the minimal appendix/audit table for canonical public output `14`.
 
     This table documents the focused package contract rather than acting as a
     broad exploratory appendix.
@@ -160,7 +161,10 @@ def build_minimal_appendix_audit_table(
                 "item": "view_validation_pass_summary",
                 "status": "pass" if view_passes == view_checks else "fail",
                 "value": f"{view_passes}/{view_checks}",
-                "detail": "Downstream extracted-view validations only affect outputs 06 and 07.",
+                "detail": (
+                    "Legacy extracted-view validations feed canonical outputs 06-11 "
+                    "and remain directly materialized only in auxiliary outputs 12 and 13."
+                ),
             },
             {
                 "section": "transport",
@@ -189,7 +193,7 @@ def build_focused_results_memo(
     appendix_audit: pd.DataFrame,
 ) -> str:
     """
-    Build the public focused results memo for output `00`.
+    Build an intermediate focused results memo before canonical package correction.
     """
 
     top_baseline = baseline_tables.baseline_prototype_confirmatory.head(5)
@@ -213,7 +217,7 @@ def build_focused_results_memo(
     )
 
     lines = [
-        "# Arm-II Focused Results Memo",
+        "# Arm-II Focused Results Memo (Intermediate Legacy Surface)",
         "",
         "## Inputs / Startup-Slice Boundaries",
         "",
@@ -221,6 +225,7 @@ def build_focused_results_memo(
         f"- Stage-0 artifact: `{paths.stage0_h5ad}`",
         f"- Task config: `{paths.task_config}`",
         "- This focused package remains locked to the current Arm-II startup slice only.",
+        "- The canonical focused package is rebuilt downstream into outputs `06` through `14`; the extracted comparison/recurrence tables remain auxiliary only.",
         "- UOT is rerun once and same-pair Balanced OT is rerun once on the fixed ordered pair set.",
         "- `tau` and `R` remain unavailable in the current startup slice and are not interpreted here.",
         "",
@@ -284,8 +289,8 @@ def build_focused_results_memo(
             "",
             "## Prototype-Level Interpretation Summary",
             "",
-            f"- Extracted prototype comparison rows: `{key_proto_count}`.",
-            "- These prototype views are downstream subsets of the all-prototype internal tables only.",
+            f"- Legacy extracted prototype comparison rows retained in auxiliary output `12`: `{key_proto_count}`.",
+            "- These extracted views are downstream subsets of the all-prototype internal tables only and feed the canonical outputs `06` through `11`.",
         ]
     )
     if not top_comparison.empty:
@@ -304,7 +309,7 @@ def build_focused_results_memo(
             "",
             "## Recurrence Summary",
             "",
-            f"- Patient-level recurrence rows in output `07`: `{recurrence_rows}`.",
+            f"- Legacy patient-level recurrence rows retained in auxiliary output `13`: `{recurrence_rows}`.",
             f"- Selected prototypes with recurrent `TC-PT > TC-IM` baseline signal in at least half of patients: `{baseline_positive}`.",
             f"- Selected prototypes with recurrent positive `TC-PT` UOT unmatched signal in at least half of patients: `{positive_unmatched_tc_pt}`.",
             "- Confirmatory recurrence fields remain explicit for `TC-IM` and `TC-PT`; audit-only `IM-PT` remains internal.",
@@ -352,10 +357,12 @@ def assemble_output_package(
     memo_text: str,
 ) -> FocusedOutputPackage:
     """
-    Assemble the exact 9-file focused-output package.
+    Assemble the exact canonical focused-output package.
     """
 
-    tables_by_filename = {
+    legacy_package = FocusedOutputPackage(
+        memo_text=memo_text,
+        tables_by_filename={
         "01_prototype_biological_meaning_table.csv": baseline_tables.prototype_meaning,
         "02_baseline_pair_audit.csv": baseline_tables.baseline_pair_audit,
         "03_baseline_prototype_confirmatory_summary.csv": baseline_tables.baseline_prototype_confirmatory,
@@ -364,12 +371,10 @@ def assemble_output_package(
         "06_key_prototype_comparison.csv": extracted_views.prototype_comparison_view,
         "07_key_prototype_patient_recurrence.csv": extracted_views.prototype_recurrence_view,
         "08_minimal_appendix_audit.csv": appendix_audit,
-    }
-    package = FocusedOutputPackage(
-        memo_text=memo_text,
-        tables_by_filename=tables_by_filename,
+        },
         package_validation=pd.DataFrame(),
     )
+    package = build_corrected_output_package_from_legacy_package(legacy_package)
     package.package_validation = validate_output_package(package)
     return package
 
@@ -382,23 +387,29 @@ def validate_output_package(package: FocusedOutputPackage) -> pd.DataFrame:
     observed_csv = tuple(sorted(package.tables_by_filename))
     expected_csv = tuple(sorted(_csv_output_filenames()))
     required_memo_tokens = (
-        "## Inputs / Startup-Slice Boundaries",
-        "## Confirmatory Scope",
-        "## Baseline Findings",
-        "## Global Transport Findings",
-        "## Prototype-Level Interpretation Summary",
-        "## Recurrence Summary",
-        "## Supported Claims",
-        "## Non-Claims",
-        "## Out-of-Scope Items",
+        "## Scope",
+        "## Prototype-Level Primary Surface",
+        "## Compact Audit Fact",
     )
     memo_has_tokens = all(token in package.memo_text for token in required_memo_tokens)
-    comparison_is_df = isinstance(
-        package.tables_by_filename.get("06_key_prototype_comparison.csv"),
+    anchors_is_df = isinstance(
+        package.tables_by_filename.get("06_uot_shared_transport_anchors.csv"),
         pd.DataFrame,
     )
     recurrence_is_df = isinstance(
-        package.tables_by_filename.get("07_key_prototype_patient_recurrence.csv"),
+        package.tables_by_filename.get("11_prototype_patient_recurrence_summary.csv"),
+        pd.DataFrame,
+    )
+    auxiliary_comparison_is_df = isinstance(
+        package.tables_by_filename.get("12_auxiliary_legacy_prototype_comparison.csv"),
+        pd.DataFrame,
+    )
+    auxiliary_recurrence_is_df = isinstance(
+        package.tables_by_filename.get("13_auxiliary_legacy_prototype_patient_recurrence.csv"),
+        pd.DataFrame,
+    )
+    appendix_is_df = isinstance(
+        package.tables_by_filename.get("14_minimal_appendix_audit.csv"),
         pd.DataFrame,
     )
     validation = pd.DataFrame.from_records(
@@ -419,11 +430,20 @@ def validate_output_package(package: FocusedOutputPackage) -> pd.DataFrame:
                 "detail": f"required_tokens={list(required_memo_tokens)}",
             },
             {
-                "check": "derived_view_outputs_are_dataframes",
-                "passed": bool(comparison_is_df and recurrence_is_df),
+                "check": "canonical_primary_and_auxiliary_tables_are_dataframes",
+                "passed": bool(
+                    anchors_is_df
+                    and recurrence_is_df
+                    and auxiliary_comparison_is_df
+                    and auxiliary_recurrence_is_df
+                    and appendix_is_df
+                ),
                 "detail": (
-                    f"comparison_type={type(package.tables_by_filename.get('06_key_prototype_comparison.csv')).__name__}, "
-                    f"recurrence_type={type(package.tables_by_filename.get('07_key_prototype_patient_recurrence.csv')).__name__}"
+                    f"anchors_type={type(package.tables_by_filename.get('06_uot_shared_transport_anchors.csv')).__name__}, "
+                    f"recurrence_type={type(package.tables_by_filename.get('11_prototype_patient_recurrence_summary.csv')).__name__}, "
+                    f"aux_comparison_type={type(package.tables_by_filename.get('12_auxiliary_legacy_prototype_comparison.csv')).__name__}, "
+                    f"aux_recurrence_type={type(package.tables_by_filename.get('13_auxiliary_legacy_prototype_patient_recurrence.csv')).__name__}, "
+                    f"appendix_type={type(package.tables_by_filename.get('14_minimal_appendix_audit.csv')).__name__}"
                 ),
             },
             {
@@ -436,7 +456,7 @@ def validate_output_package(package: FocusedOutputPackage) -> pd.DataFrame:
     failed = validation.loc[~validation["passed"].astype(bool)].copy()
     if not failed.empty:
         details = "; ".join(f"{row['check']}={row['detail']}" for _, row in failed.iterrows())
-        raise ValueError(f"Focused output package validation failed: {details}")
+        raise ValueError(f"Canonical focused output package validation failed: {details}")
     return validation
 
 

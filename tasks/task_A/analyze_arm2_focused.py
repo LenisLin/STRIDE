@@ -6,8 +6,8 @@ Operative end-to-end Arm-II focused analysis workflow.
 This entrypoint is limited to the current Arm-II startup slice only.
 
 Prototype-selection boundary:
-- Any selected-prototype list applies only to downstream extracted views used
-  for outputs `06` and `07`.
+- Any selected-prototype list applies only to the downstream extracted views
+  retained as auxiliary outputs `12` and `13`.
 - Upstream compute, baseline, transport, and recurrence layers remain
   all-prototype-first regardless of the selected-prototype list.
 """
@@ -72,14 +72,14 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--output-dir",
         required=True,
-        help="Directory where the focused 9-file package will be written.",
+        help="Directory where the canonical focused package will be written.",
     )
     parser.add_argument(
         "--prototype-view-ids",
         type=int,
         nargs="*",
         default=None,
-        help="Optional downstream subset for outputs 06 and 07 only.",
+        help="Optional downstream subset for the auxiliary outputs 12 and 13 only.",
     )
     return parser.parse_args(argv)
 
@@ -115,10 +115,10 @@ def run_focused_analysis(paths: Arm2FocusedPaths) -> FocusedOutputPackage:
     4. Compute all surfaces on the fixed ordered pair set.
     5. Build all-prototype transport/unmatched tables.
     6. Build all-prototype recurrence tables.
-    7. Build focused prototype views.
+    7. Build legacy extracted prototype views.
     8. Build the minimal appendix audit.
-    9. Build the focused memo.
-    10. Assemble the full focused 9-file output package.
+    9. Build the intermediate memo text.
+    10. Assemble the full canonical focused output package.
     """
 
     inputs = load_inputs(paths)

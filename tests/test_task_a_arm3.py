@@ -6,11 +6,11 @@ import importlib.util
 import json
 import re
 import sys
-import types
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
+import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src"
@@ -19,21 +19,21 @@ if str(ROOT) not in sys.path:
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-if importlib.util.find_spec("anndata") is None:
-    anndata_stub = types.ModuleType("anndata")
-    anndata_stub.__spec__ = importlib.util.spec_from_loader("anndata", loader=None)
+ANNDATA_AVAILABLE = importlib.util.find_spec("anndata") is not None
+pytestmark = pytest.mark.skipif(not ANNDATA_AVAILABLE, reason="anndata not installed")
 
-    class _AnnData:  # pragma: no cover - import stub only
-        pass
-
-    anndata_stub.AnnData = _AnnData
-    sys.modules["anndata"] = anndata_stub
-
-from slotar.uot import UOTSolveConfig
-from tasks.task_A.arm3 import calibrate as arm3_calibrate
-from tasks.task_A.arm3 import inference as arm3_inference
-from tasks.task_A.arm3 import output as arm3_output
-from tasks.task_A import arm3_uq_stress
+if ANNDATA_AVAILABLE:
+    from slotar.uot import UOTSolveConfig
+    from tasks.task_A.arm3 import calibrate as arm3_calibrate
+    from tasks.task_A.arm3 import inference as arm3_inference
+    from tasks.task_A.arm3 import output as arm3_output
+    from tasks.task_A import arm3_uq_stress
+else:  # pragma: no cover - skipped when anndata is unavailable
+    UOTSolveConfig = None  # type: ignore[assignment]
+    arm3_calibrate = None  # type: ignore[assignment]
+    arm3_inference = None  # type: ignore[assignment]
+    arm3_output = None  # type: ignore[assignment]
+    arm3_uq_stress = None  # type: ignore[assignment]
 
 
 def test_run_uot_batch_with_events_uses_exact_solver_details_and_skips_proportional_path(
@@ -213,6 +213,76 @@ def test_run_uot_batch_with_events_passes_frozen_support_mask_to_solver(monkeypa
     np.testing.assert_allclose(B_k, np.array([[0.0, 0.0, 0.5]], dtype=float))
     np.testing.assert_allclose(D_k, np.array([[0.0, 0.0, 0.0]], dtype=float))
     assert "T_k" not in df_result.columns
+    np.testing.assert_allclose(df_result["mass_pruned_ratio"].to_numpy(dtype=float), np.array([0.1], dtype=float))
+    np.testing.assert_allclose(
+        df_result["density_active_pruned_ratio"].to_numpy(dtype=float),
+        np.array([1.0], dtype=float),
+    )
+
+
+def test_select_full_coverage_columns_keeps_common_engineering_subset() -> None:
+    df = pd.DataFrame(
+        {
+            "patient_group_id": ["pair_0"],
+            "pair_id": ["pair_0"],
+            "arm": ["A3_uq_stress"],
+            "patient_id": ["P01"],
+            "compartment": ["TC"],
+            "patient_id_a": ["P01"],
+            "patient_id_b": ["P01"],
+            "compartment_a": ["TC"],
+            "compartment_b": ["IM"],
+            "same_patient": [True],
+            "same_compartment": [False],
+            "pair_type": ["TC->IM"],
+            "roi_a": ["P01_TC_01"],
+            "roi_b": ["P01_IM_01"],
+            "lambda_pl": [10.0],
+            "lambda_mode": ["pair_specific_joint"],
+            "tau_mode": ["task_fixed_by_compartment"],
+            "mass_mode": ["density"],
+            "uot_status": ["ok"],
+            "pair_family": ["TC-IM"],
+            "d_rel": [0.15],
+            "b_rel": [0.1],
+            "M": [0.25],
+            "R": [0.8],
+            "tau": [0.2],
+            "T": [1.0],
+            "B_pos": [0.2],
+            "D_pos": [0.3],
+            "bypass_reason": [None],
+            "mass_pruned_ratio": [0.1],
+            "density_active_pruned_ratio": [0.4],
+            "n_min_proto_used": [2.0],
+            "S0": [2.0],
+            "S1": [1.5],
+            "U": [0.5],
+            "U_abs_dens": [0.5],
+            "S_src": [2.0],
+            "S_tgt": [1.5],
+            "Delta_scale": [-0.5],
+            "scale_ratio": [0.75],
+            "Q_src_dens": [0.5],
+            "Q_tgt_dens": [2.0 / 3.0],
+        }
+    )
+
+    result = arm3_uq_stress._select_full_coverage_columns(
+        df=df,
+        lambda_arr=np.array([10.0], dtype=float),
+        tau_arr=np.array([0.25], dtype=float),
+    )
+
+    assert "arm" in result.columns
+    assert "mass_mode" in result.columns
+    assert "lambda_mode" in result.columns
+    assert "tau_mode" in result.columns
+    assert "lambda_pl" in result.columns
+    assert "mass_pruned_ratio" in result.columns
+    assert "density_active_pruned_ratio" in result.columns
+    np.testing.assert_allclose(result["lambda_dens"].to_numpy(dtype=float), np.array([10.0], dtype=float))
+    np.testing.assert_allclose(result["tau"].to_numpy(dtype=float), np.array([0.25], dtype=float))
 
 
 def test_weighted_plan_cost_quantile_excludes_diagonal_mass_from_tau_support() -> None:
