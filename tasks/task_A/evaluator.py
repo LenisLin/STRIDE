@@ -11,10 +11,11 @@ import pandas as pd
 
 from slotar.contracts import validate_metrics_table
 
-SUPPORTED_ARMS: set[str] = {"A1_baseline", "A1_broken_reference", "A2_cross_compartment"}
+SUPPORTED_ARMS: set[str] = {"A1_baseline", "A1_broken_reference", "A2_cross_compartment", "A3_uq_stress"}
 FIXED_MODE = "task_fixed_by_compartment"
 JOINT_MODE = "pair_specific_joint"
 UNAVAILABLE_MODE = "unavailable"
+DENSITY_MODE = "density"
 ARM2_PAIR_TYPE_TO_FAMILY = {
     "TC->IM": "TC-IM",
     "IM->TC": "TC-IM",
@@ -22,6 +23,10 @@ ARM2_PAIR_TYPE_TO_FAMILY = {
     "PT->IM": "IM-PT",
     "TC->PT": "TC-PT",
     "PT->TC": "TC-PT",
+}
+ARM3_PAIR_TYPE_TO_FAMILY = {
+    "TC->IM": "TC-IM",
+    "TC->PT": "TC-PT",
 }
 MICRO_METRICS: tuple[str, ...] = ("T", "D_pos", "B_pos", "d_rel", "b_rel", "M", "R", "tau")
 REQUIRED_COLUMNS: tuple[str, ...] = (
@@ -42,8 +47,11 @@ REQUIRED_COLUMNS: tuple[str, ...] = (
     "lambda_pl",
     "lambda_mode",
     "tau_mode",
+    "mass_mode",
     "uot_status",
     "bypass_reason",
+    "mass_pruned_ratio",
+    "n_min_proto_used",
     "S0",
     "S1",
     "scale_ratio",
@@ -54,7 +62,7 @@ REQUIRED_COLUMNS: tuple[str, ...] = (
 
 def evaluate_task_a(df_metrics: pd.DataFrame, config: Mapping[str, Any]) -> None:
     """
-    Task-A evaluator covering the Arm-I closure slice and the Arm-II startup slice.
+    Task-A evaluator covering the shared Arm-I / Arm-II / Arm-III operator surface.
     """
     if df_metrics.empty:
         raise AssertionError("Task-A produced an empty metrics table")
@@ -82,6 +90,7 @@ def evaluate_task_a(df_metrics: pd.DataFrame, config: Mapping[str, Any]) -> None
 
     _evaluate_arm1(df_metrics)
     _evaluate_arm2(df_metrics)
+    _evaluate_arm3(df_metrics)
     _evaluate_ok_nonok_contract(df_metrics)
 
 
@@ -97,6 +106,8 @@ def _evaluate_arm1(df_metrics: pd.DataFrame) -> None:
         raise AssertionError("Arm-I lambda_mode must equal 'task_fixed_by_compartment'")
     if not (arm1["tau_mode"] == FIXED_MODE).all():
         raise AssertionError("Arm-I tau_mode must equal 'task_fixed_by_compartment'")
+    if not (arm1["mass_mode"] == DENSITY_MODE).all():
+        raise AssertionError("Arm-I mass_mode must equal 'density'")
 
     if constrained_mask.any():
         constrained = df_metrics.loc[constrained_mask]
@@ -135,6 +146,8 @@ def _evaluate_arm2(df_metrics: pd.DataFrame) -> None:
         raise AssertionError("Arm-II lambda_mode must equal 'pair_specific_joint'")
     if not (arm2["tau_mode"] == UNAVAILABLE_MODE).all():
         raise AssertionError("Arm-II tau_mode must equal 'unavailable'")
+    if not (arm2["mass_mode"] == DENSITY_MODE).all():
+        raise AssertionError("Arm-II mass_mode must equal 'density'")
     if not arm2["same_patient"].all():
         raise AssertionError("Arm-II rows must have same_patient=True")
     if arm2["same_compartment"].any():
@@ -157,6 +170,64 @@ def _evaluate_arm2(df_metrics: pd.DataFrame) -> None:
         if unique_lambda.size != 1:
             raise AssertionError(
                 f"Arm-II rows in pair_family {pair_family!r} must share one calibrated lambda_pl"
+            )
+
+
+def _evaluate_arm3(df_metrics: pd.DataFrame) -> None:
+    arm3_mask = df_metrics["arm"] == "A3_uq_stress"
+    if not arm3_mask.any():
+        return
+
+    arm3 = df_metrics.loc[arm3_mask]
+    for column in (
+        "pair_family",
+        "lambda_dens",
+        "U_abs_dens",
+        "S_src",
+        "S_tgt",
+        "Delta_scale",
+        "Q_src_dens",
+        "Q_tgt_dens",
+    ):
+        if column not in arm3.columns:
+            raise AssertionError(f"Arm-III metrics must include column {column!r}")
+
+    if not (arm3["lambda_mode"] == JOINT_MODE).all():
+        raise AssertionError("Arm-III lambda_mode must equal 'pair_specific_joint'")
+    if not (arm3["tau_mode"] == FIXED_MODE).all():
+        raise AssertionError("Arm-III tau_mode must equal 'task_fixed_by_compartment'")
+    if not (arm3["mass_mode"] == DENSITY_MODE).all():
+        raise AssertionError("Arm-III mass_mode must equal 'density'")
+    if not arm3["same_patient"].all():
+        raise AssertionError("Arm-III rows must have same_patient=True")
+    if arm3["same_compartment"].any():
+        raise AssertionError("Arm-III rows must have same_compartment=False")
+    if not (arm3["patient_id_a"].astype(str) == arm3["patient_id_b"].astype(str)).all():
+        raise AssertionError("Arm-III rows must remain within-patient")
+    if (arm3["compartment_a"].astype(str) == arm3["compartment_b"].astype(str)).any():
+        raise AssertionError("Arm-III rows must remain cross-compartment")
+
+    invalid_pair_types = sorted(set(arm3["pair_type"].astype(str)) - set(ARM3_PAIR_TYPE_TO_FAMILY))
+    if invalid_pair_types:
+        raise AssertionError(f"Arm-III rows contain invalid pair_type values: {invalid_pair_types}")
+
+    derived_families = arm3["pair_type"].astype(str).map(ARM3_PAIR_TYPE_TO_FAMILY)
+    if not (derived_families.astype(str) == arm3["pair_family"].astype(str)).all():
+        raise AssertionError("Arm-III pair_family values must match the declared pair_type")
+
+    if not np.isfinite(arm3["lambda_dens"].to_numpy(dtype=float)).all():
+        raise AssertionError("Arm-III lambda_dens must be finite for all rows")
+    np.testing.assert_allclose(
+        arm3["lambda_pl"].to_numpy(dtype=float),
+        arm3["lambda_dens"].to_numpy(dtype=float),
+        err_msg="Arm-III lambda_pl must mirror lambda_dens on the shared operator surface",
+    )
+
+    for pair_family, group in arm3.groupby("pair_family", sort=False):
+        unique_lambda = np.unique(group["lambda_pl"].to_numpy(dtype=float))
+        if unique_lambda.size != 1:
+            raise AssertionError(
+                f"Arm-III rows in pair_family {pair_family!r} must share one frozen lambda_pl"
             )
 
 
@@ -218,6 +289,34 @@ def _evaluate_ok_nonok_contract(df_metrics: pd.DataFrame) -> None:
         if not arm2_ok_df["tau"].isna().all():
             raise AssertionError("Arm-II ok rows must keep tau as NaN")
 
+    arm3_ok = ok_mask & (df_metrics["arm"] == "A3_uq_stress")
+    if arm3_ok.any():
+        arm3_ok_df = df_metrics.loc[arm3_ok]
+        finite_columns = (
+            "S0",
+            "S1",
+            "scale_ratio",
+            "lambda_pl",
+            "lambda_dens",
+            "T",
+            "D_pos",
+            "B_pos",
+            "d_rel",
+            "b_rel",
+            "M",
+            "R",
+            "tau",
+            "U_abs_dens",
+            "S_src",
+            "S_tgt",
+            "Delta_scale",
+            "Q_src_dens",
+            "Q_tgt_dens",
+        )
+        for column in finite_columns:
+            if not np.isfinite(arm3_ok_df[column].to_numpy(dtype=float)).all():
+                raise AssertionError(f"Arm-III ok rows must have finite values for {column!r}")
+
     if non_ok_mask.any():
         non_ok_df = df_metrics.loc[non_ok_mask]
         for column in MICRO_METRICS:
@@ -230,8 +329,20 @@ def _evaluate_ok_nonok_contract(df_metrics: pd.DataFrame) -> None:
         if arm2_non_ok.any() and not non_ok_df.loc[arm2_non_ok, "M_balanced"].isna().all():
             raise AssertionError("Arm-II non-ok rows must keep M_balanced as NaN")
 
+        arm3_non_ok = non_ok_df["arm"] == "A3_uq_stress"
+        if arm3_non_ok.any():
+            for column in ("U_abs_dens", "Q_src_dens", "Q_tgt_dens"):
+                if not non_ok_df.loc[arm3_non_ok, column].isna().all():
+                    raise AssertionError(f"Arm-III non-ok rows must keep {column!r} as NaN")
+
     ok_bypass = df_metrics.loc[ok_mask, "bypass_reason"]
     if not ok_bypass.isna().all():
         raise AssertionError("Ok rows must have null bypass_reason")
     if non_ok_mask.any() and df_metrics.loc[non_ok_mask, "bypass_reason"].isna().any():
         raise AssertionError("Non-ok rows must carry a task-level bypass_reason")
+
+    if not np.isfinite(pd.to_numeric(df_metrics["mass_pruned_ratio"], errors="coerce").to_numpy(dtype=float)).all():
+        raise AssertionError("Task-A rows must carry finite mass_pruned_ratio values")
+    n_min_proto_used = pd.to_numeric(df_metrics["n_min_proto_used"], errors="coerce").to_numpy(dtype=float)
+    if not np.isfinite(n_min_proto_used).all():
+        raise AssertionError("Task-A rows must carry finite n_min_proto_used values")

@@ -17,6 +17,7 @@ from .analysis_contract import (
     BaselineAnalysisTables,
     CONFIRMATORY_FAMILIES,
     PAIR_FAMILY_ORDER,
+    PROTOTYPE_ANNOTATION_COLUMNS,
     RecurrenceAnalysisTables,
     TransportAnalysisTables,
 )
@@ -60,15 +61,8 @@ def _proto_reference_table(
 ) -> pd.DataFrame:
     """Return one row per active prototype with the biological meaning columns."""
 
-    columns = [
-        "proto_id",
-        "dominant_cell_type",
-        "dominant_cell_type_fraction",
-        "top_cell_type_mix",
-        "total_cells",
-    ]
     return (
-        baseline_tables.prototype_meaning.loc[:, columns]
+        baseline_tables.prototype_meaning.loc[:, list(PROTOTYPE_ANNOTATION_COLUMNS)]
         .drop_duplicates(subset=["proto_id"])
         .sort_values("proto_id")
         .reset_index(drop=True)

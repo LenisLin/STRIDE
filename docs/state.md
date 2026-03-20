@@ -5,8 +5,10 @@
   - `tasks/task_A` remains the active task scaffold.
   - Stage 0 remains closed for the current Task-A track.
   - Arm-I remains documented and closed at the current local stage.
+  - Arm-I on the shared Task-A operator surface is now density-aligned with the current foundation.
   - Arm-II startup remains implemented and analyzed on the frozen Stage-0 artifact.
   - Arm-III Phase 0-8 is now implemented in the local task-layer runner.
+  - Arm-III full-coverage anchor rows are now wired into the main Task-A pipeline / evaluator surface.
   - Arm-III engineering execution is therefore closed locally, but scientific interpretation remains open.
 - Landed Tier-1 Arm-3 facts:
   - `src/slotar/uot.py::batched_uot_solve(...)` is now the canonical solver entrypoint and returns `(metrics, details, status)`.
@@ -19,6 +21,7 @@
   - Exact-event Phase-6 behavior and Phase-8 output finalization remained healthy on the exercised subset.
 - Current Priority:
   - keep the live docs aligned with the landed Arm-3 Phase 0-8 implementation and current scientific boundary
+  - keep the Arm-I / Arm-II / Arm-III shared operator surface coherent before deferred smoke validation
   - resolve the current Arm-II / Arm-III transport-side endpoint-definition mismatch before any Arm-IV transition
 - Deferred Work:
   - downstream scientific reconciliation of the Arm-II / Arm-III transport-side density-definition mismatch

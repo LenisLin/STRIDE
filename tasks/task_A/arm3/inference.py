@@ -37,15 +37,9 @@ import warnings
 import numpy as np
 import pandas as pd
 
+from ..common import build_task_a_uot_result_frame
 from .constants import DENSITY_EPS
-from slotar.exceptions import (
-    ERR_UOT_EMPTY_MASS_SOURCE,
-    ERR_UOT_EMPTY_MASS_TARGET,
-    ERR_UOT_EMPTY_SUPPORT,
-    ERR_UOT_NUMERICAL,
-)
 from slotar.uot import UOTSolveConfig, batched_uot_solve
-from slotar.utils import compute_active_mask
 
 # ---------------------------------------------------------------------------
 # Valid compartment / family sets (locked)
@@ -561,26 +555,6 @@ def compute_floor_dominated_flags(
     return floor_dominated.astype(bool)
 
 
-# ---------------------------------------------------------------------------
-# Patch 1 — Combined UOT solver + prototype event extraction
-# ---------------------------------------------------------------------------
-
-#: Mirror of common.STATUS_TO_BYPASS — local copy so inference.py has no
-#: dependency on common.py internals.
-_ARM3_STATUS_TO_BYPASS: dict[str, str | None] = {
-    "ok": None,
-    ERR_UOT_EMPTY_MASS_SOURCE: "S0_zero",
-    ERR_UOT_EMPTY_MASS_TARGET: "S1_zero",
-    ERR_UOT_EMPTY_SUPPORT: "empty_support_after_prune",
-    ERR_UOT_NUMERICAL: "uot_numerical_failure",
-}
-
-#: Scalar metric names returned by batched_uot_solve for ok rows.
-_ARM3_MICRO_METRICS: tuple[str, ...] = (
-    "T", "D_pos", "B_pos", "d_rel", "b_rel", "M", "R", "tau"
-)
-
-
 def _get_solver_detail(
     details: dict[str, np.ndarray],
     *names: str,
@@ -687,50 +661,18 @@ def run_uot_batch_with_events(
     )
 
     # ------------------------------------------------------------------
-    # Build scalar DataFrame (equivalent to common.run_uot_batch_safe)
+    # Build scalar DataFrame using the shared Task-A audit contract.
     # ------------------------------------------------------------------
-    result = pair_meta.reset_index(drop=True).copy()
-    for metric_name, values in solver_metrics.items():
-        result[metric_name] = values
-
-    result["lambda_pl"] = lambda_pl
-    result["uot_status"] = pd.Series(status, dtype="object")
-
-    # bypass_reason
-    unknown_statuses = sorted(set(status) - set(_ARM3_STATUS_TO_BYPASS))
-    if unknown_statuses:
-        raise ValueError(
-            f"run_uot_batch_with_events: unknown uot_status values: {unknown_statuses}"
-        )
-    result["bypass_reason"] = result["uot_status"].map(_ARM3_STATUS_TO_BYPASS)
-
-    # mass_pruned_ratio
-    ratios = np.zeros(n, dtype=float)
-    for idx in range(n):
-        _, ratios[idx] = compute_active_mask(A[idx], B[idx], uot_cfg.n_min_proto)
-    result["mass_pruned_ratio"] = ratios
-    result["n_min_proto_used"] = float(uot_cfg.n_min_proto)
-
-    S0 = np.sum(A, axis=1, dtype=float)
-    S1 = np.sum(B, axis=1, dtype=float)
-    result["S0"] = S0
-    result["S1"] = S1
-    result["scale_ratio"] = np.divide(
-        S1, S0,
-        out=np.full_like(S0, np.nan, dtype=float),
-        where=S0 > 0.0,
+    result = build_task_a_uot_result_frame(
+        pair_meta=pair_meta,
+        solver_metrics=solver_metrics,
+        status=status,
+        lambda_pl=lambda_pl,
+        A=A,
+        B=B,
+        uot_cfg=uot_cfg,
+        external_support_mask=external_support_mask,
     )
-    result["log_scale"] = np.where(
-        result["scale_ratio"] > 0.0,
-        np.log(result["scale_ratio"]),
-        np.nan,
-    )
-    result["U"] = result["B_pos"] + result["D_pos"]
-
-    not_ok = result["uot_status"] != "ok"
-    for metric_name in _ARM3_MICRO_METRICS:
-        result.loc[not_ok, metric_name] = np.nan
-    result.loc[not_ok, "U"] = np.nan
 
     # ------------------------------------------------------------------
     # Exact prototype event extraction from solver details — no re-solve and

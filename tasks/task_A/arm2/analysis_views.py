@@ -13,6 +13,7 @@ from .analysis_contract import (
     BaselineAnalysisTables,
     FocusedPrototypeViews,
     FocusedOutputPackage,
+    PROTOTYPE_ANNOTATION_VALUE_COLUMNS,
     RecurrenceAnalysisTables,
     TransportAnalysisTables,
 )
@@ -83,6 +84,7 @@ def extract_prototype_comparison_view(
     This is a pure downstream projection over the all-prototype tables.
     """
 
+    annotation_columns = list(PROTOTYPE_ANNOTATION_VALUE_COLUMNS)
     resolved_proto_ids = _resolve_selected_proto_ids(
         selected_proto_ids,
         baseline_tables,
@@ -100,7 +102,7 @@ def extract_prototype_comparison_view(
 
     grouped = (
         recurrence.groupby(
-            ["proto_id", "dominant_cell_type", "dominant_cell_type_fraction", "top_cell_type_mix", "total_cells"],
+            ["proto_id", *annotation_columns],
             sort=True,
             observed=False,
         )
@@ -133,13 +135,7 @@ def extract_prototype_comparison_view(
 
     comparison = baseline_summary.merge(
         grouped,
-        on=[
-            "proto_id",
-            "dominant_cell_type",
-            "dominant_cell_type_fraction",
-            "top_cell_type_mix",
-            "total_cells",
-        ],
+        on=["proto_id", *annotation_columns],
         how="left",
         validate="one_to_one",
     )
@@ -147,10 +143,7 @@ def extract_prototype_comparison_view(
     output_columns = [
         "selected_rank",
         "proto_id",
-        "dominant_cell_type",
-        "dominant_cell_type_fraction",
-        "top_cell_type_mix",
-        "total_cells",
+        *annotation_columns,
         "paired_patient_count",
         "confirmatory_abs_share_anchor",
         "confirmatory_abs_nonzero_share_anchor",
@@ -194,6 +187,7 @@ def extract_prototype_recurrence_view(
     This is a pure downstream subset over the all-prototype recurrence table.
     """
 
+    annotation_columns = list(PROTOTYPE_ANNOTATION_VALUE_COLUMNS)
     available = (
         recurrence_tables.all_prototype_patient_recurrence["proto_id"]
         .astype(int)
@@ -219,10 +213,7 @@ def extract_prototype_recurrence_view(
         "selected_rank",
         "patient_id",
         "proto_id",
-        "dominant_cell_type",
-        "dominant_cell_type_fraction",
-        "top_cell_type_mix",
-        "total_cells",
+        *annotation_columns,
         "has_both_confirmatory_families",
         "baseline_median_abs_delta_share_tc_im",
         "baseline_median_abs_delta_share_tc_pt",

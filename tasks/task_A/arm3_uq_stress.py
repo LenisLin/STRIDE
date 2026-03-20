@@ -29,7 +29,8 @@ Design constraints:
 - Full-coverage COUNT tensors (from roi_block_summary) are built separately in
   Phase 5/6 solely for support mask construction; they are not passed to the
   UOT solver.
-- This module is not yet registered in pipeline.py.
+- This module can now be invoked through `tasks/task_A/pipeline.py` when
+  `enabled_arms` includes `A3_uq_stress`.
 - result_root is accepted as an argument; no output path is hard-coded here.
 - Stage-0 spatial coordinates are read directly via h5py to avoid loading the
   full artifact into memory (follows arm2/analysis_io.py HDF5 style).
@@ -37,9 +38,11 @@ Design constraints:
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 import json
 from datetime import datetime, timezone
 from pathlib import Path
+from time import perf_counter
 from typing import Any
 
 import h5py
@@ -84,7 +87,7 @@ from .arm3.retention import (
     compute_contrast_degradation_summary,
     compute_degradation_summary,
 )
-from .common import run_balanced_ot_batch
+from .common import resolve_task_a_mass_mode, run_balanced_ot_batch
 from slotar.uot import UOTSolveConfig, precompute_logKernels
 
 # ---------------------------------------------------------------------------
@@ -106,6 +109,7 @@ _PAIR_META_ANCHOR_FILENAME = "arm3_phase3_pair_meta_anchor.parquet"
 _LAMBDA_DENS_FILENAME = "arm3_phase4_lambda_dens.json"
 _TAU_BY_COMPARTMENT_FILENAME = "arm3_phase4_tau_by_compartment.json"
 _CALIBRATION_RECORD_FILENAME = "arm3_phase4_calibration_record.json"
+_TIMING_SUMMARY_FILENAME = "arm3_runtime_timing.json"
 
 # ---------------------------------------------------------------------------
 # Phase 5/6 output file names
@@ -137,6 +141,45 @@ _PHASE7_CONTRAST_FILENAME = "arm3_phase7_contrast_summary"          # .parquet +
 # Patch 2B: prototype contrast prep table for Phase 8
 _PHASE8_PROTO_CONTRAST_FILENAME = "arm3_phase8_prototype_contrast_prep"  # .parquet
 
+ARM3_LAMBDA_MODE = "pair_specific_joint"
+ARM3_TAU_MODE = "task_fixed_by_compartment"
+
+
+@contextmanager
+def _timed_section(timing_seconds: dict[str, float], name: str):
+    started = perf_counter()
+    try:
+        yield
+    finally:
+        timing_seconds[name] = timing_seconds.get(name, 0.0) + (perf_counter() - started)
+
+
+def _coverage_key(coverage: float) -> str:
+    return f"coverage_{int(round(float(coverage) * 100.0)):02d}"
+
+
+def _write_timing_summary(
+    *,
+    result_root: Path,
+    timing_seconds: dict[str, float],
+    n_anchor_pairs: int,
+    n_reps: int,
+    coverage_levels: tuple[float, ...],
+) -> None:
+    payload = {
+        "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+        "timing_instrumentation_added": True,
+        "n_anchor_pairs": int(n_anchor_pairs),
+        "n_reps": int(n_reps),
+        "coverage_levels": [float(value) for value in coverage_levels],
+        "timing_seconds": {
+            key: float(value)
+            for key, value in sorted(timing_seconds.items())
+        },
+    }
+    with (result_root / _TIMING_SUMMARY_FILENAME).open("w", encoding="utf-8") as handle:
+        json.dump(payload, handle, indent=2, sort_keys=True)
+
 # ---------------------------------------------------------------------------
 # Public runner (Phase 0–4)
 # ---------------------------------------------------------------------------
@@ -146,10 +189,11 @@ def run_arm3(
     stage0_path: Path | str,
     config: dict[str, Any],
     result_root: Path | str,
-) -> None:
+) -> pd.DataFrame:
     """
     Run the Arm-3 Phase 0–8 pipeline and write validation, calibration,
-    inference packages, Phase 7 summaries, and Phase 8 summary outputs.
+    inference packages, Phase 7 summaries, Phase 8 summary outputs, and a
+    shared full-coverage pair-level metrics surface.
 
     Accepts the frozen Stage-0 artifact path, task config, and an externally
     provided result root. Writes Phase 0–3 validation, Phase 4 calibration,
@@ -174,10 +218,18 @@ def run_arm3(
     result_root : Path | str
         Root directory for output files. Must be config/CLI-provided.
         Must point to external result location; not the repository tree.
+
+    Returns
+    -------
+    pd.DataFrame
+        Arm-3 full-coverage anchor-pair metrics narrowed to the shared Task-A
+        operator surface plus Arm-3-specific columns.
     """
     stage0_path = Path(stage0_path)
     result_root = Path(result_root)
     result_root.mkdir(parents=True, exist_ok=True)
+    total_started = perf_counter()
+    timing_seconds: dict[str, float] = {}
 
     # -----------------------------------------------------------------------
     # Phase 0: Constants and manifest
@@ -191,6 +243,7 @@ def run_arm3(
     arm3_cfg = config.get("arm3", {})
     block_size_units = float(arm3_cfg.get("block_size_units", DEFAULT_BLOCK_SIZE_UNITS))
     block_area_mm2 = block_size_units ** 2 * COORD_TO_MM2
+    mass_mode = resolve_task_a_mass_mode(config, ARM3_NAME)
 
     print(f"[Arm-3 Phase 0] ARM3_NAME={ARM3_NAME}, K_FULL={K_FULL}, "
           f"block_size_units={block_size_units}, COORD_TO_MM2={COORD_TO_MM2}")
@@ -199,32 +252,35 @@ def run_arm3(
     # Phase 1: Load spatial inputs and build frozen grid partition
     # -----------------------------------------------------------------------
     print(f"[Arm-3 Phase 1] Loading Stage-0 spatial inputs from {stage0_path}")
-    spatial_xy, roi_ids_arr, proto_ids_arr, roi_table, cost_matrix, s_C, proto_labels = (
-        _load_arm3_stage0_inputs(stage0_path, k_full)
-    )
+    with _timed_section(timing_seconds, "phase1.load_stage0_inputs_seconds"):
+        spatial_xy, roi_ids_arr, proto_ids_arr, roi_table, cost_matrix, s_C, proto_labels = (
+            _load_arm3_stage0_inputs(stage0_path, k_full)
+        )
     print(f"[Arm-3 Phase 1] Prototype labels loaded: {proto_labels[:5]}{'...' if len(proto_labels) > 5 else ''}")
 
     print(f"[Arm-3 Phase 1] {spatial_xy.shape[0]:,} cells, "
           f"{len(roi_table['roi_id'].unique()):,} ROIs")
 
-    block_frame, roi_block_universe = build_grid_partition(
-        spatial_xy=spatial_xy,
-        roi_ids=roi_ids_arr,
-        proto_ids=proto_ids_arr,
-        block_size_units=block_size_units,
-        coord_to_mm2=COORD_TO_MM2,
-    )
+    with _timed_section(timing_seconds, "phase1.build_grid_partition_seconds"):
+        block_frame, roi_block_universe = build_grid_partition(
+            spatial_xy=spatial_xy,
+            roi_ids=roi_ids_arr,
+            proto_ids=proto_ids_arr,
+            block_size_units=block_size_units,
+            coord_to_mm2=COORD_TO_MM2,
+        )
 
     n_total_blocks = sum(len(v) for v in roi_block_universe.values())
     print(f"[Arm-3 Phase 1] Grid partition: {n_total_blocks:,} total blocks "
           f"across {len(roi_block_universe):,} ROIs")
 
-    roi_block_summary = compute_roi_block_summary(
-        block_frame=block_frame,
-        roi_block_universe=roi_block_universe,
-        k_full=k_full,
-        block_area_mm2=block_area_mm2,
-    )
+    with _timed_section(timing_seconds, "phase1.compute_roi_block_summary_seconds"):
+        roi_block_summary = compute_roi_block_summary(
+            block_frame=block_frame,
+            roi_block_universe=roi_block_universe,
+            k_full=k_full,
+            block_area_mm2=block_area_mm2,
+        )
 
     # Validate zero-cell blocks survived aggregation
     for roi_id, df in roi_block_summary.items():
@@ -239,17 +295,19 @@ def run_arm3(
     # Phase 2: Build full-coverage density reference from all blocks
     # -----------------------------------------------------------------------
     print("[Arm-3 Phase 2] Building full-coverage density vectors")
-    roi_density_vectors, roi_total_areas = build_full_coverage_density_vectors(
-        roi_block_summary=roi_block_summary,
-        k_full=k_full,
-    )
+    with _timed_section(timing_seconds, "phase2.build_density_reference_seconds"):
+        roi_density_vectors, roi_total_areas = build_full_coverage_density_vectors(
+            roi_block_summary=roi_block_summary,
+            k_full=k_full,
+        )
     print(f"[Arm-3 Phase 2] Density vectors built for {len(roi_density_vectors):,} ROIs")
 
     # -----------------------------------------------------------------------
     # Phase 3: Pair universe and anchor-direction subset
     # -----------------------------------------------------------------------
     print("[Arm-3 Phase 3] Building pair universe")
-    pair_meta_full, pair_meta_anchor = _build_pair_universe(roi_table)
+    with _timed_section(timing_seconds, "phase3.build_pair_universe_seconds"):
+        pair_meta_full, pair_meta_anchor = _build_pair_universe(roi_table)
     print(f"[Arm-3 Phase 3] Full pair universe: {len(pair_meta_full):,} rows; "
           f"Anchor subset: {len(pair_meta_anchor):,} rows")
 
@@ -266,20 +324,21 @@ def run_arm3(
     # Write Phase 0–3 validation package
     # -----------------------------------------------------------------------
     print(f"[Arm-3] Writing Phase 0–3 validation package to {result_root}")
-    _write_phase0_3_outputs(
-        result_root=result_root,
-        stage0_path=stage0_path,
-        block_size_units=block_size_units,
-        block_area_mm2=block_area_mm2,
-        spatial_xy=spatial_xy,
-        block_frame=block_frame,
-        roi_block_universe=roi_block_universe,
-        roi_block_summary=roi_block_summary,
-        roi_density_vectors=roi_density_vectors,
-        roi_total_areas=roi_total_areas,
-        pair_meta_full=pair_meta_full,
-        pair_meta_anchor=pair_meta_anchor,
-    )
+    with _timed_section(timing_seconds, "phase0_3.write_outputs_seconds"):
+        _write_phase0_3_outputs(
+            result_root=result_root,
+            stage0_path=stage0_path,
+            block_size_units=block_size_units,
+            block_area_mm2=block_area_mm2,
+            spatial_xy=spatial_xy,
+            block_frame=block_frame,
+            roi_block_universe=roi_block_universe,
+            roi_block_summary=roi_block_summary,
+            roi_density_vectors=roi_density_vectors,
+            roi_total_areas=roi_total_areas,
+            pair_meta_full=pair_meta_full,
+            pair_meta_anchor=pair_meta_anchor,
+        )
     print("[Arm-3] Phase 0–3 validation package written.")
 
     # -----------------------------------------------------------------------
@@ -299,8 +358,9 @@ def run_arm3(
     # -----------------------------------------------------------------------
 
     # Build UOT config and kernels from config + frozen cost geometry
-    uot_cfg = _build_uot_cfg(config)
-    kernels = precompute_logKernels(cost_matrix, uot_cfg.eps_schedule, s_C=float(s_C))
+    with _timed_section(timing_seconds, "phase4.build_uot_runtime_seconds"):
+        uot_cfg = _build_uot_cfg(config)
+        kernels = precompute_logKernels(cost_matrix, uot_cfg.eps_schedule, s_C=float(s_C))
     scaled_cost_matrix = np.asarray(cost_matrix, dtype=float) / float(s_C)
 
     # Resolve lambda grid: arm3.lambda_grid → arm2.lambda_grid → error
@@ -320,15 +380,16 @@ def run_arm3(
         f"[Arm-3 Phase 4] Calibrating lambda_dens per pair family "
         f"(grid={lambda_grid}, target_alpha={target_alpha})"
     )
-    lambda_dens = calibrate_lambda_dens(
-        roi_density_vectors=roi_density_vectors,
-        pair_meta=pair_meta_full,
-        k_full=k_full,
-        lambda_grid=lambda_grid,
-        uot_cfg=uot_cfg,
-        kernels=kernels,
-        target_alpha=target_alpha,
-    )
+    with _timed_section(timing_seconds, "phase4.calibrate_lambda_seconds"):
+        lambda_dens = calibrate_lambda_dens(
+            roi_density_vectors=roi_density_vectors,
+            pair_meta=pair_meta_full,
+            k_full=k_full,
+            lambda_grid=lambda_grid,
+            uot_cfg=uot_cfg,
+            kernels=kernels,
+            target_alpha=target_alpha,
+        )
     print(f"[Arm-3 Phase 4] lambda_dens calibrated: {lambda_dens}")
 
     # Build roi_compartment_map and roi_patient_map for tau calibration
@@ -350,29 +411,39 @@ def run_arm3(
     tau_q = float(arm3_cfg.get("tau_q", 0.5))
 
     print(f"[Arm-3 Phase 4] Calibrating tau per compartment (tau_q={tau_q})")
-    tau_by_compartment = calibrate_tau_by_compartment(
-        roi_density_vectors=roi_density_vectors,
-        roi_compartment_map=roi_compartment_map,
-        roi_patient_map=roi_patient_map,
-        k_full=k_full,
-        scaled_cost_matrix=scaled_cost_matrix,
-        frozen_lambdas=lambda_dens,
-        uot_cfg=uot_cfg,
-        kernels=kernels,
-        tau_q=tau_q,
-    )
+    with _timed_section(timing_seconds, "phase4.calibrate_tau_seconds"):
+        tau_by_compartment = calibrate_tau_by_compartment(
+            roi_density_vectors=roi_density_vectors,
+            roi_compartment_map=roi_compartment_map,
+            roi_patient_map=roi_patient_map,
+            k_full=k_full,
+            scaled_cost_matrix=scaled_cost_matrix,
+            frozen_lambdas=lambda_dens,
+            uot_cfg=uot_cfg,
+            kernels=kernels,
+            tau_q=tau_q,
+        )
     print(f"[Arm-3 Phase 4] tau_by_compartment calibrated: {tau_by_compartment}")
+
+    pair_meta_anchor_runtime = pair_meta_anchor.copy()
+    pair_meta_anchor_runtime["arm"] = ARM3_NAME
+    pair_meta_anchor_runtime["mass_mode"] = mass_mode
+    pair_meta_anchor_runtime["lambda_mode"] = ARM3_LAMBDA_MODE
+    pair_meta_anchor_runtime["tau_mode"] = ARM3_TAU_MODE
+    pair_meta_anchor_runtime["group_mode"] = "provided"
+    pair_meta_anchor_runtime["drift_mode"] = "unavailable"
 
     # Write Phase 4 outputs
     print(f"[Arm-3 Phase 4] Writing calibration outputs to {result_root}")
-    _write_phase4_outputs(
-        result_root=result_root,
-        lambda_dens=lambda_dens,
-        lambda_grid=lambda_grid,
-        target_alpha=target_alpha,
-        tau_by_compartment=tau_by_compartment,
-        tau_q=tau_q,
-    )
+    with _timed_section(timing_seconds, "phase4.write_outputs_seconds"):
+        _write_phase4_outputs(
+            result_root=result_root,
+            lambda_dens=lambda_dens,
+            lambda_grid=lambda_grid,
+            target_alpha=target_alpha,
+            tau_by_compartment=tau_by_compartment,
+            tau_q=tau_q,
+        )
     print("[Arm-3 Phase 4] Calibration outputs written.")
 
     # -----------------------------------------------------------------------
@@ -388,10 +459,11 @@ def run_arm3(
     )
 
     # --- Build full-coverage density tensors for anchor pairs ---
-    A_full, B_full = assemble_density_tensors(
-        roi_density_vectors, pair_meta_anchor, k_full
-    )
-    n_anchor_pairs = len(pair_meta_anchor)
+    with _timed_section(timing_seconds, "phase5_6.assemble_full_density_tensors_seconds"):
+        A_full, B_full = assemble_density_tensors(
+            roi_density_vectors, pair_meta_anchor_runtime, k_full
+        )
+    n_anchor_pairs = len(pair_meta_anchor_runtime)
     print(
         f"[Arm-3 Phase 5/6] Anchor pairs: {n_anchor_pairs}, "
         f"tensor shape: {A_full.shape}"
@@ -405,17 +477,19 @@ def run_arm3(
         roi_id: df[count_col_names].sum(axis=0).to_numpy(dtype=float)
         for roi_id, df in roi_block_summary.items()
     }
-    A_count, B_count = assemble_density_tensors(
-        roi_count_vectors, pair_meta_anchor, k_full
-    )
+    with _timed_section(timing_seconds, "phase5_6.assemble_support_count_tensors_seconds"):
+        A_count, B_count = assemble_density_tensors(
+            roi_count_vectors, pair_meta_anchor_runtime, k_full
+        )
 
     # --- Freeze support masks from COUNT tensors (n_min_proto is a COUNT threshold) ---
-    support_masks = freeze_support_masks(
-        A_count=A_count,
-        B_count=B_count,
-        n_min_proto=uot_cfg.n_min_proto,
-        k_full=k_full,
-    )
+    with _timed_section(timing_seconds, "phase5_6.freeze_support_masks_seconds"):
+        support_masks = freeze_support_masks(
+            A_count=A_count,
+            B_count=B_count,
+            n_min_proto=uot_cfg.n_min_proto,
+            k_full=k_full,
+        )
 
     # Self-check: support mask shape must match anchor pair count × K_FULL
     assert support_masks.shape == (n_anchor_pairs, k_full), (
@@ -429,8 +503,9 @@ def run_arm3(
     )
 
     # --- Broadcast frozen lambda and tau for anchor pairs ---
-    lambda_arr = broadcast_frozen_lambda(pair_meta_anchor, lambda_dens)
-    tau_arr = broadcast_frozen_tau(pair_meta_anchor, tau_by_compartment)
+    with _timed_section(timing_seconds, "phase5_6.broadcast_calibration_seconds"):
+        lambda_arr = broadcast_frozen_lambda(pair_meta_anchor_runtime, lambda_dens)
+        tau_arr = broadcast_frozen_tau(pair_meta_anchor_runtime, tau_by_compartment)
 
     # Lambda/tau broadcast integrity check
     if np.any(~np.isfinite(lambda_arr)):
@@ -449,17 +524,18 @@ def run_arm3(
     # both the scalar DataFrame and prototype-level event tensors.
     # -----------------------------------------------------------------------
     print("[Arm-3 Phase 6] Running full-coverage reference UOT (with prototype events)")
-    df_full, T_k_full, B_k_full, D_k_full = run_uot_batch_with_events(
-        A=A_full,
-        B=B_full,
-        lambda_pl=lambda_arr,
-        kernels=kernels,
-        uot_cfg=uot_cfg,
-        pair_meta=pair_meta_anchor,
-        tau_external=tau_arr,
-        external_support_mask=support_masks,
-    )
-    df_full = compute_arm3_density_metrics(df_full, A_full, B_full)
+    with _timed_section(timing_seconds, "phase6.full_coverage_uot_with_events_seconds"):
+        df_full, T_k_full, B_k_full, D_k_full = run_uot_batch_with_events(
+            A=A_full,
+            B=B_full,
+            lambda_pl=lambda_arr,
+            kernels=kernels,
+            uot_cfg=uot_cfg,
+            pair_meta=pair_meta_anchor_runtime,
+            tau_external=tau_arr,
+            external_support_mask=support_masks,
+        )
+        df_full = compute_arm3_density_metrics(df_full, A_full, B_full)
 
     # Shape-only Balanced OT on full-coverage: L1-normalise first
     A_shape_full = A_full / (A_full.sum(axis=1, keepdims=True) + DENSITY_EPS)
@@ -469,12 +545,14 @@ def run_arm3(
     assert np.all(A_shape_full.sum(axis=1) <= 1.0 + 1e-9), (
         "Balanced OT self-check failed: A_shape_full rows are not L1-normalised"
     )
-    bot_costs_full = run_balanced_ot_batch(
-        A_shape_full, B_shape_full, cost_matrix, n_min_proto=0.0
-    )
+    with _timed_section(timing_seconds, "phase6.full_coverage_balanced_ot_seconds"):
+        bot_costs_full = run_balanced_ot_batch(
+            A_shape_full, B_shape_full, scaled_cost_matrix, n_min_proto=0.0
+        )
 
     # Rename columns for Phase 6 output schema
-    df_full_out = _select_full_coverage_columns(df_full, lambda_arr, tau_arr)
+    with _timed_section(timing_seconds, "phase6.full_coverage_schema_projection_seconds"):
+        df_full_out = _select_full_coverage_columns(df_full, lambda_arr, tau_arr)
 
     # -----------------------------------------------------------------------
     # Phase 5: Bootstrap per coverage level + Phase 6 inference
@@ -486,19 +564,21 @@ def run_arm3(
     all_proto_boot_rows: list[pd.DataFrame] = []
 
     for coverage in COVERAGE_LEVELS:
+        coverage_key = _coverage_key(coverage)
         print(
             f"[Arm-3 Phase 5] Bootstrap coverage={coverage:.0%} "
             f"({n_reps} replicates × {n_anchor_pairs} pairs)"
         )
 
-        A_reps, B_reps, pseudo_meta = run_bootstrap_pass(
-            roi_block_summary=roi_block_summary,
-            pair_meta=pair_meta_anchor,
-            coverage=coverage,
-            n_reps=n_reps,
-            k_full=k_full,
-            rng_seed=rng_seed,
-        )
+        with _timed_section(timing_seconds, f"phase5.{coverage_key}.bootstrap_pass_seconds"):
+            A_reps, B_reps, pseudo_meta = run_bootstrap_pass(
+                roi_block_summary=roi_block_summary,
+                pair_meta=pair_meta_anchor,
+                coverage=coverage,
+                n_reps=n_reps,
+                k_full=k_full,
+                rng_seed=rng_seed,
+            )
 
         # Self-check: sampled block counts must match n_sampled formula
         # (verified implicitly by the pseudo_meta n_blocks_sampled_* columns)
@@ -510,28 +590,30 @@ def run_arm3(
             A_rep = A_reps[rep_idx]   # (N_anchor, K)
             B_rep = B_reps[rep_idx]   # (N_anchor, K)
 
-            df_rep, T_k_rep, B_k_rep, D_k_rep = run_uot_batch_with_events(
-                A=A_rep,
-                B=B_rep,
-                lambda_pl=lambda_arr,
-                kernels=kernels,
-                uot_cfg=uot_cfg,
-                pair_meta=pair_meta_anchor,
-                tau_external=tau_arr,
-                external_support_mask=support_masks,
-            )
-            df_rep = compute_arm3_density_metrics(df_rep, A_rep, B_rep)
+            with _timed_section(timing_seconds, f"phase6.{coverage_key}.uot_with_events_seconds"):
+                df_rep, T_k_rep, B_k_rep, D_k_rep = run_uot_batch_with_events(
+                    A=A_rep,
+                    B=B_rep,
+                    lambda_pl=lambda_arr,
+                    kernels=kernels,
+                    uot_cfg=uot_cfg,
+                    pair_meta=pair_meta_anchor_runtime,
+                    tau_external=tau_arr,
+                    external_support_mask=support_masks,
+                )
+                df_rep = compute_arm3_density_metrics(df_rep, A_rep, B_rep)
 
             # Prototype events for this replicate (long-format, one row per pair×prototype)
-            all_proto_boot_rows.append(
-                _build_prototype_events_df(
-                    pair_meta=pair_meta_anchor,
-                    T_k=T_k_rep, B_k=B_k_rep, D_k=D_k_rep,
-                    proto_labels=proto_labels,
-                    coverage=coverage,
-                    replicate_id=rep_idx,
+            with _timed_section(timing_seconds, f"phase6.{coverage_key}.prototype_event_rows_seconds"):
+                all_proto_boot_rows.append(
+                    _build_prototype_events_df(
+                        pair_meta=pair_meta_anchor_runtime,
+                        T_k=T_k_rep, B_k=B_k_rep, D_k=D_k_rep,
+                        proto_labels=proto_labels,
+                        coverage=coverage,
+                        replicate_id=rep_idx,
+                    )
                 )
-            )
 
             # Floor-dominated flags using frozen support masks
             floor_dom = compute_floor_dominated_flags(
@@ -557,10 +639,11 @@ def run_arm3(
                 "A_shape_rep rows are not L1-normalised"
             )
 
-            bot_costs = run_balanced_ot_batch(
-                A_shape_rep, B_shape_rep, cost_matrix, n_min_proto=0.0
-            )
-            bot_row = pair_meta_anchor[
+            with _timed_section(timing_seconds, f"phase6.{coverage_key}.balanced_ot_seconds"):
+                bot_costs = run_balanced_ot_batch(
+                    A_shape_rep, B_shape_rep, scaled_cost_matrix, n_min_proto=0.0
+                )
+            bot_row = pair_meta_anchor_runtime[
                 ["pair_id", "patient_id", "pair_type", "pair_family",
                  "compartment_a", "compartment_b"]
             ].copy()
@@ -578,7 +661,7 @@ def run_arm3(
     # Full-coverage Balanced OT reference row.
     # coverage=1.0 is stored only as a baseline marker for audit compatibility;
     # it is not part of the reduced bootstrap loop.
-    bot_row_full = pair_meta_anchor[
+    bot_row_full = pair_meta_anchor_runtime[
         ["pair_id", "patient_id", "pair_type", "pair_family",
          "compartment_a", "compartment_b"]
     ].copy()
@@ -591,13 +674,14 @@ def run_arm3(
     # -----------------------------------------------------------------------
     # Concat and build audit tables
     # -----------------------------------------------------------------------
-
-    df_bootstrap_all = pd.concat(all_bootstrap_results, ignore_index=True)
-    df_bot_all = pd.concat(all_bot_rows, ignore_index=True)
-    df_pseudo_audit_all = pd.concat(all_pseudo_audit, ignore_index=True)
+    with _timed_section(timing_seconds, "phase6.concat_bootstrap_tables_seconds"):
+        df_bootstrap_all = pd.concat(all_bootstrap_results, ignore_index=True)
+        df_bot_all = pd.concat(all_bot_rows, ignore_index=True)
+        df_pseudo_audit_all = pd.concat(all_pseudo_audit, ignore_index=True)
 
     # Support mask audit table
-    support_mask_audit = _build_support_mask_audit(pair_meta_anchor, support_masks, k_full)
+    with _timed_section(timing_seconds, "phase6.build_support_mask_audit_seconds"):
+        support_mask_audit = _build_support_mask_audit(pair_meta_anchor_runtime, support_masks, k_full)
 
     # Anchor metric summary
     # Self-check: must contain only TC->IM and TC->PT
@@ -608,21 +692,23 @@ def run_arm3(
             f"Anchor summary self-check failed: unexpected pair_type values "
             f"{sorted(unexpected_anchor)} in bootstrap results"
         )
-    df_metric_summary = _build_metric_summary_anchor(df_bootstrap_all, df_full_out)
+    with _timed_section(timing_seconds, "phase6.build_metric_summary_seconds"):
+        df_metric_summary = _build_metric_summary_anchor(df_bootstrap_all, df_full_out)
 
     # -----------------------------------------------------------------------
     # Write Phase 5/6 outputs
     # -----------------------------------------------------------------------
     print(f"[Arm-3 Phase 5/6] Writing outputs to {result_root}")
-    _write_phase5_6_outputs(
-        result_root=result_root,
-        df_pseudo_audit=df_pseudo_audit_all,
-        df_full_coverage=df_full_out,
-        df_bootstrap=df_bootstrap_all,
-        df_bot=df_bot_all,
-        df_support_mask_audit=support_mask_audit,
-        df_metric_summary=df_metric_summary,
-    )
+    with _timed_section(timing_seconds, "phase5_6.write_outputs_seconds"):
+        _write_phase5_6_outputs(
+            result_root=result_root,
+            df_pseudo_audit=df_pseudo_audit_all,
+            df_full_coverage=df_full_out,
+            df_bootstrap=df_bootstrap_all,
+            df_bot=df_bot_all,
+            df_support_mask_audit=support_mask_audit,
+            df_metric_summary=df_metric_summary,
+        )
     print("[Arm-3 Phase 5/6] Outputs written.")
 
     # -----------------------------------------------------------------------
@@ -643,13 +729,14 @@ def run_arm3(
     )
 
     # Build full-coverage prototype event table (sentinel replicate_id=-1)
-    df_proto_events_full = _build_prototype_events_df(
-        pair_meta=pair_meta_anchor,
-        T_k=T_k_full, B_k=B_k_full, D_k=D_k_full,
-        proto_labels=proto_labels,
-        coverage=1.0,
-        replicate_id=-1,
-    )
+    with _timed_section(timing_seconds, "phase6.full_coverage_prototype_event_rows_seconds"):
+        df_proto_events_full = _build_prototype_events_df(
+            pair_meta=pair_meta_anchor_runtime,
+            T_k=T_k_full, B_k=B_k_full, D_k=D_k_full,
+            proto_labels=proto_labels,
+            coverage=1.0,
+            replicate_id=-1,
+        )
 
     # Self-check 2: Event mass nonnegativity on ok rows (full-coverage)
     ok_mask_full = df_full["uot_status"] == "ok"
@@ -677,23 +764,25 @@ def run_arm3(
     )
 
     # Concatenate bootstrap prototype events
-    df_proto_events_bootstrap = (
-        pd.concat(all_proto_boot_rows, ignore_index=True)
-        if all_proto_boot_rows
-        else pd.DataFrame(
-            columns=[
-                "pair_id", "patient_id", "pair_type", "pair_family",
-                "coverage", "replicate_id", "prototype_k", "prototype_label",
-                "T_mass", "B_mass", "D_mass",
-            ]
+    with _timed_section(timing_seconds, "phase6.concat_prototype_event_tables_seconds"):
+        df_proto_events_bootstrap = (
+            pd.concat(all_proto_boot_rows, ignore_index=True)
+            if all_proto_boot_rows
+            else pd.DataFrame(
+                columns=[
+                    "pair_id", "patient_id", "pair_type", "pair_family",
+                    "coverage", "replicate_id", "prototype_k", "prototype_label",
+                    "T_mass", "B_mass", "D_mass",
+                ]
+            )
         )
-    )
 
     # Write prototype event parquets
     _proto_full_path = result_root / _PROTO_EVENTS_FULL_FILENAME
     _proto_boot_path = result_root / _PROTO_EVENTS_BOOTSTRAP_FILENAME
-    df_proto_events_full.to_parquet(_proto_full_path, index=False)
-    df_proto_events_bootstrap.to_parquet(_proto_boot_path, index=False)
+    with _timed_section(timing_seconds, "phase6.write_prototype_event_outputs_seconds"):
+        df_proto_events_full.to_parquet(_proto_full_path, index=False)
+        df_proto_events_bootstrap.to_parquet(_proto_boot_path, index=False)
     print(
         f"[Arm-3 Phase 6] Prototype event parquets written: "
         f"{len(df_proto_events_full)} full-coverage rows, "
@@ -717,19 +806,21 @@ def run_arm3(
 
     _monitored_quantities = ["U_abs_dens", "Q_src_dens"]
 
-    df_degradation = compute_degradation_summary(
-        df_full_cov=df_full_anchor,
-        df_reduced=df_boot_anchor,
-        monitored_quantities=_monitored_quantities,
-        pair_id_col="pair_id",
-        patient_id_col="patient_id",
-    )
+    with _timed_section(timing_seconds, "phase7.compute_degradation_summary_seconds"):
+        df_degradation = compute_degradation_summary(
+            df_full_cov=df_full_anchor,
+            df_reduced=df_boot_anchor,
+            monitored_quantities=_monitored_quantities,
+            pair_id_col="pair_id",
+            patient_id_col="patient_id",
+        )
 
     # Write Phase 7 outputs
     _deg_parquet = result_root / f"{_PHASE7_DEGRADATION_FILENAME}.parquet"
     _deg_csv = result_root / f"{_PHASE7_DEGRADATION_FILENAME}.csv"
-    df_degradation.to_parquet(_deg_parquet, index=False)
-    df_degradation.to_csv(_deg_csv, index=False)
+    with _timed_section(timing_seconds, "phase7.write_degradation_outputs_seconds"):
+        df_degradation.to_parquet(_deg_parquet, index=False)
+        df_degradation.to_csv(_deg_csv, index=False)
     print(
         f"[Arm-3 Phase 7] Degradation summary written "
         f"({len(df_degradation)} rows, {df_degradation['patient_id'].nunique()} patients)."
@@ -746,11 +837,12 @@ def run_arm3(
     # counted, printed, and stored in the output DataFrame per
     # (contrast_name, coverage) group.
     print("[Arm-3 Phase 7] Computing contrast-based sign-consistency summary...")
-    df_contrast = compute_contrast_degradation_summary(
-        df_full_cov=df_full_anchor,
-        df_reduced=df_boot_anchor,
-        patient_id_col="patient_id",
-    )
+    with _timed_section(timing_seconds, "phase7.compute_contrast_summary_seconds"):
+        df_contrast = compute_contrast_degradation_summary(
+            df_full_cov=df_full_anchor,
+            df_reduced=df_boot_anchor,
+            patient_id_col="patient_id",
+        )
 
     # Audit report: print zero-reference counts per contrast × coverage
     if not df_contrast.empty:
@@ -771,8 +863,9 @@ def run_arm3(
     # Write contrast summary
     _con_parquet = result_root / f"{_PHASE7_CONTRAST_FILENAME}.parquet"
     _con_csv = result_root / f"{_PHASE7_CONTRAST_FILENAME}.csv"
-    df_contrast.to_parquet(_con_parquet, index=False)
-    df_contrast.to_csv(_con_csv, index=False)
+    with _timed_section(timing_seconds, "phase7.write_contrast_outputs_seconds"):
+        df_contrast.to_parquet(_con_parquet, index=False)
+        df_contrast.to_csv(_con_csv, index=False)
     print(
         f"[Arm-3 Phase 7] Contrast summary written "
         f"({len(df_contrast)} rows)."
@@ -782,12 +875,14 @@ def run_arm3(
     # Patch 2B: Prototype contrast prep table (Phase 8 data path)
     # -------------------------------------------------------------------
     print("[Arm-3 Phase 7/8 prep] Building prototype contrast table for Phase 8...")
-    df_proto_contrast = build_prototype_contrast_table(
-        df_proto_events_full=df_proto_events_full,
-        df_proto_events_bootstrap=df_proto_events_bootstrap,
-    )
+    with _timed_section(timing_seconds, "phase7_8.build_prototype_contrast_seconds"):
+        df_proto_contrast = build_prototype_contrast_table(
+            df_proto_events_full=df_proto_events_full,
+            df_proto_events_bootstrap=df_proto_events_bootstrap,
+        )
     _proto_con_path = result_root / f"{_PHASE8_PROTO_CONTRAST_FILENAME}.parquet"
-    df_proto_contrast.to_parquet(_proto_con_path, index=False)
+    with _timed_section(timing_seconds, "phase7_8.write_prototype_contrast_seconds"):
+        df_proto_contrast.to_parquet(_proto_con_path, index=False)
     print(
         f"[Arm-3 Phase 8 prep] Prototype contrast table written "
         f"({len(df_proto_contrast)} rows, "
@@ -799,16 +894,27 @@ def run_arm3(
     # Phase 8 — Prototype summary table and descriptive memo
     # -----------------------------------------------------------------------
     print("[Arm-3 Phase 8] Building prototype summary table and descriptive memo...")
-    df_phase8, _ = finalize_arm3_phase8(
-        result_root=result_root,
-        df_degradation=df_degradation,
-        df_contrast=df_contrast,
-        df_proto_contrast=df_proto_contrast,
-    )
+    with _timed_section(timing_seconds, "phase8.finalize_outputs_seconds"):
+        df_phase8, _ = finalize_arm3_phase8(
+            result_root=result_root,
+            df_degradation=df_degradation,
+            df_contrast=df_contrast,
+            df_proto_contrast=df_proto_contrast,
+        )
     print(
         f"[Arm-3 Phase 8] Outputs written "
         f"({len(df_phase8)} prototype-by-coverage rows)."
     )
+
+    timing_seconds["total_runtime_seconds"] = perf_counter() - total_started
+    _write_timing_summary(
+        result_root=result_root,
+        timing_seconds=timing_seconds,
+        n_anchor_pairs=n_anchor_pairs,
+        n_reps=n_reps,
+        coverage_levels=COVERAGE_LEVELS,
+    )
+    return df_full_out
 
 
 def finalize_arm3_phase8(
@@ -1078,7 +1184,11 @@ def _build_pair_universe(
                     records.append(
                         {
                             "pair_id": pair_id,
+                            "patient_group_id": pair_id,
                             "patient_id": str(patient_id),
+                            "compartment": source_comp,
+                            "patient_id_a": str(patient_id),
+                            "patient_id_b": str(patient_id),
                             "compartment_a": source_comp,
                             "compartment_b": target_comp,
                             "same_patient": True,
@@ -1357,14 +1467,22 @@ def _select_full_coverage_columns(
     df["tau"] = tau_arr
 
     required = [
-        "pair_id", "patient_id", "pair_type", "pair_family",
+        "patient_group_id", "pair_id", "arm", "patient_id", "compartment",
+        "patient_id_a", "patient_id_b",
         "compartment_a", "compartment_b",
-        "lambda_dens", "tau",
-        "T", "B_pos", "D_pos",
-        "U_abs_dens", "S_src", "S_tgt", "Delta_scale", "scale_ratio",
+        "same_patient", "same_compartment",
+        "pair_type", "roi_a", "roi_b",
+        "lambda_pl", "lambda_mode", "tau_mode", "mass_mode",
+        "uot_status", "bypass_reason", "mass_pruned_ratio", "n_min_proto_used",
+        "S0", "S1", "scale_ratio", "U",
+        "T", "D_pos", "B_pos", "d_rel", "b_rel", "M", "R", "tau",
+        "pair_family",
+        "lambda_dens",
+        "U_abs_dens", "S_src", "S_tgt", "Delta_scale",
         "Q_src_dens", "Q_tgt_dens",
-        "uot_status",
     ]
+    if "density_active_pruned_ratio" in df.columns:
+        required.insert(required.index("n_min_proto_used") + 1, "density_active_pruned_ratio")
     missing_cols = [c for c in required if c not in df.columns]
     if missing_cols:
         raise RuntimeError(

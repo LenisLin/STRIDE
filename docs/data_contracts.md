@@ -45,16 +45,28 @@ This section distinguishes between the future canonical bridge-oriented pathway 
 - That bridge is NOT the current live Arm-3 local write path.
 - The current local Arm-3 implementation writes task-scoped parquet / csv / json artifacts directly from `tasks/task_A/arm3_uq_stress.py`.
 
-### 2.2 Current Local Arm-3 Scalar Result Tables
+### 2.2 Current Shared Task-A Pipeline / Evaluator Surface
+- `tasks/task_A/pipeline.py` currently writes one temporary shared metrics parquet: `task_A_metrics.parquet`.
+- That temporary shared table is the current Task-A operator / evaluator surface, not the final bridge export.
+- Current arm coverage on that shared table:
+  - Arm-I: `A1_baseline`, `A1_broken_reference`
+  - Arm-II: `A2_cross_compartment`
+  - Arm-III: `A3_uq_stress` full-coverage anchor rows only
+- Mixed-arm configs should declare `data.mass_mode_by_arm`; the legacy global `data.mass_mode` key is only a single-mode fallback surface.
+- The common required subset on the shared table includes pair identity / locality fields, `lambda_pl`, `lambda_mode`, `tau_mode`, `mass_mode`, solver status / bypass fields, pruning audit fields, `S0`, `S1`, `scale_ratio`, `U`, and the standard Task-A micro metrics.
+
+### 2.3 Current Local Arm-3 Scalar Result Tables
 Current Arm-3 scalar outputs are pair-level tables. They do not embed dense event tensors or dense transport plans.
 
 **Primary pair-level result tables**
 - `arm3_phase6_full_coverage_results.parquet`
   - One row per full-coverage anchor-direction pair.
-  - Core fields include pair identifiers / metadata (`pair_id`, `patient_id`, `pair_type`, `pair_family`, `compartment_a`, `compartment_b`), frozen calibration values (`lambda_dens`, `tau`), solver metrics (`T`, `B_pos`, `D_pos`, `uot_status`), and Arm-3 density summaries (`U_abs_dens`, `S_src`, `S_tgt`, `Delta_scale`, `scale_ratio`, `Q_src_dens`, `Q_tgt_dens`).
+  - This is the same Arm-3 table now surfaced through the shared Task-A pipeline / evaluator path.
+  - Core fields include the shared Task-A subset (`patient_group_id`, `pair_id`, `patient_id`, `patient_id_a`, `patient_id_b`, `compartment`, `compartment_a`, `compartment_b`, `same_patient`, `same_compartment`, `roi_a`, `roi_b`, `lambda_pl`, `lambda_mode`, `tau_mode`, `mass_mode`, `uot_status`, `bypass_reason`, `mass_pruned_ratio`, `n_min_proto_used`, `S0`, `S1`, `scale_ratio`, `U`, `T`, `D_pos`, `B_pos`, `d_rel`, `b_rel`, `M`, `R`, `tau`) plus Arm-3-specific fields (`pair_family`, `lambda_dens`, `U_abs_dens`, `S_src`, `S_tgt`, `Delta_scale`, `Q_src_dens`, `Q_tgt_dens`).
 - `arm3_phase6_bootstrap_results.parquet`
   - One row per reduced-coverage replicate pair.
   - Carries the same pair-level scalar contract as the full-coverage table plus bootstrap fields such as `coverage`, `replicate_id`, and `floor_dominated`.
+  - This bootstrap table is not folded into `task_A_metrics.parquet`; it remains Arm-3-specific supplemental output.
 
 **Additional scalar / audit tables currently written by Arm-3**
 - `arm3_phase5_pseudo_roi_audit.parquet`
@@ -64,7 +76,7 @@ Current Arm-3 scalar outputs are pair-level tables. They do not embed dense even
 - `arm3_phase7_degradation_summary.parquet` / `.csv`
 - `arm3_phase7_contrast_summary.parquet` / `.csv`
 
-### 2.3 Current Local Arm-3 Exact Prototype-Event Tables
+### 2.4 Current Local Arm-3 Exact Prototype-Event Tables
 Current Arm-3 event outputs are prototype-level tables derived from exact solver details. They are physically separate from the pair-level scalar tables.
 
 **Exact prototype-event tables**
@@ -82,7 +94,7 @@ Current Arm-3 event outputs are prototype-level tables derived from exact solver
 - These tables are generated from exact solver-derived per-prototype details returned by `src/slotar/uot.py::batched_uot_solve(...)` and consumed through `tasks/task_A/arm3/inference.py::run_uot_batch_with_events(...)`.
 - Dense `Pi` is optional internal solver detail. It is not a standard exported Arm-3 artifact.
 
-### 2.4 Current Local Arm-3 Calibration and Phase-8 Tables
+### 2.5 Current Local Arm-3 Calibration and Phase-8 Tables
 - `arm3_phase4_lambda_dens.json`
 - `arm3_phase4_tau_by_compartment.json`
 - `arm3_phase4_calibration_record.json`
@@ -94,7 +106,7 @@ Current Arm-3 event outputs are prototype-level tables derived from exact solver
 - `arm3_phase8_memo.md`
   - This is the current local descriptive Phase-8 memo. It summarizes file context and aggregate Phase 7 / 8 table structure without assigning thresholded or biological outcome labels.
 
-### 2.5 Scalar / Event Separation Rule
+### 2.6 Scalar / Event Separation Rule
 - Pair-level scalar tables remain the primary location for transport metrics, scale summaries, calibration broadcasts, solver status, and bootstrap-level summary quantities.
 - Prototype-event tables remain the location for exact per-prototype `T`, `B`, and `D` masses.
 - Dense transport plans and other solver-internal tensors are not part of the standard exported Arm-3 local artifact surface unless a task explicitly writes a dedicated debug artifact.

@@ -5,7 +5,8 @@
 task_name: "Task A: aligned operator surface"
 
 enabled_arms:
-  - "A2_cross_compartment"
+  - "A1_baseline"
+  - "A1_broken_reference"
 
 data:
   mass_mode_by_arm:
@@ -26,16 +27,14 @@ uot_params:
   n_min_proto: 0.0
   tau_mode: "external_fixed_by_task"
 
-arm2:
-  target_alpha: 0.05
-  lambda_grid: [0.05, 0.1, 0.5, 1.0, 2.0, 5.0, 10.0]
-
-# Optional Arm-3 overrides when A3_uq_stress is enabled.
-# pipeline.main(..., output_dir=...) uses output_dir as the Arm-3 result root.
-# arm3:
-#   block_size_units: 100.0
-#   lambda_grid: [0.05, 0.1, 0.5, 1.0, 2.0, 5.0, 10.0]
-#   target_alpha: 0.05
-#   tau_q: 0.5
-#   n_reps: 100
-#   rng_seed: 42
+arm1:
+  n_draws: 200
+  random_seed: 42
+  fixed_lambda_by_compartment:
+    TC: 1.0
+    IM: 1.0
+    PT: 1.0
+  fixed_tau_by_compartment:
+    TC: 1.0
+    IM: 1.0
+    PT: 1.0

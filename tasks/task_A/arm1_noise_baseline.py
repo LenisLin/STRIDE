@@ -12,7 +12,7 @@ from anndata import AnnData
 
 from slotar.uot import UOTSolveConfig
 
-from .common import assemble_tensors, run_uot_batch_safe
+from .common import assemble_tensors, resolve_task_a_mass_mode, run_uot_batch_safe
 
 ARM_NAME = "A1_baseline"
 FIXED_MODE = "task_fixed_by_compartment"
@@ -85,7 +85,7 @@ def run_arm1(
         raise ValueError("Arm I produced no eligible within-patient within-compartment ROI pairs")
 
     k_full = int(config["data"]["k_full"])
-    mass_mode = str(config["data"]["mass_mode"])
+    mass_mode = resolve_task_a_mass_mode(config, ARM_NAME)
     A, B, mass_gap = assemble_tensors(adata, pair_meta, k_full=k_full, mass_mode=mass_mode)
     pair_meta = pair_meta.copy()
     pair_meta["mass_gap"] = mass_gap
