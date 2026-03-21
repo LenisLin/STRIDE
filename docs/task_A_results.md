@@ -1,121 +1,109 @@
-# Task A Current Results Summary
+# Task A Current Results
 
-## 1. Scope
+## 1. Evidence Basis and Boundary
+- This document summarizes the current persisted Task A real-data outputs already on disk.
+- Current persisted status: Arm I current-stage real-data output is present, Arm II startup-slice output is present, and the Arm III Phase 0-8 density-primary bundle is present.
+- Current evidence is bounded to the frozen Stage-0 artifact and the following current persisted outputs:
+  - Arm I: `/mnt/NAS_21T/ProjectResult/SLOTAR/task_A/arm1_realdata_2026-03-19/task_A_metrics.parquet`
+  - Arm II: `/mnt/NAS_21T/ProjectResult/SLOTAR/task_A/arm2_cross_compartment/task_A_metrics.parquet` plus `analysis/focused/` and `analysis/bioinformed/`
+  - Arm III: `/mnt/NAS_21T/ProjectResult/SLOTAR/task_A/arm3_phase0_8_closure/full_2026-03-19/task_A_metrics.parquet` plus phase 6-8 outputs
+- Current result scope:
+  - Arm I: current constrained-versus-broken comparison stage
+  - Arm II: current startup slice on confirmatory `TC-IM` and `TC-PT`; `IM-PT` remains exploratory
+  - Arm III: current density-primary reduced-coverage robustness layer on `TC->IM` and `TC->PT`
+- Current evidence supports a bounded Arms I-III narrative; it does not close Task A or authorize Arm IV.
 
-This document records the current local Task-A results state.
+## 2. Overall Current Task-A Claim
+- On the frozen Stage-0 single-timepoint IMC representation, the current persisted evidence supports a three-step Task A narrative: Arm I shows locality-sensitive separation between constrained and broken pairing, Arm II supports a biologically ordered UOT interpretation on confirmatory `TC-IM` versus `TC-PT`, and Arm III shows that the unmatched-burden side of that Arm-II interpretation remains readable under reduced coverage.
+- The current supported contribution is bounded to this startup-slice and reduced-coverage chain and does not support generic OT superiority, confirmatory `IM-PT` claims, full Arm-II or Arm-III scientific closure, or Arm IV readiness.
 
-Task A currently contains completed Arm-I current-stage evidence, current-stage Arm-II evidence, and a completed Arm-III Phase 0-8 engineering execution package.
+## 3. Arm-I Current Result
+- The current Arm-I persisted output contains `38400` rows: `19200` `A1_baseline` rows and `19200` `A1_broken_reference` rows, all `ok`, all `density`, with the intended locality invariants preserved.
+- The constrained baseline separates from the broken-locality comparator in the expected directions by median:
 
-The present summary separates engineering execution from scientific interpretation. Arm-III Phase 0-8 is closed at the execution level, but the scientific interpretation remains partial and does not close Task A.
+| field | constrained baseline | broken-locality reference |
+| --- | ---: | ---: |
+| `M` | 0.150480 | 0.581892 |
+| `R` | 0.987103 | 0.860789 |
+| `T` | 4241.798305 | 3624.202555 |
+| `U` | 4309.428986 | 5730.270572 |
+| `D_pos` | 2102.985496 | 2781.667171 |
+| `B_pos` | 2102.519533 | 2785.450689 |
 
-The present summary is stage-limited and startup-slice bounded. It is not a claim of full Task-A completion.
+- Current result interpretation: Arm I is strong enough as the locality-sensitive entry condition for Arm II.
+- Current non-claim boundary: Arm I is not a prototype-biology result, not full Task A completion, and not direct evidence for Arm II / III / IV by itself.
 
-## 2. Current evidence boundary
+## 4. Arm-II Current Result
+### Baseline context
+- The non-transport baseline layer is non-null on the same confirmatory pair set and is kept separate from the transport interpretation.
+- In `04_baseline_patient_family_confirmatory_summary.csv`, the across-patient median of patient-level median absolute share difference is `0.019153` for `TC-IM` and `0.023092` for `TC-PT`, and `23/32` patients show positive `TC-PT - TC-IM` baseline contrast.
+- This means confirmatory tissue differences are already visible before transport is invoked.
 
-- Current evidence is based on the frozen Stage-0 artifact and the current local Task-A metrics parquet.
-- Arm-I is interpreted at its current documented stage.
-- Arm-II is interpreted only on the current startup slice.
-- Arm-II confirmatory families are `TC-IM` and `TC-PT`.
-- `IM-PT` remains exploratory and audit-only.
-- The confirmatory analysis unit is patient.
-- The current focused Arm-II package covers 32 patients.
-- `tau` and `R` are unavailable in the current Arm-II startup slice and are not interpreted.
+### Confirmatory tissue-level result
+- The current confirmatory surface covers `558` `TC-IM` rows and `522` `TC-PT` rows across `32` patients for each family.
+- In `05_global_transport_summary.csv`, the patient-level confirmatory medians are:
 
-## 3. Arm-I as the entry condition
+| field | `TC-IM` | `TC-PT` |
+| --- | ---: | ---: |
+| `U_abs` | 864.869392 | 1457.782025 |
+| `transport_fraction` | 0.867354 | 0.820392 |
+| `unmatched_fraction` | 0.132646 | 0.179608 |
+| `M` | 0.652815 | 0.917032 |
 
-Arm-I provides the entry condition for Arm-II at the current local stage.
+- The confirmatory patient-level direction is consistent with the intended biological ordering: `29/32` patients show higher unmatched burden on `TC-PT` than on `TC-IM`, `29/32` show lower transport fraction on `TC-PT`, and `29/32` show higher unmatched fraction on `TC-PT`.
+- Balanced OT remains same-pair comparator context rather than a one-direction winner signal: the patient-level `balanced_minus_uot` median is `+0.005208` on `TC-IM` and `-0.004532` on `TC-PT`.
 
-Under the present metric set, the current locality-sensitive scaffold shows separation between locality-preserving constrained pairing and locality-breaking pairing. This supports proceeding to biologically ordered tissue comparisons on the frozen Stage-0 representation.
+### Prototype-level interpretation
+- The current prototype layer supports an allocation/interpretability claim rather than a scalar-winner claim.
+- Recurrent shared-transport anchors include `Mono_CD11c`, `TC_EpCAM`, and `TC_Ki67` prototypes, while recurrent unmatched contributors include `Mono_CD11c`, `Macro_CD163`, `CD8T`, and `SC_COLLAGEN`.
+- Patient-level recurrence is strong for the leading signals: proto `14` (`Mono_CD11c`) is positive in shared transport `32/32` patients and in unmatched structure `32/32` patients, proto `3` (`TC_EpCAM`) is shared-transport-positive in `32/32` patients, and proto `2` (`Macro_CD163`) is unmatched-positive in `32/32` patients.
+- The strongest current OT-vs-UOT wording is bounded. OT transport and UOT shared transport overlap heavily (`9/10` shared top-10 prototypes), but UOT shared transport and UOT unmatched also overlap heavily (`8/10` shared top-10 prototypes). The current evidence therefore supports UOT as adding an interpretable unmatched-allocation layer on top of largely shared transport anchors, not a clean transport-only versus unmatched-only prototype partition.
+- Prototype annotation is mixed rather than singular: only `5/25` prototypes have `top1_fraction >= 0.50`, and `13/25` have `top12_fraction_sum < 0.50`. Biological labels should therefore be used as interpretive context rather than strict single-cell-type identities.
 
-This Arm-I result is not a claim of full Task-A completion, final calibration, or downstream robustness.
+### Current Arm-II non-claim boundary
+- The current Arm-II results do not support generic `UOT > Balanced OT`, confirmatory `IM-PT` claims, tau/retention interpretation, a cleanly disjoint transport-versus-unmatched prototype partition, or a statement that Arm II is fully passed.
 
-## 4. Arm-II baseline layer
+## 5. Arm-II vs Arm-III Full-Coverage Shared Surface
+- On the `540` natural-key-matched forward-direction rows that Arm II and Arm III share at full coverage, the directly comparable pair-level fields are numerically near-identical.
+- `U`, `T`, `D_pos`, `B_pos`, and `M` are exactly identical on all `540` shared rows, `scale_ratio` differs only at machine precision (`max_abs_diff = 1.33e-15`), and Arm-II `M_balanced` versus Arm-III full-coverage `balanced_ot_cost` differs only at machine precision (`max_abs_diff = 6.66e-16`).
+- This supports using Arm III as a reduced-coverage robustness continuation of the same full-coverage UOT surface on the shared anchor rows.
+- The cross-arm boundary remains important: Arm II exposes no usable `tau` / `R` on the startup slice, whereas Arm III does. Current evidence therefore supports shared-surface numerical continuity plus bounded robustness, not full transport-side revalidation in the same form.
 
-The Arm-II baseline layer is interpreted separately from transport.
+## 6. Arm-III Current Result
+### Tissue-level robustness
+- The confirmatory unmatched-burden ordering remains visible across the reduced-coverage ladder: `TC->PT` stays above `TC->IM` on `U_abs_dens` at full, `0.75`, `0.50`, and `0.25` coverage, while the `Q_src_dens` contrast remains directionally stable.
 
-- Output `02` establishes the ordered Arm-II pair audit on the exact startup-slice pair set.
-- Output `03` summarizes confirmatory baseline differences across 25 prototypes.
-- Output `04` summarizes confirmatory baseline differences across 32 patients.
-- In output `04`, the across-patient median of patient-level median absolute share difference is 0.019 for `TC-IM` and 0.023 for `TC-PT`.
-- In output `04`, 23 of 32 patients show positive `TC-PT - TC-IM` median absolute share difference.
+| coverage | `TC->IM` `U_abs_dens` | `TC->PT` `U_abs_dens` | `TC->IM` `Q_src_dens` | `TC->PT` `Q_src_dens` |
+| --- | ---: | ---: | ---: | ---: |
+| full | 880.974475 | 1355.978754 | 0.944980 | 0.972643 |
+| 0.75 | 893.874107 | 1374.319192 | 0.946557 | 0.972021 |
+| 0.50 | 902.072165 | 1374.165342 | 0.946437 | 0.970833 |
+| 0.25 | 925.234265 | 1373.784934 | 0.946697 | 0.970404 |
 
-The baseline layer therefore establishes that confirmatory tissue differences are already present before transport is invoked. It does not, by itself, decide the method comparison.
+- Phase-7 degradation summaries are directionally stable rather than collapsing: pair-type sign consistency is `1.000000` for both `U_abs_dens` and `Q_src_dens`, and the patient-level `Delta_U_abs` contrast keeps sign consistency at `0.968750` across `0.75`, `0.50`, and `0.25` coverage.
 
-## 5. Arm-II transport layer
+### Prototype trackability
+- The main prototype contrast signals remain trackable at low coverage, especially proto `14` (`sign_consistency_rate=0.967742`, `correlation_to_full_cov=0.997495`), proto `2` (`0.903226`, `0.998280`), and proto `23` (`1.000000`, `0.991744`).
+- Using `arm3_phase8_prototype_contrast_prep.parquet`, the largest full-to-`0.25` drops in prototype-wise median absolute patient-level `Delta_U_k` (with the `0.25` side taken after per-patient bootstrap-median collapse) occur on proto `2` (`4.517743`), proto `16` (`4.363830`), and proto `12` (`4.125294`), so the current supported wording is trackability under reduction rather than invariance.
 
-The Arm-II transport layer is interpreted on the same ordered pair set and remains analytically distinct from the baseline layer.
+### Current Arm-III non-claim boundary
+- The current Arm-III results support the robustness side of the Arm-II interpretation, not a full scientific pass, not full transport-side revalidation of Arm II in the same form, and not Arm IV readiness.
 
-- In output `05`, the across-patient median `U_abs` is 864.9 for `TC-IM` and 1457.8 for `TC-PT`.
-- In output `05`, the across-patient median transport fraction is 0.867 for `TC-IM` and 0.820 for `TC-PT`.
-- In output `05`, the across-patient median unmatched fraction is 0.133 for `TC-IM` and 0.180 for `TC-PT`.
-- In output `05`, 29 of 32 patients show higher unmatched fraction on `TC-PT` than on `TC-IM`.
-- In output `05`, 29 of 32 patients show lower transport fraction on `TC-PT` than on `TC-IM`.
-- Balanced OT remains a same-pair forced-match comparator. In output `05`, the patient-level Balanced-minus-UOT summary is small and mixed in sign at the family level rather than a one-direction global winner readout.
+## 7. Current Limitations and Readiness Boundary
+- Task A is not complete.
+- Arm II is not fully passed.
+- Arm III is not fully passed.
+- `IM-PT` remains exploratory only.
+- The repository does not currently support a generic `UOT > Balanced OT` claim.
+- The current Arm-II / Arm-III transport-side endpoint-definition gap remains open, so the current readiness judgement remains `INSUFFICIENT_EVIDENCE_FOR_ARM4`.
 
-On the current startup slice, the transport layer therefore supports a confirmatory tissue-level ordering in which `TC-PT` carries greater unmatched burden and lower transport fraction than `TC-IM`.
-
-## 6. Arm-II prototype-level interpretation
-
-The prototype layer is the current Arm-II interpretation layer relative to same-pair Balanced OT.
-
-- Output `06` shows prototypes with positive transport on both confirmatory families, including `Mono_CD11c` and `TC_EpCAM`, consistent with plausible shared structure remaining transportable.
-- Output `06` also shows prototypes where transport and unmatched structure coexist rather than collapsing into a single forced-match account. Examples include `Mono_CD11c` and `Macro_CD163` on `TC-PT`.
-- Output `06` further shows prototypes with weak or asymmetric correspondence across the ordered families, including `UNKNOWN` and `NK`, where `TC-IM` transport is small while `TC-PT` retains positive transport plus positive unmatched structure.
-- Output `07` shows that these prototype-level patterns recur across patients rather than appearing as isolated single-patient events.
-- Output `08` confirms that Balanced OT has no unmatched semantics in the current package.
-
-The current prototype-level readout therefore supports the interpretation that UOT provides a distinct and biologically interpretable perspective relative to same-pair Balanced OT: plausible shared structure remains transportable, weakly corresponding structure is not merely force-matched, and unmatched structure contributes interpretable information.
-
-## 7. Current claim
-
-- Arm-I establishes the current entry condition by showing separation between locality-preserving constrained pairing and locality-breaking pairing under the present metric set.
-- Arm-II, on the current startup slice and on confirmatory `TC-IM` versus `TC-PT`, provides a biologically ordered validation layer rather than a generic OT-versus-UOT score contest.
-- The current supported Arm-II claim is that UOT provides a distinct and biologically interpretable perspective relative to same-pair Balanced OT.
-- Arm-III tests whether key Arm-II structure remains usable under reduced coverage on the frozen Stage-0 representation.
-- The current supported Arm-III contribution is bounded to the UQ / coverage-robustness layer of Task A.
-- Under reduced coverage, the confirmatory unmatched-burden ordering remains visible; at the tissue level, `TC-PT` continues to show greater unmatched burden than `TC-IM` across the reduced coverage ladder.
-- At the patient level, reduced-coverage degradation and contrast summaries remain directionally usable rather than collapsing.
-- At the prototype level, the main signals remain trackable across coverage levels, although some prototypes weaken more clearly at 25% coverage.
-- These claims remain bounded to the current startup slice, current frozen Stage-0 artifact, current patient set, and current focused outputs.
-
-## 8. Non-claims
-
-- This is not a claim that Arm-II is fully passed.
-- This is not a claim that Arm-III is a total scientific pass.
-- This is not a claim that Task A is complete.
-- This is not a generic claim that UOT beats Balanced OT.
-- This is not a claim of mechanism, causality, or full biological closure.
-- This is not a confirmatory claim based on `IM-PT`.
-- This is not a claim that Arm-III fully revalidates every Arm-II endpoint.
-- This is not a claim that Arm-III cleanly re-establishes the current Arm-II transport-side claim in the same form.
-- This is not a claim that Task A is ready for Arm IV.
-
-## 9. Arm-III relation
-
-- Arm I establishes the locality-sensitive entry condition.
-- Arm II establishes the current biologically ordered interpretation on the startup slice.
-- Arm III tests whether key Arm-II structure remains usable under reduced coverage.
-- Arm III currently supports the unmatched-burden / robustness side of that progression, but not full transport-side revalidation.
-- Arm IV should therefore be deferred until the current Arm-II / Arm-III transport-side endpoint-definition problem is resolved.
-
-## 10. Current readiness judgement
-
-The current readiness judgement is:
-
-- `INSUFFICIENT_EVIDENCE_FOR_ARM4`
-
-The key unresolved issue is a TaskA-Arm2 / Arm-3 transport-side density-definition mismatch. The current Arm-3 density-route transportability endpoint does not cleanly align with the current Arm-2 transport-side ordering at full coverage. The next scientific task is therefore to revisit this Arm-2 / Arm-3 endpoint-definition problem before moving to Arm IV.
-
-## 11. Supporting Arm-II outputs
-
-The current Arm-II evidence record is supported by the focused output package at `/mnt/NAS_21T/ProjectResult/SLOTAR/task_A/arm2_cross_compartment/analysis/focused`.
-
-- `00_arm2_focused_results_memo.md`
-- `01_prototype_biological_meaning_table.csv`
-- `02_baseline_pair_audit.csv`
-- `03_baseline_prototype_confirmatory_summary.csv`
-- `04_baseline_patient_family_confirmatory_summary.csv`
-- `05_global_transport_summary.csv`
-- `06_key_prototype_comparison.csv`
-- `07_key_prototype_patient_recurrence.csv`
-- `08_minimal_appendix_audit.csv`
+## 8. Evidence Map
+- Arm I entry-condition result: `/mnt/NAS_21T/ProjectResult/SLOTAR/task_A/arm1_realdata_2026-03-19/task_A_metrics.parquet`
+- Arm II baseline context: `/mnt/NAS_21T/ProjectResult/SLOTAR/task_A/arm2_cross_compartment/analysis/focused/02_baseline_pair_audit.csv`, `/mnt/NAS_21T/ProjectResult/SLOTAR/task_A/arm2_cross_compartment/analysis/focused/03_baseline_prototype_confirmatory_summary.csv`, `/mnt/NAS_21T/ProjectResult/SLOTAR/task_A/arm2_cross_compartment/analysis/focused/04_baseline_patient_family_confirmatory_summary.csv`
+- Arm II confirmatory tissue-level result: `/mnt/NAS_21T/ProjectResult/SLOTAR/task_A/arm2_cross_compartment/task_A_metrics.parquet`, `/mnt/NAS_21T/ProjectResult/SLOTAR/task_A/arm2_cross_compartment/analysis/focused/05_global_transport_summary.csv`
+- Arm II prototype and OT-vs-UOT boundary: `/mnt/NAS_21T/ProjectResult/SLOTAR/task_A/arm2_cross_compartment/analysis/focused/01_prototype_biological_meaning_table.csv`, `/mnt/NAS_21T/ProjectResult/SLOTAR/task_A/arm2_cross_compartment/analysis/focused/06_uot_shared_transport_anchors.csv`, `/mnt/NAS_21T/ProjectResult/SLOTAR/task_A/arm2_cross_compartment/analysis/focused/07_balanced_ot_forced_transport_prototypes.csv`, `/mnt/NAS_21T/ProjectResult/SLOTAR/task_A/arm2_cross_compartment/analysis/focused/08_uot_unmatched_contributors.csv`, `/mnt/NAS_21T/ProjectResult/SLOTAR/task_A/arm2_cross_compartment/analysis/focused/09_prototype_overlap_conflict_audit.csv`, `/mnt/NAS_21T/ProjectResult/SLOTAR/task_A/arm2_cross_compartment/analysis/focused/10_prototype_family_specific_summary.csv`, `/mnt/NAS_21T/ProjectResult/SLOTAR/task_A/arm2_cross_compartment/analysis/focused/11_prototype_patient_recurrence_summary.csv`
+- Arm II auxiliary legacy and audit context: `/mnt/NAS_21T/ProjectResult/SLOTAR/task_A/arm2_cross_compartment/analysis/focused/12_auxiliary_legacy_prototype_comparison.csv`, `/mnt/NAS_21T/ProjectResult/SLOTAR/task_A/arm2_cross_compartment/analysis/focused/13_auxiliary_legacy_prototype_patient_recurrence.csv`, `/mnt/NAS_21T/ProjectResult/SLOTAR/task_A/arm2_cross_compartment/analysis/focused/14_minimal_appendix_audit.csv`
+- Arm II bioinformed supporting context: `/mnt/NAS_21T/ProjectResult/SLOTAR/task_A/arm2_cross_compartment/analysis/bioinformed/20_tc_dominant_family_summary.csv`, `/mnt/NAS_21T/ProjectResult/SLOTAR/task_A/arm2_cross_compartment/analysis/bioinformed/21_mixed_interface_family_summary.csv`, `/mnt/NAS_21T/ProjectResult/SLOTAR/task_A/arm2_cross_compartment/analysis/bioinformed/23_ot_vs_uot_prototype_contrast.csv`, `/mnt/NAS_21T/ProjectResult/SLOTAR/task_A/arm2_cross_compartment/analysis/bioinformed/25_arm2_biointegrated_memo_table.csv`
+- Arm II vs Arm III full-coverage shared-surface consistency: `/mnt/NAS_21T/ProjectResult/SLOTAR/task_A/arm2_cross_compartment/task_A_metrics.parquet`, `/mnt/NAS_21T/ProjectResult/SLOTAR/task_A/arm3_phase0_8_closure/full_2026-03-19/arm3_phase6_full_coverage_results.parquet`, `/mnt/NAS_21T/ProjectResult/SLOTAR/task_A/arm3_phase0_8_closure/full_2026-03-19/arm3_phase6_balanced_ot_results.parquet`
+- Arm III tissue-level robustness: `/mnt/NAS_21T/ProjectResult/SLOTAR/task_A/arm3_phase0_8_closure/full_2026-03-19/task_A_metrics.parquet`, `/mnt/NAS_21T/ProjectResult/SLOTAR/task_A/arm3_phase0_8_closure/full_2026-03-19/arm3_phase6_bootstrap_results.parquet`, `/mnt/NAS_21T/ProjectResult/SLOTAR/task_A/arm3_phase0_8_closure/full_2026-03-19/arm3_phase7_degradation_summary.parquet`, `/mnt/NAS_21T/ProjectResult/SLOTAR/task_A/arm3_phase0_8_closure/full_2026-03-19/arm3_phase7_contrast_summary.parquet`
+- Arm III prototype trackability: `/mnt/NAS_21T/ProjectResult/SLOTAR/task_A/arm3_phase0_8_closure/full_2026-03-19/arm3_phase8_prototype_stability.parquet`, `/mnt/NAS_21T/ProjectResult/SLOTAR/task_A/arm3_phase0_8_closure/full_2026-03-19/arm3_phase8_prototype_contrast_prep.parquet`

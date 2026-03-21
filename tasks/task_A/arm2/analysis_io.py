@@ -27,6 +27,7 @@ import numpy as np
 import pandas as pd
 import yaml
 
+from ..common import build_task_a_density_reference_from_arrays
 from .analysis_contract import (
     Arm2FocusedPaths,
     ARM_NAME,
@@ -288,8 +289,8 @@ def validate_arm2_startup_contract(metrics_df: pd.DataFrame) -> pd.DataFrame:
                 ),
             },
             {
-                "check": "mass_mode_count",
-                "passed": bool((metrics_df["mass_mode"].astype(str) == "count").all()),
+                "check": "mass_mode_density",
+                "passed": bool((metrics_df["mass_mode"].astype(str) == "density").all()),
                 "detail": f"observed={metrics_df['mass_mode'].astype(str).value_counts(dropna=False).to_dict()}",
             },
             {
@@ -341,18 +342,25 @@ def load_stage0_analysis_bundle(path: Path, expected_k: int) -> Stage0AnalysisBu
         compartment_categories = _decode_h5_strings(handle["obs/compartment/categories"][()])
         cell_type_codes = np.asarray(handle["obs/cell_type/codes"], dtype=int)
         cell_type_categories = _decode_h5_strings(handle["obs/cell_type/categories"][()])
+        spatial_xy = np.asarray(handle["obsm/spatial"], dtype=float)
 
     valid_proto = (proto_ids >= 0) & (proto_ids < expected_k)
     if not valid_proto.any():
         raise ValueError("Stage-0 artifact does not contain any valid prototype assignments")
 
-    roi_vectors_array = np.zeros((roi_categories.shape[0], expected_k), dtype=float)
     valid_roi = valid_proto & (roi_codes >= 0) & (roi_codes < roi_categories.shape[0])
+    roi_vectors_array = np.zeros((roi_categories.shape[0], expected_k), dtype=float)
     np.add.at(roi_vectors_array, (roi_codes[valid_roi], proto_ids[valid_roi]), 1.0)
     roi_vectors = {
         str(roi_categories[idx]): roi_vectors_array[idx].copy()
         for idx in range(roi_categories.shape[0])
     }
+    roi_density_vectors, _roi_count_vectors, _roi_total_areas = build_task_a_density_reference_from_arrays(
+        spatial_xy=spatial_xy[valid_roi],
+        roi_ids=roi_categories[roi_codes[valid_roi]],
+        proto_ids=proto_ids[valid_roi],
+        k_full=expected_k,
+    )
 
     roi_audit_df = pd.DataFrame(
         {
@@ -414,6 +422,7 @@ def load_stage0_analysis_bundle(path: Path, expected_k: int) -> Stage0AnalysisBu
 
     return Stage0AnalysisBundle(
         roi_vectors=roi_vectors,
+        roi_density_vectors=roi_density_vectors,
         cost_matrix=cost_matrix,
         cost_scale=cost_scale,
         active_prototype_ids=active_prototype_ids.astype(int),
@@ -504,10 +513,29 @@ def reconstruct_pair_tensors(
     ).astype(float, copy=False)
     if A.shape != (pair_metadata.shape[0], k_full) or B.shape != (pair_metadata.shape[0], k_full):
         raise ValueError("Reconstructed Arm-II tensors do not match the expected [N, K] shape")
+    A_density = np.vstack(
+        [
+            stage0_bundle.roi_density_vectors[str(roi_id)]
+            for roi_id in pair_metadata["source_roi_id"].astype(str)
+        ]
+    ).astype(float, copy=False)
+    B_density = np.vstack(
+        [
+            stage0_bundle.roi_density_vectors[str(roi_id)]
+            for roi_id in pair_metadata["target_roi_id"].astype(str)
+        ]
+    ).astype(float, copy=False)
+    if (
+        A_density.shape != (pair_metadata.shape[0], k_full)
+        or B_density.shape != (pair_metadata.shape[0], k_full)
+    ):
+        raise ValueError("Reconstructed Arm-II density tensors do not match the expected [N, K] shape")
 
     return PairTensorBundle(
         A=A,
         B=B,
+        A_density=A_density,
+        B_density=B_density,
         k_full=int(k_full),
         pair_metadata=pair_metadata,
     )

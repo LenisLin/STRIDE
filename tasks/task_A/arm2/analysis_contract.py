@@ -69,6 +69,25 @@ PAIR_TYPE_ORDER: tuple[str, ...] = (
     "PT->TC",
 )
 
+PROTOTYPE_ANNOTATION_VALUE_COLUMNS: tuple[str, ...] = (
+    "dominant_cell_type",
+    "dominant_cell_type_fraction",
+    "top_cell_type_mix",
+    "total_cells",
+    "top1_cell_type",
+    "top1_fraction",
+    "top2_cell_type",
+    "top2_fraction",
+    "top3_cell_type",
+    "top3_fraction",
+    "top12_fraction_sum",
+    "prototype_label_top3",
+)
+PROTOTYPE_ANNOTATION_COLUMNS: tuple[str, ...] = (
+    "proto_id",
+    *PROTOTYPE_ANNOTATION_VALUE_COLUMNS,
+)
+
 
 # ---------------------------------------------------------------------------
 # Public focused-output contract
@@ -81,9 +100,15 @@ FOCUSED_OUTPUT_FILENAMES: tuple[str, ...] = (
     "03_baseline_prototype_confirmatory_summary.csv",
     "04_baseline_patient_family_confirmatory_summary.csv",
     "05_global_transport_summary.csv",
-    "06_key_prototype_comparison.csv",
-    "07_key_prototype_patient_recurrence.csv",
-    "08_minimal_appendix_audit.csv",
+    "06_uot_shared_transport_anchors.csv",
+    "07_balanced_ot_forced_transport_prototypes.csv",
+    "08_uot_unmatched_contributors.csv",
+    "09_prototype_overlap_conflict_audit.csv",
+    "10_prototype_family_specific_summary.csv",
+    "11_prototype_patient_recurrence_summary.csv",
+    "12_auxiliary_legacy_prototype_comparison.csv",
+    "13_auxiliary_legacy_prototype_patient_recurrence.csv",
+    "14_minimal_appendix_audit.csv",
 )
 
 # ---------------------------------------------------------------------------
@@ -135,6 +160,7 @@ class Stage0AnalysisBundle:
     """Frozen Stage-0 analysis inputs needed by the focused Arm-II rewrite."""
 
     roi_vectors: dict[str, np.ndarray]
+    roi_density_vectors: dict[str, np.ndarray]
     cost_matrix: np.ndarray
     cost_scale: float
     active_prototype_ids: np.ndarray
@@ -149,6 +175,8 @@ class PairTensorBundle:
 
     A: np.ndarray
     B: np.ndarray
+    A_density: np.ndarray
+    B_density: np.ndarray
     k_full: int
     pair_metadata: pd.DataFrame
 

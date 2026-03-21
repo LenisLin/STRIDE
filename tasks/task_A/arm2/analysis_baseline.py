@@ -25,6 +25,8 @@ from .analysis_contract import (
     CONFIRMATORY_FAMILIES,
     LoadedArm2Inputs,
     PAIR_FAMILY_ORDER,
+    PROTOTYPE_ANNOTATION_COLUMNS,
+    PROTOTYPE_ANNOTATION_VALUE_COLUMNS,
     Stage0AnalysisBundle,
 )
 
@@ -51,6 +53,12 @@ def _format_fraction(value: float) -> str:
 
     text = f"{float(value):.3f}"
     return text.rstrip("0").rstrip(".")
+
+
+def _format_label_fraction(value: float) -> str:
+    """Render compact two-decimal fractions for prototype top-3 labels."""
+
+    return f"{float(value):.2f}"
 
 
 def _expected_prototype_ids(prototype_meaning: pd.DataFrame) -> np.ndarray:
@@ -298,6 +306,7 @@ def build_prototype_meaning_table(stage0_bundle: Stage0AnalysisBundle) -> pd.Dat
         nonzero = ordered.loc[pd.to_numeric(ordered["cell_count"], errors="coerce").gt(0.0)].copy()
         if nonzero.empty:
             continue
+        top_rows = nonzero.head(3).reset_index(drop=True)
         dominant = nonzero.iloc[0]
         top_mix = "; ".join(
             (
@@ -305,6 +314,19 @@ def build_prototype_meaning_table(stage0_bundle: Stage0AnalysisBundle) -> pd.Dat
             )
             for _, row in nonzero.head(3).iterrows()
         )
+        top_cells = [None, None, None]
+        top_fractions = [np.nan, np.nan, np.nan]
+        for idx in range(min(3, top_rows.shape[0])):
+            top_cells[idx] = str(top_rows.iloc[idx]["cell_type"])
+            top_fractions[idx] = float(top_rows.iloc[idx]["cell_type_fraction"])
+        top12_fraction_sum = float(
+            np.nansum(np.asarray(top_fractions[:2], dtype=float), dtype=float)
+        )
+        prototype_label_parts = [
+            f"{cell_type}({_format_label_fraction(fraction)})"
+            for cell_type, fraction in zip(top_cells, top_fractions)
+            if cell_type is not None and not pd.isna(fraction)
+        ]
         records.append(
             {
                 "proto_id": int(proto_id),
@@ -312,11 +334,20 @@ def build_prototype_meaning_table(stage0_bundle: Stage0AnalysisBundle) -> pd.Dat
                 "dominant_cell_type_fraction": float(dominant["cell_type_fraction"]),
                 "top_cell_type_mix": top_mix,
                 "total_cells": int(round(float(dominant["prototype_total_cells"]))),
+                "top1_cell_type": top_cells[0],
+                "top1_fraction": top_fractions[0],
+                "top2_cell_type": top_cells[1],
+                "top2_fraction": top_fractions[1],
+                "top3_cell_type": top_cells[2],
+                "top3_fraction": top_fractions[2],
+                "top12_fraction_sum": top12_fraction_sum,
+                "prototype_label_top3": f"p{int(proto_id)} | " + " / ".join(prototype_label_parts),
             }
         )
 
     prototype_meaning = (
         pd.DataFrame.from_records(records)
+        .loc[:, list(PROTOTYPE_ANNOTATION_COLUMNS)]
         .sort_values("proto_id")
         .reset_index(drop=True)
     )
@@ -503,15 +534,13 @@ def build_all_prototype_baseline_patient_family_table(
         categories=PAIR_FAMILY_ORDER,
         ordered=True,
     )
+    annotation_columns = [column for column in prototype_meaning.columns if column != "proto_id"]
     columns = [
         "patient_id",
         "pair_family",
         "pair_family_role",
         "proto_id",
-        "dominant_cell_type",
-        "dominant_cell_type_fraction",
-        "top_cell_type_mix",
-        "total_cells",
+        *annotation_columns,
         "ordered_pair_count",
         "mean_source_total_count_context",
         "mean_target_total_count_context",
@@ -699,13 +728,11 @@ def build_baseline_prototype_confirmatory_summary(
     preserved as same-scale context, and signed values remain contextual only.
     """
 
+    annotation_columns = [column for column in prototype_meaning.columns if column != "proto_id"]
     output_columns = [
         "baseline_priority_rank",
         "proto_id",
-        "dominant_cell_type",
-        "dominant_cell_type_fraction",
-        "top_cell_type_mix",
-        "total_cells",
+        *annotation_columns,
         "paired_patient_count",
         "confirmatory_abs_share_anchor",
         "confirmatory_abs_nonzero_share_anchor",
@@ -776,10 +803,7 @@ def build_baseline_prototype_confirmatory_summary(
             [
                 "pair_family",
                 "proto_id",
-                "dominant_cell_type",
-                "dominant_cell_type_fraction",
-                "top_cell_type_mix",
-                "total_cells",
+                *annotation_columns,
             ],
             sort=True,
             observed=True,
@@ -803,10 +827,7 @@ def build_baseline_prototype_confirmatory_summary(
         family_summary,
         index_columns=[
             "proto_id",
-            "dominant_cell_type",
-            "dominant_cell_type_fraction",
-            "top_cell_type_mix",
-            "total_cells",
+            *annotation_columns,
         ],
         value_columns=[
             "patient_count",

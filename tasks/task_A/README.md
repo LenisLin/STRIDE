@@ -2,19 +2,23 @@
 
 This task directory records the completed local Arm-I stage on validated
 SLOTAR-ready `.h5ad` input and now hosts the implemented Arm-II startup slice
-plus its current analysis-only follow-up.
+plus the landed Arm-III density-primary follow-up.
 Arm-I remains documented and closed enough for the current local track; the
-current Task-A focus is the Arm-II interpretation and integrated follow-up.
+current Task-A focus is the aligned Arm-II / Arm-III interpretation follow-up
+without opening Arm IV.
 
 ## Current local Arm-I milestone
 - Stage 0 is complete enough for the current Task-A track and is not being reopened here.
 - Active input route: validated Stage-0 `.h5ad` artifact at `K=25`.
 - Active constrained null arm: `A1_baseline`.
 - Active broken-locality comparator arm: `A1_broken_reference`.
+- Active Arm-III stress arm: `A3_uq_stress`.
 - Active constrained Arm-I semantics: within-patient, same-compartment, `m=1`, A/B disjoint within a draw, without replacement within a draw, with replacement across repeated draws, task-layer-only provenance.
 - Active broken-locality comparator semantics: preserve the same draw/slot structure and the same side-A constrained context, then force side B to come from a different patient and a different compartment.
-- Active mass mode: `count` only.
+- Active Arm-I mass mode: `density` via the shared full-coverage original-ROI density reference.
 - Active scaffold rule: current task-fixed `lambda_pl` and `tau_external` are assigned from `compartment_a` only.
+- Shared Task-A operator surface: `tasks/task_A/pipeline.py` and `tasks/task_A/evaluator.py` now cover `A1_baseline`, `A1_broken_reference`, `A2_cross_compartment`, and the Arm-III full-coverage anchor table from `A3_uq_stress`.
+- Arm-III reduced-coverage bootstrap outputs remain task-specific supplementary artifacts written by `tasks/task_A/arm3_uq_stress.py`; they are not collapsed into the temporary shared metrics parquet.
 
 ## Arm-I interpretation boundary
 - Official Arm-I null: the constrained locality-preserving random-vs-random baseline.
@@ -30,7 +34,7 @@ current Task-A focus is the Arm-II interpretation and integrated follow-up.
 
 ## Current Arm-II startup slice
 - Active Arm-II startup arm: `A2_cross_compartment`.
-- Arm-II startup is within-patient only, `k=1` only, `count` mode only, and uses deterministic exhaustive ordered ROI pairing.
+- Arm-II startup is within-patient only, `k=1` only, density-primary on the transport side, and uses deterministic exhaustive ordered ROI pairing.
 - Startup unordered pair families: `TC-IM`, `IM-PT`, `TC-PT`.
 - Startup ordered directions retained for audit: `TC->IM`, `IM->TC`, `IM->PT`, `PT->IM`, `TC->PT`, `PT->TC`.
 - Arm-II row unit: one ordered within-patient cross-compartment ROI pair per row.
@@ -38,6 +42,7 @@ current Task-A focus is the Arm-II interpretation and integrated follow-up.
 - Arm-II same-pair comparator: `M_balanced` from task-layer shape-only Balanced OT on the exact same pairs.
 - Arm-II tau rule: `tau_mode="unavailable"` and `tau` / `R` remain `NA` on ok rows.
 - Current project interpretation for the local Arm-II track: Arm II is documented as a biologically ordered benchmark ladder on `TC / IM / PT`, with `IM` treated as the interface / transition zone between `TC` and `PT`.
+- Mixed-arm Task-A configs should now use `data.mass_mode_by_arm` in `tasks/task_A/config.yaml`; the legacy global `data.mass_mode` surface remains only for single-mode fallback configs.
 - Confirmatory pair families: `TC-IM`, `TC-PT`.
 - Exploratory / secondary / excluded from main confirmatory analysis: `IM-PT`.
 - Direction-specific rows are retained for audit, but primary confirmatory interpretation is family-level and patient-aggregated.
@@ -107,15 +112,14 @@ current Task-A focus is the Arm-II interpretation and integrated follow-up.
 - Arm-II would count as successful at the current stage only if UOT unmatched structure is biologically interpretable at the prototype level.
 - Arm-II would count as successful at the current stage only if the benchmark ladder shows that UOT adds interpretation beyond simpler baselines.
 - Any OT-versus-UOT claim must remain limited to biological meaningfulness and comparator-specific context, not generic superiority.
-- Arm II is not yet considered closed; final judgment still depends on the pending products and checks listed below.
+- Arm II is not yet considered closed; the remaining issue is interpretation/readiness, not missing focused-package components.
 
-## What still needs to be generated / checked before Arm-II can be judged passed
-- A stable prototype biological annotation / prototype interpretation map for figure and report use.
-- Explicit non-transport baseline outputs on the current Arm-II ordered pair set.
-- Clean prototype-level OT and UOT transport summaries.
-- Clear prototype-level UOT unmatched summaries.
-- Patient-level recurrence summaries for key prototype patterns.
-- A final integrated memo that states what is and is not supported under the current local implementation.
+## Current Arm-II focused-package status
+- The current persisted focused package already contains the prototype biological annotation table, baseline outputs, global transport summary, prototype-level transport and unmatched summaries, patient-level recurrence summary, and the focused memo.
+- The live canonical focused package surface is `00` through `14`.
+- Primary prototype interpretation files are `06_uot_shared_transport_anchors.csv`, `07_balanced_ot_forced_transport_prototypes.csv`, `08_uot_unmatched_contributors.csv`, `09_prototype_overlap_conflict_audit.csv`, `10_prototype_family_specific_summary.csv`, and `11_prototype_patient_recurrence_summary.csv`.
+- Auxiliary compatibility and audit files are `12_auxiliary_legacy_prototype_comparison.csv`, `13_auxiliary_legacy_prototype_patient_recurrence.csv`, and `14_minimal_appendix_audit.csv`.
+- The current open boundary is therefore whether these persisted outputs justify stronger Arm-II readiness language, not whether the package still needs to be generated.
 
 ## Current local metric interpretation notes
 - In the current local Task-A implementation, `T` is transported mass and is interpreted in Arm II as matched / transport-explained mass.
@@ -153,7 +157,7 @@ current Task-A focus is the Arm-II interpretation and integrated follow-up.
 
 ## Deferred work
 - final lambda/tau redesign/calibration beyond the Arm-II startup slice
-- Arm III / Arm IV
+- Arm IV
 - UQ and drift workflows
 - bridge-based AVCP export compliance
 
@@ -170,5 +174,5 @@ treated as final export behavior.
 
 ## Transition note
 - Arm I remains documented and closed at the current local stage.
-- Arm II remains the current main Task-A focus, but the next step is the integrated analysis-only follow-up rather than a broad pipeline redesign.
-- This README does not expand Arm III / IV beyond that transition boundary.
+- Arm II and Arm III remain the current Task-A follow-up surfaces, with Arm-III now routed through the main Task-A pipeline/evaluator surface at full coverage.
+- This README does not expand Arm IV beyond that transition boundary.

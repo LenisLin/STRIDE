@@ -28,8 +28,7 @@ from slotar.exceptions import ERR_UOT_NUMERICAL
 from slotar.uot import (
     STATUS_OK,
     UOTSolveConfig,
-    _batched_log_sinkhorn_eps_scaling,
-    _screen_batch,
+    batched_uot_solve,
     precompute_logKernels,
 )
 from slotar.utils import compute_active_mask
@@ -217,8 +216,8 @@ def rerun_uot(inputs: LoadedArm2Inputs) -> UotPlanBundle:
     if not np.isfinite(lambda_pl).all() or (lambda_pl <= 0.0).any():
         raise ValueError("Aligned Arm-II lambda_pl values must be finite and strictly positive")
 
-    A = inputs.pair_tensors.A
-    B = inputs.pair_tensors.B
+    A = inputs.pair_tensors.A_density
+    B = inputs.pair_tensors.B_density
     n_items, k_full = A.shape
     kernels = precompute_logKernels(
         inputs.stage0.cost_matrix,
@@ -226,110 +225,53 @@ def rerun_uot(inputs: LoadedArm2Inputs) -> UotPlanBundle:
         s_C=inputs.stage0.cost_scale,
     )
 
-    edge_shares = np.full((n_items, k_full, k_full), np.nan, dtype=float)
-    transport_mass = np.full(n_items, np.nan, dtype=float)
-    destruction = np.full(n_items, np.nan, dtype=float)
-    creation = np.full(n_items, np.nan, dtype=float)
-    d_rel = np.full(n_items, np.nan, dtype=float)
-    b_rel = np.full(n_items, np.nan, dtype=float)
-    metric_m = np.full(n_items, np.nan, dtype=float)
-    retention = np.full(n_items, np.nan, dtype=float)
-    tau_metric = np.full(n_items, np.nan, dtype=float)
-    status = np.full(n_items, STATUS_OK, dtype=object)
-
-    batch = _screen_batch(
+    metrics, details, status = batched_uot_solve(
         A=A,
         B=B,
         lambda_pl=lambda_pl,
+        kernels=kernels,
         cfg=cfg,
         tau_external=None,
-        status=status,
+        return_plan=True,
     )
-    if batch is not None:
-        solve_state = _batched_log_sinkhorn_eps_scaling(
-            batch=batch,
-            kernels=kernels,
-            cfg=cfg,
-            status=status,
-        )
-        if solve_state is not None:
-            solved_batch, log_u, log_v, last_log_kernel, last_eps = solve_state
-            log_pi = log_u[:, :, None] + last_log_kernel[None, :, :] + log_v[:, None, :]
-            row_shift = np.max(log_pi, axis=(1, 2))
-            finite_rows = np.isfinite(row_shift)
-            if not np.all(finite_rows):
-                status[solved_batch.row_idx[~finite_rows]] = ERR_UOT_NUMERICAL
 
-            if np.any(finite_rows):
-                row_idx = solved_batch.row_idx[finite_rows]
-                plans = np.exp(log_pi[finite_rows] - row_shift[finite_rows, None, None]) * np.exp(
-                    row_shift[finite_rows]
-                )[:, None, None]
-                transport_scaled = np.sum(plans, axis=(1, 2), dtype=float)
-                pre_marginal = np.sum(plans, axis=2, dtype=float)
-                post_marginal = np.sum(plans, axis=1, dtype=float)
-                source_mass = np.sum(solved_batch.A[finite_rows], axis=1, dtype=float)
-                target_mass = np.sum(solved_batch.B[finite_rows], axis=1, dtype=float)
-                destruction_local = np.sum(
-                    np.maximum(solved_batch.A[finite_rows] - pre_marginal, 0.0),
-                    axis=1,
-                    dtype=float,
-                )
-                creation_local = np.sum(
-                    np.maximum(solved_batch.B[finite_rows] - post_marginal, 0.0),
-                    axis=1,
-                    dtype=float,
-                )
-                d_rel_local = _safe_divide(destruction_local, source_mass)
-                b_rel_local = _safe_divide(creation_local, target_mass)
-                scaled_cost = -np.asarray(last_log_kernel, dtype=float) * float(last_eps)
-                metric_m_local = _safe_divide(
-                    np.sum(plans * scaled_cost[None, :, :], axis=(1, 2), dtype=float),
-                    transport_scaled,
-                )
-
-                valid_rows = (
-                    np.isfinite(transport_scaled)
-                    & (transport_scaled > 0.0)
-                    & np.isfinite(destruction_local)
-                    & np.isfinite(creation_local)
-                    & np.isfinite(d_rel_local)
-                    & np.isfinite(b_rel_local)
-                    & np.isfinite(metric_m_local)
-                )
-                if not np.all(valid_rows):
-                    status[row_idx[~valid_rows]] = ERR_UOT_NUMERICAL
-
-                if np.any(valid_rows):
-                    valid_idx = row_idx[valid_rows]
-                    valid_plans = plans[valid_rows]
-                    valid_transport = transport_scaled[valid_rows]
-                    edge_shares[valid_idx] = np.divide(
-                        valid_plans,
-                        valid_transport[:, None, None],
-                        out=np.zeros_like(valid_plans, dtype=float),
-                        where=valid_transport[:, None, None] > 0.0,
-                    )
-                    transport_mass[valid_idx] = valid_transport
-                    destruction[valid_idx] = destruction_local[valid_rows]
-                    creation[valid_idx] = creation_local[valid_rows]
-                    d_rel[valid_idx] = d_rel_local[valid_rows]
-                    b_rel[valid_idx] = b_rel_local[valid_rows]
-                    metric_m[valid_idx] = metric_m_local[valid_rows]
+    transport_mass = np.asarray(metrics["T"], dtype=float)
+    plans = np.asarray(details["Pi"], dtype=float)
+    edge_shares = np.full((n_items, k_full, k_full), np.nan, dtype=float)
+    ok_mask = (
+        np.asarray(status, dtype=object) == STATUS_OK
+    ) & np.isfinite(transport_mass) & (transport_mass > 0.0)
+    if np.any(ok_mask):
+        ok_idx = np.flatnonzero(ok_mask)
+        ok_plans = plans[ok_idx]
+        ok_transport = transport_mass[ok_idx]
+        finite_plan_rows = np.isfinite(ok_plans).all(axis=(1, 2))
+        if not np.all(finite_plan_rows):
+            status[ok_idx[~finite_plan_rows]] = ERR_UOT_NUMERICAL
+            ok_idx = ok_idx[finite_plan_rows]
+            ok_plans = ok_plans[finite_plan_rows]
+            ok_transport = ok_transport[finite_plan_rows]
+        if ok_idx.size > 0:
+            edge_shares[ok_idx] = np.divide(
+                ok_plans,
+                ok_transport[:, None, None],
+                out=np.zeros_like(ok_plans, dtype=float),
+                where=ok_transport[:, None, None] > 0.0,
+            )
 
     status_columns = pd.DataFrame(
         {
             "lambda_pl": lambda_pl,
             "uot_status": pd.Series(status, dtype="object"),
-            "T": transport_mass,
-            "D_pos": destruction,
-            "B_pos": creation,
-            "U": destruction + creation,
-            "d_rel": d_rel,
-            "b_rel": b_rel,
-            "M": metric_m,
-            "R": retention,
-            "tau": tau_metric,
+            "T": np.asarray(metrics["T"], dtype=float),
+            "D_pos": np.asarray(metrics["D_pos"], dtype=float),
+            "B_pos": np.asarray(metrics["B_pos"], dtype=float),
+            "U": np.asarray(metrics["D_pos"], dtype=float) + np.asarray(metrics["B_pos"], dtype=float),
+            "d_rel": np.asarray(metrics["d_rel"], dtype=float),
+            "b_rel": np.asarray(metrics["b_rel"], dtype=float),
+            "M": np.asarray(metrics["M"], dtype=float),
+            "R": np.asarray(metrics["R"], dtype=float),
+            "tau": np.asarray(metrics["tau"], dtype=float),
         }
     )
     return UotPlanBundle(
@@ -348,8 +290,8 @@ def rerun_balanced_ot(inputs: LoadedArm2Inputs) -> BalancedPlanBundle:
         raise ImportError("POT is required for the Task-A Balanced OT comparator") from exc
 
     cfg = build_uot_solver_config(inputs.task_config)
-    A = inputs.pair_tensors.A
-    B = inputs.pair_tensors.B
+    A = inputs.pair_tensors.A_density
+    B = inputs.pair_tensors.B_density
     n_items, k_full = A.shape
     scaled_cost = np.asarray(inputs.stage0.cost_matrix, dtype=float) / float(inputs.stage0.cost_scale)
 
@@ -424,8 +366,8 @@ def build_pair_level_transport_frame(
     """
 
     pair_level = inputs.pair_tensors.pair_metadata.reset_index(drop=True).copy()
-    pair_level["source_total_mass"] = np.sum(inputs.pair_tensors.A, axis=1, dtype=float)
-    pair_level["target_total_mass"] = np.sum(inputs.pair_tensors.B, axis=1, dtype=float)
+    pair_level["source_total_mass"] = np.sum(inputs.pair_tensors.A_density, axis=1, dtype=float)
+    pair_level["target_total_mass"] = np.sum(inputs.pair_tensors.B_density, axis=1, dtype=float)
     pair_level["uot_status"] = uot_plan.status_columns["uot_status"].astype(str)
     pair_level["balanced_status"] = balanced_plan.status_columns["balanced_status"].astype(str)
 
@@ -482,11 +424,11 @@ def build_uot_pair_prototype_unmatched_surface(
     transport_surface = build_uot_pair_prototype_transport_surface(inputs, uot_plan)
     proto_ids = np.asarray(transport_surface.proto_ids, dtype=int)
     destroy_abs = np.maximum(
-        inputs.pair_tensors.A[:, proto_ids] - transport_surface.source_abs,
+        inputs.pair_tensors.A_density[:, proto_ids] - transport_surface.source_abs,
         0.0,
     )
     birth_abs = np.maximum(
-        inputs.pair_tensors.B[:, proto_ids] - transport_surface.target_abs,
+        inputs.pair_tensors.B_density[:, proto_ids] - transport_surface.target_abs,
         0.0,
     )
     return PairPrototypeUnmatchedSurface(

@@ -18,7 +18,7 @@ from .arm1_noise_baseline import (
     expand_fixed_values,
     generate_anchored_arm1_slots,
 )
-from .common import assemble_tensors, run_uot_batch_safe
+from .common import assemble_tensors, resolve_task_a_mass_mode, run_uot_batch_safe
 
 ARM_NAME = "A1_broken_reference"
 
@@ -98,7 +98,7 @@ def run_arm1(
         raise ValueError("Arm I broken reference produced no eligible ROI pairs")
 
     k_full = int(config["data"]["k_full"])
-    mass_mode = str(config["data"]["mass_mode"])
+    mass_mode = resolve_task_a_mass_mode(config, ARM_NAME)
     A, B, mass_gap = assemble_tensors(adata, pair_meta, k_full=k_full, mass_mode=mass_mode)
     pair_meta = pair_meta.copy()
     pair_meta["mass_gap"] = mass_gap

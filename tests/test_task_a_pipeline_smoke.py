@@ -5,9 +5,11 @@ from __future__ import annotations
 import importlib
 import importlib.util
 import sys
+import types
 from pathlib import Path
 
 import numpy as np
+import pandas as pd
 import pytest
 import yaml
 
@@ -28,7 +30,7 @@ def _write_config(path: Path, *, enabled_arms: list[str]) -> Path:
     config = {
         "task_name": "Task A Patch-2 smoke test",
         "enabled_arms": enabled_arms,
-        "data": {"mass_mode": "count", "k_full": K_FULL},
+        "data": {"mass_mode": "density", "k_full": K_FULL},
         "uot_params": {
             "eps_schedule": [1.0, 0.5, 0.1],
             "max_iter": 4000,
@@ -192,6 +194,7 @@ def test_pipeline_smoke_runs_arm2_startup_slice(
         "TC->PT",
         "PT->TC",
     }
+    assert (df_metrics["mass_mode"] == "density").all()
     assert (df_metrics["lambda_mode"] == "pair_specific_joint").all()
     assert (df_metrics["tau_mode"] == "unavailable").all()
     assert df_metrics["tau"].isna().all()
@@ -202,3 +205,95 @@ def test_pipeline_smoke_runs_arm2_startup_slice(
         assert np.isfinite(df_metrics.loc[ok_mask, "M_balanced"].to_numpy(dtype=float)).all()
 
     assert (output_dir / TEMPORARY_METRICS_FILENAME).exists()
+
+
+def test_pipeline_routes_arm3_through_shared_full_coverage_surface(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import tasks.task_A.pipeline as pipeline
+
+    config_path = _write_config(tmp_path / "config.yaml", enabled_arms=["A3_uq_stress"])
+    output_dir = tmp_path / "outputs"
+    imported_modules: list[str] = []
+    captured: dict[str, object] = {}
+
+    def fake_run_arm3(stage0_path: str, config: dict, result_root: str) -> pd.DataFrame:
+        captured["stage0_path"] = stage0_path
+        captured["result_root"] = result_root
+        captured["enabled_arms"] = list(config["enabled_arms"])
+        return pd.DataFrame(
+            [
+                {
+                    "patient_group_id": "A3_uq_stress::TC->IM::P01::P01_TC_01::P01_IM_01",
+                    "pair_id": "A3_uq_stress::TC->IM::P01::P01_TC_01::P01_IM_01",
+                    "arm": "A3_uq_stress",
+                    "patient_id": "P01",
+                    "compartment": "TC",
+                    "patient_id_a": "P01",
+                    "patient_id_b": "P01",
+                    "compartment_a": "TC",
+                    "compartment_b": "IM",
+                    "same_patient": True,
+                    "same_compartment": False,
+                    "pair_type": "TC->IM",
+                    "roi_a": "P01_TC_01",
+                    "roi_b": "P01_IM_01",
+                    "lambda_pl": 10.0,
+                    "lambda_mode": "pair_specific_joint",
+                    "tau_mode": "task_fixed_by_compartment",
+                    "mass_mode": "density",
+                    "uot_status": "ok",
+                    "bypass_reason": None,
+                    "mass_pruned_ratio": 0.1,
+                    "n_min_proto_used": 0.0,
+                    "S0": 2.0,
+                    "S1": 1.5,
+                    "scale_ratio": 0.75,
+                    "U": 0.3,
+                    "T": 1.0,
+                    "D_pos": 0.1,
+                    "B_pos": 0.2,
+                    "d_rel": 0.05,
+                    "b_rel": 0.1,
+                    "M": 0.2,
+                    "R": 0.8,
+                    "tau": 0.25,
+                    "pair_family": "TC-IM",
+                    "lambda_dens": 10.0,
+                    "U_abs_dens": 0.3,
+                    "S_src": 2.0,
+                    "S_tgt": 1.5,
+                    "Delta_scale": -0.5,
+                    "Q_src_dens": 0.5,
+                    "Q_tgt_dens": 2.0 / 3.0,
+                }
+            ]
+        )
+
+    def tracking_import(name: str):
+        imported_modules.append(name)
+        if name != "tasks.task_A.arm3_uq_stress":
+            raise AssertionError(f"unexpected import {name}")
+        return types.SimpleNamespace(run_arm3=fake_run_arm3)
+
+    monkeypatch.setattr("tasks.task_A.pipeline.import_module", tracking_import)
+    monkeypatch.setattr(
+        pipeline,
+        "ad",
+        types.SimpleNamespace(
+            read_h5ad=lambda path: (_ for _ in ()).throw(AssertionError(f"unexpected AnnData load {path}"))
+        ),
+    )
+
+    df_metrics = pipeline.main(str(config_path), str(tmp_path / "fixture.h5ad"), str(output_dir))
+
+    assert imported_modules == ["tasks.task_A.arm3_uq_stress"]
+    assert captured["stage0_path"] == str(tmp_path / "fixture.h5ad")
+    assert captured["result_root"] == str(output_dir)
+    assert captured["enabled_arms"] == ["A3_uq_stress"]
+    assert set(df_metrics["arm"].astype(str)) == {"A3_uq_stress"}
+    assert set(df_metrics["pair_type"].astype(str)) == {"TC->IM"}
+    assert set(df_metrics["pair_family"].astype(str)) == {"TC-IM"}
+    assert (df_metrics["tau_mode"] == "task_fixed_by_compartment").all()
+    assert (output_dir / pipeline.TEMPORARY_METRICS_FILENAME).exists()

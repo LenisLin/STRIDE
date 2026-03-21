@@ -25,8 +25,15 @@ Requires-Dist: jinja2>=3.1.0; extra == "dev"
 
 # SLOTAR
 
-**SLOTAR** = *Selection-aware Longitudinal Optimal Transport for Attribution & Remapping*  
-A contract-first, reproducible framework for multi-ROI spatial omics (IMC / ST) longitudinal or state-transition analysis.
+**SLOTAR** = *Selection-aware Longitudinal Optimal Transport for Attribution & Remapping* A generic, mathematically rigorous framework for inferring physical transport dynamics and spatial sampling uncertainty in longitudinal or state-transition cohorts.
+
+**Academic Positioning (V2.0)**: 
+SLOTAR does not treat feature engineering itself as the primary estimand. In the official route, `src/slotar` provides benchmark-agnostic representation utilities that construct a shared state/prototype space and canonical cost geometry from spatial single-cell or spot data, then aggregate each ROI/sample into nonnegative masses over that shared axis. SLOTAR then solves two critical inference challenges:
+1. **Physical Transport under Mass Imbalance**: Using a batched, parameter-calibrated Unbalanced Optimal Transport (UOT) engine on ROI-/sample-level mass distributions over the shared state/prototype space.
+2. **Reliable Inference under Sampling Bias**: Using a Hurdle + Measurement Error joint likelihood model, robust to spatial undersampling without heuristic weight truncations.
+
+Custom representation routes are allowed, but only if they terminate in the same SLOTAR-ready contract: a shared state/prototype axis, ROI-/sample-level nonnegative masses on that axis, compatible cost geometry, required global scaling objects, and a valid path to `lambda_pl`.
+Following the official route, users should not have to invent the shared state space, official cost geometry, or the basic lambda calibration path themselves; `src/slotar` provides that closed library-supported path, while `tasks/` provide baseline/group/pair context and final batch assembly.
 
 This repository follows AVCP “repo-as-memory” conventions: decisions/specs live in versioned files under `docs/`, not chat context.
 
@@ -36,22 +43,31 @@ This repository follows AVCP “repo-as-memory” conventions: decisions/specs l
 
 This repo enforces a strict separation:
 
-1) **`src/slotar/` (library-only)**  
-   Pure, reusable Python package implementing:
-   - representation / prototypes / cost scaling
-   - UOT solver + metrics + events (math engine)
-   - uncertainty quantification primitives (bootstrap)
-   - drift **flagging** (consumer-only; no drift estimation)
+1) **`src/slotar/` (library-only)** Pure, reusable Python package implementing:
+   - method kernel modules (batched UOT solver, contracts, representation utilities, UQ, drift flagging)
+   - method-defining core inference modules when they are benchmark-agnostic parts of SLOTAR itself (e.g., Hurdle + Measurement Error as core method logic)
    - I/O helpers (contracts-aware export)
 
    `src/slotar` knows nothing about “pCR”, “TONIC”, or any benchmark-specific orchestration.
+   The official representation route lives here and is responsible for constructing SLOTAR-ready objects before UOT.
 
 2) **`tasks/` (task-scoped pipelines)**  
    End-to-end pipelines for each benchmark/case:
-   - data loading / preprocessing
-   - structural-zero bypass logic (Plan B)
-   - drift vector construction or injection (if any)
-   - cohort-level inference (two-part models, IVW) and figure generation
+   - study design + inclusion/exclusion rules
+   - data loading / preprocessing + config parsing and task-level parameter interpretation
+   - baseline subset / grouping / pairing metadata for calibration and final solver batching
+   - explicit cohort/patient/visit looping
+   - endpoint definitions, covariate construction, subgroup orchestration
+   - structural-zero bypass mapping and downstream omission rules
+   - reporting / visualization / benchmark-specific evaluation
+
+---
+
+## Baselines vs SLOTAR
+
+Simple state-abundance analyses may already detect whether states increase, decrease, disappear, or persist on the declared mass scale of a task. SLOTAR should not be presented as uniquely discovering those first-order changes.
+
+SLOTAR adds shared transport geometry, transport cost/work, decomposition into retention / remodeling / creation / destruction, uncertainty semantics, and explicit audit / failure semantics.
 
 ---
 
@@ -82,6 +98,7 @@ pytest -q
 
 * Structural zeros are handled by **Plan B**:
 
-  * `src/slotar` solver is **fail-fast** (raises `ValueError` on empty mass/support).
-  * `tasks/*` pipelines are responsible for bypass and writing explicit NA + audit fields.
+  * `src/slotar` is **fail-fast only for programmer-level contract violations** (raises `DataContractError`, e.g. shape mismatch, negative mass, NaN/Inf, invalid lambda/kernel shape).
+  * In `batched_uot_solve`, per-item data degeneracies are **batch-isolated** via `uot_status` (`ERR_UOT_EMPTY_MASS_SOURCE`, `ERR_UOT_EMPTY_MASS_TARGET`, `ERR_UOT_EMPTY_SUPPORT`, `ERR_UOT_NUMERICAL`) and NaN-padded micro metrics.
+  * `tasks/*` pipelines map `uot_status -> bypass_reason`, bypass non-`ok` rows, and write explicit NA + audit fields.
 * Drift is **risk flagging only**. Drift vector estimation is never performed inside the library.

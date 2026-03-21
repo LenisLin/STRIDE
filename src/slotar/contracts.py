@@ -13,7 +13,13 @@ from typing import Any
 
 import numpy as np
 import pandas as pd
-from anndata import AnnData
+try:
+    from anndata import AnnData
+except ModuleNotFoundError:  # pragma: no cover - optional dependency for non-AnnData paths
+    class AnnData:  # type: ignore[override]
+        """Lightweight fallback so non-AnnData tensor workflows can import contracts."""
+
+        pass
 
 from .exceptions import (
     ERR_UOT_EMPTY_MASS_SOURCE,

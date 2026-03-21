@@ -16,13 +16,16 @@ import yaml
 from slotar.contracts import COST_SCALE_ALIASES, validate_adata_inputs
 from slotar.uot import UOTSolveConfig, precompute_logKernels
 
+from .common import validate_task_a_mass_mode_surface
 from .evaluator import evaluate_task_a
 
 TEMPORARY_METRICS_FILENAME = "task_A_metrics.parquet"
+ARM3_OPERATOR_NAME = "A3_uq_stress"
 SUPPORTED_ARM_MODULES = {
     "A1_baseline": ("tasks.task_A.arm1_noise_baseline", "run_arm1"),
     "A1_broken_reference": ("tasks.task_A.arm1_broken_reference", "run_arm1"),
     "A2_cross_compartment": ("tasks.task_A.arm2_spatial_gradient", "run_arm2"),
+    ARM3_OPERATOR_NAME: ("tasks.task_A.arm3_uq_stress", "run_arm3"),
 }
 
 
@@ -82,6 +85,29 @@ def _load_enabled_arms(config: dict[str, Any]) -> list[str]:
     return enabled_arms_list
 
 
+def _requires_adata_runtime(enabled_arms: Sequence[str]) -> bool:
+    return any(str(arm_name) != ARM3_OPERATOR_NAME for arm_name in enabled_arms)
+
+
+def _run_enabled_arm(
+    arm_name: str,
+    *,
+    data_path: str,
+    output_dir: str,
+    config: dict[str, Any],
+    adata: ad.AnnData | None,
+    uot_cfg: UOTSolveConfig | None,
+    kernels: Sequence[np.ndarray] | None,
+) -> pd.DataFrame:
+    run_arm = _load_arm_runner(arm_name)
+    if arm_name == ARM3_OPERATOR_NAME:
+        return run_arm(stage0_path=data_path, config=config, result_root=output_dir)
+
+    if adata is None or uot_cfg is None or kernels is None:
+        raise RuntimeError(f"Task-A arm {arm_name!r} requires an AnnData-backed runtime context")
+    return run_arm(adata, config, uot_cfg, kernels)
+
+
 def main(config_path: str, data_path: str, output_dir: str) -> pd.DataFrame:
     config = _load_config(config_path)
     enabled_arms = _load_enabled_arms(config)
@@ -92,33 +118,48 @@ def main(config_path: str, data_path: str, output_dir: str) -> pd.DataFrame:
             f"{sorted(SUPPORTED_ARM_MODULES)}, got {enabled_arms!r}"
         )
 
-    adata = ad.read_h5ad(data_path)
-    validate_adata_inputs(
-        adata,
-        require_prototypes=True,
-        require_cost_scale=True,
-        require_cost_matrix=True,
-    )
+    validate_task_a_mass_mode_surface(config, enabled_arms)
 
-    k_full = int(config["data"]["k_full"])
-    cost_matrix = np.asarray(adata.uns["cost_matrix"], dtype=float)
-    if cost_matrix.shape != (k_full, k_full):
-        raise ValueError(
-            "Task-A cost_matrix shape must match the declared shared prototype axis: "
-            f"expected {(k_full, k_full)}, got {cost_matrix.shape}"
+    adata: ad.AnnData | None = None
+    uot_cfg: UOTSolveConfig | None = None
+    kernels: Sequence[np.ndarray] | None = None
+    if _requires_adata_runtime(enabled_arms):
+        adata = ad.read_h5ad(data_path)
+        validate_adata_inputs(
+            adata,
+            require_prototypes=True,
+            require_cost_scale=True,
+            require_cost_matrix=True,
         )
 
-    uot_cfg = _build_uot_config(config)
-    kernels = precompute_logKernels(
-        cost_matrix,
-        uot_cfg.eps_schedule,
-        s_C=_resolve_cost_scale(adata),
-    )
+        k_full = int(config["data"]["k_full"])
+        cost_matrix = np.asarray(adata.uns["cost_matrix"], dtype=float)
+        if cost_matrix.shape != (k_full, k_full):
+            raise ValueError(
+                "Task-A cost_matrix shape must match the declared shared prototype axis: "
+                f"expected {(k_full, k_full)}, got {cost_matrix.shape}"
+            )
+
+        uot_cfg = _build_uot_config(config)
+        kernels = precompute_logKernels(
+            cost_matrix,
+            uot_cfg.eps_schedule,
+            s_C=_resolve_cost_scale(adata),
+        )
 
     metrics_parts: list[pd.DataFrame] = []
     for arm_name in enabled_arms:
-        run_arm = _load_arm_runner(arm_name)
-        metrics_parts.append(run_arm(adata, config, uot_cfg, kernels))
+        metrics_parts.append(
+            _run_enabled_arm(
+                arm_name,
+                data_path=data_path,
+                output_dir=output_dir,
+                config=config,
+                adata=adata,
+                uot_cfg=uot_cfg,
+                kernels=kernels,
+            )
+        )
     df_metrics = pd.concat(metrics_parts, ignore_index=True)
     evaluate_task_a(df_metrics, config)
 

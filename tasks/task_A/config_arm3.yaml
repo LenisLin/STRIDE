@@ -5,7 +5,7 @@
 task_name: "Task A: aligned operator surface"
 
 enabled_arms:
-  - "A2_cross_compartment"
+  - "A3_uq_stress"
 
 data:
   mass_mode_by_arm:

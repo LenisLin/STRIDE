@@ -14,9 +14,13 @@ if str(REPO_ROOT) not in sys.path:
 if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
-from tasks.task_A.analyze_arm2_focused import run_focused_analysis
 from tasks.task_A.arm2.analysis_contract import ARM_NAME, Arm2FocusedPaths
-from tasks.task_A.arm2.analysis_output import write_output_package
+from tasks.task_A.arm2.analysis_response import (
+    build_corrected_output_package_from_existing_dir,
+    build_corrected_output_package_from_legacy_package,
+    can_rebuild_from_existing_focused_dir,
+    write_corrected_output_package,
+)
 
 DEFAULT_TASK_A_ROOT = Path("/mnt/NAS_21T/ProjectResult/SLOTAR/task_A")
 DEFAULT_OUTPUT_DIR = DEFAULT_TASK_A_ROOT / "arm2_cross_compartment" / "analysis"
@@ -145,10 +149,20 @@ def build_paths_from_args(args: argparse.Namespace) -> Arm2FocusedPaths:
 def main(argv: list[str] | None = None) -> None:
     args = parse_args(argv)
     paths = build_paths_from_args(args)
-    package = run_focused_analysis(paths)
+    if can_rebuild_from_existing_focused_dir(paths.output_dir):
+        package = build_corrected_output_package_from_existing_dir(
+            paths.output_dir,
+            stage0_h5ad=paths.stage0_h5ad,
+            task_config=paths.task_config,
+        )
+    else:
+        from tasks.task_A.analyze_arm2_focused import run_focused_analysis
+
+        legacy_package = run_focused_analysis(paths)
+        package = build_corrected_output_package_from_legacy_package(legacy_package)
     if paths.output_dir.exists():
         shutil.rmtree(paths.output_dir)
-    write_output_package(package, paths.output_dir)
+    write_corrected_output_package(package, paths.output_dir)
 
 
 if __name__ == "__main__":
