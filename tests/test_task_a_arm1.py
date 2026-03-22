@@ -94,8 +94,8 @@ def test_generate_broken_reference_pairs_is_seeded_and_breaks_locality() -> None
     assert (pair_meta["roi_a"] != pair_meta["roi_b"]).all()
 
 
-def test_assemble_tensors_count_mode_matches_fixture_vectors() -> None:
-    from tasks.task_A.common import assemble_tensors
+def test_assemble_tensors_density_mode_matches_density_reference() -> None:
+    from tasks.task_A.common import assemble_tensors, build_task_a_density_reference_from_adata
     from tests.helpers_task_a_fixture import K_FULL, build_task_a_fixture, expected_roi_vectors
 
     adata = build_task_a_fixture()
@@ -106,17 +106,30 @@ def test_assemble_tensors_count_mode_matches_fixture_vectors() -> None:
         ]
     )
 
-    A, B, mass_gap = assemble_tensors(adata, pair_meta, k_full=K_FULL, mass_mode="count")
-    vectors = expected_roi_vectors()
+    A, B, mass_gap = assemble_tensors(adata, pair_meta, k_full=K_FULL, mass_mode="density")
+    density_vectors, _count_vectors, _roi_total_areas = build_task_a_density_reference_from_adata(
+        adata,
+        k_full=K_FULL,
+    )
+    count_vectors = expected_roi_vectors()
 
-    np.testing.assert_allclose(A[0], vectors["P01_TC_01"])
-    np.testing.assert_allclose(B[0], vectors["P01_TC_02"])
-    np.testing.assert_allclose(A[1], vectors["P02_IM_01"])
-    np.testing.assert_allclose(B[1], vectors["P02_IM_02"])
-    np.testing.assert_allclose(mass_gap, np.zeros(2, dtype=float))
+    np.testing.assert_allclose(A[0], density_vectors["P01_TC_01"])
+    np.testing.assert_allclose(B[0], density_vectors["P01_TC_02"])
+    np.testing.assert_allclose(A[1], density_vectors["P02_IM_01"])
+    np.testing.assert_allclose(B[1], density_vectors["P02_IM_02"])
+    assert not np.allclose(A[0], count_vectors["P01_TC_01"])
+    assert not np.allclose(B[1], count_vectors["P02_IM_02"])
 
-    with pytest.raises(ValueError, match="mass_mode='count'"):
-        assemble_tensors(adata, pair_meta, k_full=K_FULL, mass_mode="density")
+    expected_mass_gap = []
+    for roi_a, roi_b in (("P01_TC_01", "P01_TC_02"), ("P02_IM_01", "P02_IM_02")):
+        sum_a = float(np.sum(density_vectors[roi_a], dtype=float))
+        sum_b = float(np.sum(density_vectors[roi_b], dtype=float))
+        denom = max(sum_a, sum_b)
+        expected_mass_gap.append(0.0 if denom <= 0.0 else abs(sum_a - sum_b) / denom)
+    np.testing.assert_allclose(mass_gap, np.asarray(expected_mass_gap, dtype=float))
+
+    with pytest.raises(ValueError, match="Unsupported Task-A mass_mode"):
+        assemble_tensors(adata, pair_meta, k_full=K_FULL, mass_mode="invalid")
 
 
 def test_run_arm1_supplies_fixed_lambda_and_tau_arrays(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -126,7 +139,13 @@ def test_run_arm1_supplies_fixed_lambda_and_tau_arrays(monkeypatch: pytest.Monke
 
     adata = build_task_a_fixture()
     cfg = {
-        "data": {"k_full": K_FULL, "mass_mode": "count"},
+        "data": {
+            "k_full": K_FULL,
+            "mass_mode_by_arm": {
+                "A1_baseline": "density",
+                "A1_broken_reference": "density",
+            },
+        },
         "arm1": {
             "n_draws": 2,
             "random_seed": 7,
@@ -193,6 +212,7 @@ def test_run_arm1_supplies_fixed_lambda_and_tau_arrays(monkeypatch: pytest.Monke
     assert (df_result["arm"] == ARM_NAME).all()
     assert (df_result["lambda_mode"] == FIXED_MODE).all()
     assert (df_result["tau_mode"] == FIXED_MODE).all()
+    assert (df_result["mass_mode"] == "density").all()
     assert (df_result["patient_id"] == df_result["patient_id_a"]).all()
     assert (df_result["compartment"] == df_result["compartment_a"]).all()
     assert df_result["same_patient"].all()
@@ -214,7 +234,13 @@ def test_run_broken_reference_anchors_lambda_and_tau_to_compartment_a(
 
     adata = build_task_a_fixture()
     cfg = {
-        "data": {"k_full": K_FULL, "mass_mode": "count"},
+        "data": {
+            "k_full": K_FULL,
+            "mass_mode_by_arm": {
+                "A1_baseline": "density",
+                "A1_broken_reference": "density",
+            },
+        },
         "arm1": {
             "n_draws": 2,
             "random_seed": 7,
@@ -279,6 +305,7 @@ def test_run_broken_reference_anchors_lambda_and_tau_to_compartment_a(
     assert (df_result["arm"] == ARM_NAME).all()
     assert (df_result["lambda_mode"] == FIXED_MODE).all()
     assert (df_result["tau_mode"] == FIXED_MODE).all()
+    assert (df_result["mass_mode"] == "density").all()
     assert (~df_result["same_patient"]).all()
     assert (~df_result["same_compartment"]).all()
     assert (df_result["patient_id"] == df_result["patient_id_a"]).all()

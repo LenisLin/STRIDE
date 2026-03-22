@@ -4,6 +4,8 @@
 ## 1. Role and Current Boundary
 - Task A is the single-timepoint controlled stress test within the broader validation chain, intended to examine selection-awareness, uncertainty calibration, and drift sensitivity under a strict counterfactual constraint on the frozen Stage-0 IMC representation.
 - The current live Task A scope is bounded to Arms I-III on the frozen Stage-0 artifact. Arm I provides the locality-sensitive entry condition, Arm II provides the biologically ordered real-tissue interpretation layer, and Arm III provides the density-primary reduced-coverage robustness layer for that Arm-II interpretation.
+- Current Arm-II / Arm-III document alignment is grounded in the neutral extraction bundle at `/mnt/NAS_21T/ProjectResult/SLOTAR/task_A/arm2_arm3_neutral_extraction`, with the manifest and source inventory acting as the documentation crosswalk.
+- Current live Task A documentation treats Arms I-III as aligned within current paper-oriented scope. This is a bounded documentation state rather than a claim of full scientific completion.
 - The current local Task A outputs remain task-layer validation and analysis artifacts rather than bridge/export deliverables.
 - Current live Task A documentation does not authorize Arm IV and does not treat Task A as scientifically complete.
 
@@ -16,9 +18,10 @@
 
 ## 3. Cross-Arm Narrative Contract
 - Arm I asks whether the current UOT-based Task A scaffold responds appropriately to locality-preserving structure rather than behaving similarly under a broken-locality negative control.
-- Arm II asks whether, on biologically ordered within-patient `TC / IM / PT` comparisons, UOT preserves plausible shared transport while also providing biologically interpretable unmatched structure relative to same-pair Balanced OT.
-- Arm III asks whether the usable Arm-II structure, especially the unmatched-burden side of the ordered tissue comparison and the main prototype contrast signals, remains trackable when coverage is reduced.
-- The intended current Task A narrative is therefore sequential and bounded: locality-sensitive behavior first, biologically ordered interpretation second, robustness of that interpretation third.
+- Arm II asks whether, on biologically ordered within-patient `TC / IM / PT` comparisons, confirmatory `TC-PT` versus `TC-IM` family ordering is visible at the patient level and whether a non-transport baseline separation is already present before transport is invoked.
+- Arm II then asks whether trusted TC-related `TC-IM` prototypes behave as family-valid anchors under both Balanced OT and UOT, while TC-related `TC-PT` examples remain supplementary only and myeloid / immune-like unmatched semantics remain candidate-only.
+- Arm III asks whether selected Arm2 patterns of real interest remain trackable when coverage is reduced on the same frozen Stage-0 surface.
+- The intended current Task A narrative is therefore sequential and bounded: locality-sensitive behavior first, baseline-backed family ordering and bounded prototype interpretation second, targeted robustness continuation third.
 
 ## 4. Arm I: Locality-Sensitive Null / Specificity Baseline
 ### Intended role
@@ -47,7 +50,7 @@
 ## 5. Arm II: Biologically Ordered Validation Design
 ### Intended role and confirmatory scope
 - Arm II is a biologically ordered validation design, not a generic cross-compartment contrast and not a global `UOT > Balanced OT` contest.
-- `IM` is treated as the interface / transition zone between `TC` and `PT`, and Arm II has two linked readout layers: tissue-level ordering and prototype-level ordering.
+- `IM` is treated as the interface / transition zone between `TC` and `PT`, and Arm II has two linked readout layers: patient-level family ordering and bounded prototype-level interpretation.
 - Confirmatory pair families are `TC-IM` and `TC-PT`.
 - `IM-PT` remains exploratory and audit-only and does not support the main confirmatory claim.
 - The row unit is one ordered within-patient cross-compartment ROI pair, but the confirmatory analysis unit is the patient.
@@ -61,33 +64,44 @@
 
 ### Interpretation logic
 - The confirmatory tissue-ordering target is asymmetric: `TC-IM` is partially transportable, whereas `TC-PT` is the negative-control-like confirmatory family and should show weaker direct transport meaning and greater unmatched structure than `TC-IM`.
-- Prototype-level review is mandatory and must examine transport anchors, transport that becomes more prominent under Balanced OT, and unmatched structure that is visible only under UOT.
 - Balanced OT is the required same-pair forced-match comparator on the exact Arm-II pairs. It provides transport context but no native unmatched semantics.
 - UOT is retained because it can represent unmatched `B` / `D` structure that Balanced OT cannot natively express.
 - The primary Arm-II methodological question is biological allocation and interpretability: what both methods transport, what Balanced OT forces into transport, and what UOT leaves unmatched in a biologically meaningful way.
 - Any OT-versus-UOT statement must therefore remain comparator-specific and interpretation-focused rather than scalar-superiority-focused.
+- For full scientific closure, prototype review would need to examine transport anchors, transport that becomes more prominent under Balanced OT, and unmatched structure that is visible only under UOT on the exact confirmatory pairs.
+
+### Current paper-oriented bounded closure
+- Arm II can be documented as aligned within current paper-oriented scope when patient-aggregated confirmatory family ordering is visible, the non-transport baseline already separates `TC-PT` from `TC-IM`, and UOT is described as refining/decomposing that existing family separation rather than creating it.
+- TC-related `TC-IM` prototypes may be used as family-valid anchors when OT and UOT transport shares remain broadly similar on trusted TC-related exemplars.
+- TC-related `TC-PT` prototypes must remain supplementary only and must not be used as the main UOT-necessity argument.
+- Myeloid / immune-like examples such as `Macro_CD163`, and more cautiously `Treg`, may be used only as candidate unmatched-allocation interpretations.
+- Overlap audit may be used only as supporting evidence that anchor / forced / unmatched surfaces are heterogeneous, not as standalone mechanism proof.
 
 ### Current-stage review targets
-- Tissue-level review should emphasize confirmatory family ordering using patient-aggregated summaries.
-- Prototype-level review should emphasize recurrent shared transport anchors, recurrent unmatched contributors, and recurrence across patients on the confirmatory families.
+- Tissue-level review should emphasize confirmatory family ordering using patient-aggregated summaries and explicit baseline-versus-transport separation.
+- Prototype-level review should separate family-valid anchors, supplementary `TC-PT` correspondence, and bounded candidate unmatched semantics rather than collapsing them into one prototype hierarchy.
 - Primary Arm-II biological readouts are `U_abs`, `transport_fraction`, `unmatched_fraction`, `M`, prototype-level transport anchors, and prototype-level unmatched structure.
 - `D_pos` and `B_pos` are supporting unmatched-decomposition quantities rather than independent proof lines.
 - In the current Arm-II startup slice, `tau` and `R` are unavailable by design and must not be interpreted.
 
-### Current-stage pass boundary
-- A current-stage Arm-II pass would require visible confirmatory tissue-level ordering, biologically interpretable prototype transport anchors, biologically interpretable UOT unmatched structure, and benchmark-ladder evidence that UOT adds interpretation beyond the simpler baselines.
+### Ideal/full scientific closure boundary
+- A full scientific Arm-II pass would require visible confirmatory tissue-level ordering, biologically interpretable prototype transport anchors, biologically interpretable UOT unmatched structure, and benchmark-ladder evidence that UOT adds interpretation beyond the simpler baselines.
 - Availability of tables alone is not sufficient to call Arm II passed or closed.
 
 ### Non-claims
 - Arm II does not support a generic `UOT > Balanced OT` claim.
 - Arm II does not support confirmatory `IM-PT` claims.
 - Arm II does not support tau/retention interpretation on the current startup slice.
+- Arm II does not support TC-related `TC-PT` prototypes as proof of UOT necessity.
+- Arm II does not support overlap audit as a standalone mechanism proof.
+- Arm II does not convert candidate myeloid / immune-like unmatched interpretations into decisive proof.
 - Arm II does not require or imply a cleanly disjoint transport-only versus unmatched-only prototype partition.
 - Arm II does not by itself authorize Arm IV.
 
 ## 6. Arm III: Density-Primary Coverage Robustness
 ### Intended role and ordered anchors
 - Arm III is the density-primary coverage-reduction and uncertainty-quantification stress test for the current Arm-II interpretation.
+- In the current live scope, Arm III is a targeted robustness continuation of selected Arm2 patterns rather than a disconnected bundle or a generic full validation layer.
 - Arm III operates on the frozen Stage-0 representation artifact and compares reduced-coverage pseudo-ROI inference back to a frozen full-coverage reference.
 - The primary ordered confirmatory anchors are `TC->IM` and `TC->PT`, and they must remain separate in the primary Arm-III review surface.
 
@@ -101,12 +115,17 @@
 - Balanced OT remains comparator context only in Arm III and is not a primary confirmatory Arm-III endpoint.
 - Prototype stability is part of the Arm-III review surface, but the current prototype layer is descriptive rather than a thresholded biological pass/fail layer.
 
-### Current-stage pass boundary
+### Current paper-oriented bounded closure
+- Arm III can be documented as aligned within current paper-oriented scope when ordered-anchor tissue contrasts remain readable under coverage reduction, the full-coverage shared surface stays numerically continuous with Arm II on shared anchor rows, and selected linked Arm2 patterns remain trackable in descriptive prototype-stability outputs.
+- Current Arm3 prototype review is therefore continuity/trackability oriented, not a thresholded biological pass/fail layer.
+- Balanced OT remains comparator context only; Arm III does not need to re-establish every Arm-II endpoint in the same form to satisfy current paper-oriented scope.
+
+### Ideal/full scientific closure boundary
 - If a scientific Arm-III pass is to be asserted, the review must use degradation, sign-consistency, and floor-dominated-rate thresholds on the ordered-anchor summaries rather than ratio rules or CI heuristics alone.
 - The current local runner emits continuous degradation, contrast, and prototype-stability summaries; it does not itself emit scientific pass/fail verdicts.
 
 ### Non-claims
-- Arm III is a bounded robustness continuation of Arm II, not a standalone mechanism-claim layer.
+- Arm III is a bounded robustness continuation of Arm II, not a standalone mechanism-claim layer and not a generic full robustness validation layer.
 - Arm III does not by itself fully re-establish every Arm-II endpoint in the same form.
 - Arm III does not by itself complete Task A or authorize Arm IV.
 
@@ -122,4 +141,5 @@
 
 ## 8. Scope Boundary
 - Current live Task A documentation covers Arms I-III only.
-- Arm IV remains future scope and is not part of the current live Task A claim set.
+- Arms I-III are aligned within current paper-oriented scope, using bounded rather than full-scientific closure language for Arms II and III.
+- Arm IV remains future scope, is the major pending step, and is not part of the current live Task A claim set.

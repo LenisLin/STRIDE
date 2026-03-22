@@ -49,7 +49,7 @@ def test_run_arm2_calibrates_per_family_and_keeps_tau_unavailable(
 
     adata = build_task_a_fixture()
     cfg = {
-        "data": {"k_full": K_FULL, "mass_mode": "count"},
+        "data": {"k_full": K_FULL, "mass_mode": "density"},
         "arm2": {"target_alpha": 0.05, "lambda_grid": [0.05, 0.1, 1.0]},
     }
     uot_cfg = UOTSolveConfig(eps_schedule=[1.0], max_iter=100, tol=1e-8, n_min_proto=0.0)
@@ -143,11 +143,31 @@ def test_run_arm2_calibrates_per_family_and_keeps_tau_unavailable(
         np.testing.assert_allclose(lambda_pl[family_mask.to_numpy()], expected_value)
 
     assert (df_result["arm"] == ARM_NAME).all()
+    assert (df_result["mass_mode"] == "density").all()
     assert (df_result["lambda_mode"] == "pair_specific_joint").all()
     assert (df_result["tau_mode"] == "unavailable").all()
     assert df_result["tau"].isna().all()
     assert df_result["R"].isna().all()
     assert np.isfinite(df_result["M_balanced"].to_numpy(dtype=float)).all()
+
+
+def test_shared_density_reference_preserves_count_over_area_contract() -> None:
+    from tasks.task_A.common import build_task_a_density_reference_from_adata
+    from tests.helpers_task_a_fixture import build_task_a_fixture
+
+    adata = build_task_a_fixture()
+    roi_density_vectors, roi_count_vectors, roi_total_areas = build_task_a_density_reference_from_adata(
+        adata,
+        k_full=K_FULL,
+    )
+
+    assert set(roi_density_vectors) == set(roi_count_vectors) == set(roi_total_areas)
+    for roi_id in sorted(roi_density_vectors):
+        assert roi_total_areas[roi_id] > 0.0
+        np.testing.assert_allclose(
+            roi_density_vectors[roi_id] * roi_total_areas[roi_id],
+            roi_count_vectors[roi_id],
+        )
 
 
 def test_run_balanced_ot_batch_returns_shape_only_costs() -> None:
