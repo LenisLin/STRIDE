@@ -21,6 +21,10 @@ tests/test_stage0_builder.py
 tests/test_stage0_extraction.py
 tests/test_task_a_arm1.py
 tests/test_task_a_arm2.py
+tests/test_task_a_arm2_analysis.py
+tests/test_task_a_arm2_bioinformed.py
+tests/test_task_a_arm3.py
+tests/test_task_a_neutral_extraction.py
 tests/test_task_a_pipeline_smoke.py
 tests/test_task_a_stage0_builder.py
 tests/test_uot_batched_equivalence.py

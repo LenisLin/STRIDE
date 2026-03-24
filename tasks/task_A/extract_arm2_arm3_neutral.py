@@ -17,12 +17,23 @@ if str(REPO_ROOT) not in sys.path:
 if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
+from tasks.task_A.runtime_contract import (
+    TASK_A_METRICS_FILENAME,
+    load_task_a_run_manifest,
+    resolve_task_a_arm_artifact_root,
+    resolve_task_a_arm_bioinformed_output_dir,
+    resolve_task_a_arm_focused_output_dir,
+    resolve_task_a_manifest_path,
+)
+
 DEFAULT_TASK_A_ROOT = Path("/mnt/NAS_21T/ProjectResult/SLOTAR/task_A")
 DEFAULT_ARM2_FOCUSED_DIR = DEFAULT_TASK_A_ROOT / "arm2_cross_compartment" / "analysis" / "focused"
 DEFAULT_ARM2_BIOINFORMED_DIR = DEFAULT_TASK_A_ROOT / "arm2_cross_compartment" / "analysis" / "bioinformed"
 DEFAULT_ARM3_RESULT_ROOT = DEFAULT_TASK_A_ROOT / "arm3_phase0_8_closure" / "full_2026-03-19"
 DEFAULT_OUTPUT_DIR = DEFAULT_TASK_A_ROOT / "arm2_arm3_neutral_extraction"
 DEFAULT_STAGE0_PATH = Path("/mnt/NAS_21T/ProjectData/SLOTAR/task_A_stage0/task_A_stage0_k25.h5ad")
+ARM2_NAME = "A2_cross_compartment"
+ARM3_NAME = "A3_uq_stress"
 
 ARM2_FAMILY_PREFIX = {
     "TC-IM": "tc_im",
@@ -97,6 +108,9 @@ class NeutralExtractionPaths:
     arm3_result_root: Path
     output_dir: Path
     stage0_path: Path
+    task_a_manifest_path: Path | None = None
+    task_a_run_root: Path | None = None
+    arm2_metrics_parquet: Path | None = None
 
 
 @dataclass(frozen=True)
@@ -113,6 +127,14 @@ class ExtractionPackage:
     manifest: dict[str, Any]
 
 
+def _load_manifest_from_args(args: argparse.Namespace):
+    if args.task_a_manifest is not None:
+        return load_task_a_run_manifest(args.task_a_manifest), resolve_task_a_manifest_path(args.task_a_manifest)
+    if args.task_a_run_root is not None:
+        return load_task_a_run_manifest(args.task_a_run_root), resolve_task_a_manifest_path(args.task_a_run_root)
+    return None, None
+
+
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
@@ -120,24 +142,67 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "without scientific adjudication."
         )
     )
+    parser.add_argument("--task-a-manifest", default=None)
+    parser.add_argument("--task-a-run-root", default=None)
     parser.add_argument("--task-a-root", default=str(DEFAULT_TASK_A_ROOT))
-    parser.add_argument("--arm2-focused-dir", default=str(DEFAULT_ARM2_FOCUSED_DIR))
-    parser.add_argument("--arm2-bio-dir", default=str(DEFAULT_ARM2_BIOINFORMED_DIR))
-    parser.add_argument("--arm3-result-root", default=str(DEFAULT_ARM3_RESULT_ROOT))
-    parser.add_argument("--stage0-path", default=str(DEFAULT_STAGE0_PATH))
+    parser.add_argument("--arm2-focused-dir", default=None)
+    parser.add_argument("--arm2-bio-dir", default=None)
+    parser.add_argument("--arm3-result-root", default=None)
+    parser.add_argument("--stage0-path", default=None)
     parser.add_argument("--output-dir", default=str(DEFAULT_OUTPUT_DIR))
     return parser.parse_args(argv)
 
 
 def resolve_paths(args: argparse.Namespace) -> NeutralExtractionPaths:
+    manifest, manifest_path = _load_manifest_from_args(args)
+    task_a_root = Path(args.task_a_root).expanduser().resolve()
+
+    if manifest is not None:
+        arm2_focused_dir = (
+            Path(args.arm2_focused_dir).expanduser().resolve()
+            if args.arm2_focused_dir is not None
+            else resolve_task_a_arm_focused_output_dir(manifest, ARM2_NAME)
+        )
+        arm2_bio_dir = (
+            Path(args.arm2_bio_dir).expanduser().resolve()
+            if args.arm2_bio_dir is not None
+            else resolve_task_a_arm_bioinformed_output_dir(manifest, ARM2_NAME)
+        )
+        arm3_result_root = (
+            Path(args.arm3_result_root).expanduser().resolve()
+            if args.arm3_result_root is not None
+            else (
+                resolve_task_a_arm_artifact_root(manifest, ARM3_NAME)
+                if ARM3_NAME in manifest.arm_artifact_roots
+                else DEFAULT_ARM3_RESULT_ROOT.expanduser().resolve()
+            )
+        )
+        stage0_path = (
+            Path(args.stage0_path).expanduser().resolve()
+            if args.stage0_path is not None
+            else manifest.stage0_h5ad
+        )
+        arm2_metrics_parquet = manifest.metrics_parquet
+        task_a_run_root = manifest.run_root
+    else:
+        arm2_focused_dir = Path(args.arm2_focused_dir or DEFAULT_ARM2_FOCUSED_DIR).expanduser().resolve()
+        arm2_bio_dir = Path(args.arm2_bio_dir or DEFAULT_ARM2_BIOINFORMED_DIR).expanduser().resolve()
+        arm3_result_root = Path(args.arm3_result_root or DEFAULT_ARM3_RESULT_ROOT).expanduser().resolve()
+        stage0_path = Path(args.stage0_path or DEFAULT_STAGE0_PATH).expanduser().resolve()
+        arm2_metrics_parquet = None
+        task_a_run_root = None
+
     return NeutralExtractionPaths(
         repo_root=REPO_ROOT,
-        task_a_root=Path(args.task_a_root).expanduser().resolve(),
-        arm2_focused_dir=Path(args.arm2_focused_dir).expanduser().resolve(),
-        arm2_bio_dir=Path(args.arm2_bio_dir).expanduser().resolve(),
-        arm3_result_root=Path(args.arm3_result_root).expanduser().resolve(),
+        task_a_root=task_a_root,
+        arm2_focused_dir=arm2_focused_dir,
+        arm2_bio_dir=arm2_bio_dir,
+        arm3_result_root=arm3_result_root,
         output_dir=Path(args.output_dir).expanduser().resolve(),
-        stage0_path=Path(args.stage0_path).expanduser().resolve(),
+        stage0_path=stage0_path,
+        task_a_manifest_path=manifest_path,
+        task_a_run_root=task_a_run_root,
+        arm2_metrics_parquet=arm2_metrics_parquet,
     )
 
 
@@ -643,6 +708,8 @@ def build_source_inventory(paths: NeutralExtractionPaths) -> pd.DataFrame:
         ("artifact_fact", "results_artifacts", "arm2_focused_dir", paths.arm2_focused_dir, "Arm2 focused result directory"),
         ("artifact_fact", "results_artifacts", "arm2_bio_dir", paths.arm2_bio_dir, "Arm2 bioinformed result directory"),
         ("artifact_fact", "results_artifacts", "arm3_result_root", paths.arm3_result_root, "Arm3 result directory"),
+        ("artifact_fact", "results_artifacts", "task_a_manifest", paths.task_a_manifest_path, "TaskA formal run manifest") if paths.task_a_manifest_path is not None else None,
+        ("artifact_fact", "results_artifacts", "arm2_metrics_parquet", paths.arm2_metrics_parquet, "TaskA formal Arm2 metrics parquet") if paths.arm2_metrics_parquet is not None else None,
         ("artifact_fact", "logs_memos_reports", "arm2_focused_memo", paths.arm2_focused_dir / ARM2_FOCUSED_FILES["memo"], "Arm2 focused memo"),
         ("artifact_fact", "logs_memos_reports", "arm2_bio_memo_table", paths.arm2_bio_dir / ARM2_BIO_FILES["memo_table"], "Arm2 biointegrated memo table"),
         ("artifact_fact", "logs_memos_reports", "arm3_manifest", paths.arm3_result_root / ARM3_FILES["manifest"], "Arm3 phase0 manifest"),
@@ -661,11 +728,14 @@ def build_source_inventory(paths: NeutralExtractionPaths) -> pd.DataFrame:
         if key in {"manifest", "runtime_timing", "memo"}:
             continue
         artifact_entries.append(("artifact_fact", "results_artifacts", f"arm3_{key}", paths.arm3_result_root / filename, f"Arm3 artifact {filename}"))
-    for idx, candidate in enumerate(ARM2_METRICS_CANDIDATES, start=1):
-        role = "canonical_candidate" if idx == 1 else "duplicate_or_fallback_candidate"
+    for idx, candidate in enumerate(_arm2_metrics_candidates(paths), start=1):
+        role = "manifest_or_canonical_candidate" if idx == 1 else "duplicate_or_fallback_candidate"
         artifact_entries.append(("artifact_fact", "results_artifacts", f"arm2_metrics_candidate_{idx}", candidate, role))
 
-    for evidence_class, group_name, logical_name, path, note in artifact_entries:
+    for entry in artifact_entries:
+        if entry is None:
+            continue
+        evidence_class, group_name, logical_name, path, note = entry
         row_count, column_count, column_names_json = _tabular_source_summary(path)
         line_count = np.nan
         if path.exists() and path.suffix.lower() in {".md", ".json"}:
@@ -690,16 +760,35 @@ def build_source_inventory(paths: NeutralExtractionPaths) -> pd.DataFrame:
     return pd.DataFrame.from_records(entries).sort_values(["evidence_class", "group_name", "logical_name"], kind="stable").reset_index(drop=True)
 
 
-def select_arm2_metrics_parquet() -> Path | None:
+def _arm2_metrics_candidates(paths: NeutralExtractionPaths) -> tuple[Path, ...]:
+    seen: set[Path] = set()
+    ordered: list[Path] = []
+
+    def _append(candidate: Path | None) -> None:
+        if candidate is None:
+            return
+        resolved = candidate.expanduser().resolve()
+        if resolved in seen:
+            return
+        seen.add(resolved)
+        ordered.append(resolved)
+
+    _append(paths.arm2_metrics_parquet)
     for candidate in ARM2_METRICS_CANDIDATES:
+        _append(candidate)
+    return tuple(ordered)
+
+
+def select_arm2_metrics_parquet(paths: NeutralExtractionPaths) -> Path | None:
+    for candidate in _arm2_metrics_candidates(paths):
         if candidate.exists():
             return candidate.resolve()
     return None
 
 
-def summarize_arm2_metrics_candidates() -> list[dict[str, Any]]:
+def summarize_arm2_metrics_candidates(paths: NeutralExtractionPaths) -> list[dict[str, Any]]:
     summaries: list[dict[str, Any]] = []
-    for candidate in ARM2_METRICS_CANDIDATES:
+    for candidate in _arm2_metrics_candidates(paths):
         record: dict[str, Any] = {
             "path": str(candidate),
             "artifact_present": candidate.exists(),
@@ -728,17 +817,19 @@ def load_json(path: Path) -> dict[str, Any]:
 def build_manifest(paths: NeutralExtractionPaths, package: ExtractionPackage) -> dict[str, Any]:
     arm3_manifest_path = paths.arm3_result_root / ARM3_FILES["manifest"]
     arm3_manifest = load_json(arm3_manifest_path)
-    selected_arm2_metrics = select_arm2_metrics_parquet()
+    selected_arm2_metrics = select_arm2_metrics_parquet(paths)
 
     return {
         "output_dir": str(paths.output_dir),
         "repo_root": str(paths.repo_root),
         "task_a_root": str(paths.task_a_root),
+        "task_a_manifest_path": str(paths.task_a_manifest_path) if paths.task_a_manifest_path is not None else None,
+        "task_a_run_root": str(paths.task_a_run_root) if paths.task_a_run_root is not None else None,
         "arm2_focused_dir": str(paths.arm2_focused_dir),
         "arm2_bio_dir": str(paths.arm2_bio_dir),
         "arm3_result_root": str(paths.arm3_result_root),
         "selected_arm2_metrics_parquet": str(selected_arm2_metrics) if selected_arm2_metrics is not None else None,
-        "arm2_metrics_candidates": summarize_arm2_metrics_candidates(),
+        "arm2_metrics_candidates": summarize_arm2_metrics_candidates(paths),
         "shared_stage0_path": str(arm3_manifest.get("stage0_path", paths.stage0_path)),
         "output_row_counts": {
             "source_inventory": int(len(package.source_inventory)),

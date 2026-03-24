@@ -20,11 +20,7 @@ Design constraints (all locked):
 - Full-coverage reference is built from the exact same frozen block universe used
   by bootstrap, not from uns['roi_areas'].
 
-Open implementation facts that still require human confirmation before coding:
-- Exact pairing structure for within-compartment tau reference pools.
-- Config keys: 'arm3.tau_grid' and 'arm3.target_retention'.
-- Whether the lambda calibration uses all six ordered directions or only
-  confirmatory families.
+Implementation note: all open facts from the skeleton were resolved prior to coding.
 """
 
 from __future__ import annotations
@@ -334,23 +330,23 @@ def _weighted_plan_cost_quantile(
             "_weighted_plan_cost_quantile: plan K dimensions must match scaled_cost_matrix"
         )
 
-    flat_cost = cost_arr.reshape(-1)
+    flat_cost = cost_arr.reshape(-1)                                       # (K*K,)
     diagonal_mask = np.eye(cost_arr.shape[0], dtype=bool).reshape(-1)
-    eligible_cost = np.isfinite(flat_cost) & (~diagonal_mask)
-    pooled_cost_chunks: list[np.ndarray] = []
-    pooled_weight_chunks: list[np.ndarray] = []
+    eligible_cost = np.isfinite(flat_cost) & (~diagonal_mask)              # (K*K,)
 
-    for plan_row in plan_arr:
-        flat_plan = np.asarray(plan_row, dtype=float).reshape(-1)
-        keep = np.isfinite(flat_plan) & (flat_plan > 0.0) & eligible_cost
-        if not np.any(keep):
-            continue
-        pooled_cost_chunks.append(flat_cost[keep])
-        pooled_weight_chunks.append(flat_plan[keep])
+    # Vectorised over all N plans at once — avoids per-plan Python loop.
+    flat_plans = plan_arr.reshape(plan_arr.shape[0], -1)                   # (N, K*K)
+    keep_mask = (
+        np.isfinite(flat_plans) & (flat_plans > 0.0) & eligible_cost[None, :]
+    )                                                                       # (N, K*K)
 
-    if not pooled_weight_chunks:
+    row_has_data = keep_mask.any(axis=1)                                   # (N,)
+    if not row_has_data.any():
         return float("nan")
 
-    pooled_costs = np.concatenate(pooled_cost_chunks)
-    pooled_weights = np.concatenate(pooled_weight_chunks)
+    valid_plans = flat_plans[row_has_data]                                 # (M, K*K)
+    valid_keep = keep_mask[row_has_data]                                   # (M, K*K)
+    # broadcast_to avoids materialising a full (M, K*K) cost copy.
+    pooled_costs = np.broadcast_to(flat_cost, valid_plans.shape)[valid_keep]
+    pooled_weights = valid_plans[valid_keep]
     return float(weighted_quantile(pooled_costs, pooled_weights, q))

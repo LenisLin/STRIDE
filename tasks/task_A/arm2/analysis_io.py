@@ -28,6 +28,7 @@ import pandas as pd
 import yaml
 
 from ..common import build_task_a_density_reference_from_arrays
+from ..runtime_contract import load_task_a_config as load_shared_task_a_config
 from .analysis_contract import (
     Arm2FocusedPaths,
     ARM_NAME,
@@ -162,10 +163,7 @@ def _require_startup_checks_pass(validation: pd.DataFrame) -> None:
 def load_task_config(path: Path) -> dict[str, Any]:
     """Load the Task-A config needed by the post-hoc Arm-II focused rewrite."""
 
-    with path.open("r", encoding="utf-8") as handle:
-        loaded = yaml.safe_load(handle)
-    if not isinstance(loaded, dict):
-        raise ValueError(f"Task-A config must deserialize to a mapping: {path}")
+    loaded = load_shared_task_a_config(path)
     if "data" not in loaded or not isinstance(loaded["data"], dict):
         raise ValueError("Task-A config is missing the required 'data' mapping")
     if "k_full" not in loaded["data"]:

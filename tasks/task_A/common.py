@@ -4,6 +4,7 @@ Module: tasks.task_A.common
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from typing import Any
 
 import numpy as np
@@ -39,6 +40,15 @@ ARM_LOCKED_MASS_MODES: dict[str, str] = {
     "A2_cross_compartment": "density",
     "A3_uq_stress": "density",
 }
+
+
+@dataclass(frozen=True)
+class TaskARoiReferenceBundle:
+    """Reusable original-ROI vectors on the shared Task-A prototype axis."""
+
+    count_vectors: dict[str, np.ndarray]
+    density_vectors: dict[str, np.ndarray]
+    roi_total_areas: dict[str, float]
 
 def resolve_task_a_mass_mode(
     config: Mapping[str, Any],
@@ -168,23 +178,33 @@ def assemble_tensors(
     roi_pairs: pd.DataFrame,
     k_full: int,
     mass_mode: str,
+    *,
+    roi_references: TaskARoiReferenceBundle | None = None,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """
     Assemble full-axis Task-A tensors of shape [N, K_full] in the requested mass mode.
     """
     if mass_mode == "count":
-        roi_vectors = _build_roi_vectors(adata, k_full)
+        roi_vectors = (
+            roi_references.count_vectors
+            if roi_references is not None
+            else _build_roi_vectors(adata, k_full)
+        )
     elif mass_mode == "density":
-        roi_vectors, _roi_count_vectors, _roi_total_areas = build_task_a_density_reference_from_adata(
-            adata,
-            k_full=k_full,
+        roi_vectors = (
+            roi_references.density_vectors
+            if roi_references is not None
+            else build_task_a_density_reference_from_adata(
+                adata,
+                k_full=k_full,
+            )[0]
         )
     else:
         raise ValueError(f"Unsupported Task-A mass_mode {mass_mode!r}")
     return assemble_pair_tensors_from_roi_vectors(roi_vectors, roi_pairs, k_full)
 
 
-def build_task_a_density_reference_from_arrays(
+def build_task_a_roi_reference_bundle_from_arrays(
     spatial_xy: np.ndarray,
     roi_ids: np.ndarray,
     proto_ids: np.ndarray,
@@ -192,9 +212,9 @@ def build_task_a_density_reference_from_arrays(
     k_full: int,
     block_size_units: float | None = None,
     coord_to_mm2: float | None = None,
-) -> tuple[dict[str, np.ndarray], dict[str, np.ndarray], dict[str, float]]:
+) -> TaskARoiReferenceBundle:
     """
-    Build Arm-3-consistent original-ROI density vectors for Task A.
+    Build reusable original-ROI count and density vectors for Task A.
     """
     from .arm3.block_partition import (
         build_full_coverage_density_vectors,
@@ -229,18 +249,44 @@ def build_task_a_density_reference_from_arrays(
         str(roi_id): df[count_columns].sum(axis=0).to_numpy(dtype=float)
         for roi_id, df in roi_block_summary.items()
     }
-    return roi_density_vectors, roi_count_vectors, roi_total_areas
+    return TaskARoiReferenceBundle(
+        count_vectors=roi_count_vectors,
+        density_vectors=roi_density_vectors,
+        roi_total_areas=roi_total_areas,
+    )
 
 
-def build_task_a_density_reference_from_adata(
-    adata: AnnData,
+def build_task_a_density_reference_from_arrays(
+    spatial_xy: np.ndarray,
+    roi_ids: np.ndarray,
+    proto_ids: np.ndarray,
     *,
     k_full: int,
     block_size_units: float | None = None,
     coord_to_mm2: float | None = None,
 ) -> tuple[dict[str, np.ndarray], dict[str, np.ndarray], dict[str, float]]:
+    """Backward-compatible wrapper returning density/count references and ROI areas."""
+
+    bundle = build_task_a_roi_reference_bundle_from_arrays(
+        spatial_xy=spatial_xy,
+        roi_ids=roi_ids,
+        proto_ids=proto_ids,
+        k_full=k_full,
+        block_size_units=block_size_units,
+        coord_to_mm2=coord_to_mm2,
+    )
+    return bundle.density_vectors, bundle.count_vectors, bundle.roi_total_areas
+
+
+def build_task_a_roi_reference_bundle_from_adata(
+    adata: AnnData,
+    *,
+    k_full: int,
+    block_size_units: float | None = None,
+    coord_to_mm2: float | None = None,
+) -> TaskARoiReferenceBundle:
     """
-    Build Arm-3-consistent original-ROI density vectors directly from Task-A AnnData.
+    Build reusable original-ROI count and density vectors directly from Task-A AnnData.
     """
     if "spatial" not in adata.obsm:
         raise ValueError("Validated AnnData is missing obsm['spatial'] required for density construction")
@@ -252,7 +298,7 @@ def build_task_a_density_reference_from_adata(
     if (proto_ids < 0).any() or (proto_ids >= k_full).any():
         raise ValueError("adata.obs['proto_id'] contains values outside the shared prototype axis")
 
-    return build_task_a_density_reference_from_arrays(
+    density_bundle = build_task_a_roi_reference_bundle_from_arrays(
         spatial_xy=np.asarray(adata.obsm["spatial"], dtype=float),
         roi_ids=obs["roi_id"].astype(str).to_numpy(dtype=object),
         proto_ids=proto_ids,
@@ -260,6 +306,29 @@ def build_task_a_density_reference_from_adata(
         block_size_units=block_size_units,
         coord_to_mm2=coord_to_mm2,
     )
+    return TaskARoiReferenceBundle(
+        count_vectors=_build_roi_vectors(adata, k_full),
+        density_vectors=density_bundle.density_vectors,
+        roi_total_areas=density_bundle.roi_total_areas,
+    )
+
+
+def build_task_a_density_reference_from_adata(
+    adata: AnnData,
+    *,
+    k_full: int,
+    block_size_units: float | None = None,
+    coord_to_mm2: float | None = None,
+) -> tuple[dict[str, np.ndarray], dict[str, np.ndarray], dict[str, float]]:
+    """Backward-compatible wrapper returning density/count references and ROI areas."""
+
+    bundle = build_task_a_roi_reference_bundle_from_adata(
+        adata,
+        k_full=k_full,
+        block_size_units=block_size_units,
+        coord_to_mm2=coord_to_mm2,
+    )
+    return bundle.density_vectors, bundle.count_vectors, bundle.roi_total_areas
 
 
 def _compute_mass_pruned_ratio(A: np.ndarray, B: np.ndarray, n_min_proto: float) -> np.ndarray:
