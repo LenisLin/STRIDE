@@ -38,6 +38,7 @@ Design constraints:
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import contextmanager
 import json
 from datetime import datetime, timezone
@@ -179,6 +180,92 @@ def _write_timing_summary(
     }
     with (result_root / _TIMING_SUMMARY_FILENAME).open("w", encoding="utf-8") as handle:
         json.dump(payload, handle, indent=2, sort_keys=True)
+
+# ---------------------------------------------------------------------------
+# Bootstrap replicate worker (Phase 6B)
+# ---------------------------------------------------------------------------
+
+
+def _run_one_bootstrap_replicate(
+    rep_idx: int,
+    A_rep: np.ndarray,
+    B_rep: np.ndarray,
+    lambda_arr: np.ndarray,
+    tau_arr: np.ndarray,
+    kernels: list,
+    uot_cfg: Any,
+    pair_meta_anchor_runtime: pd.DataFrame,
+    support_masks: np.ndarray,
+    scaled_cost_matrix: np.ndarray,
+    coverage: float,
+    proto_labels: list,
+) -> tuple[int, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    """
+    Execute one Phase 6B bootstrap replicate.
+
+    All inputs are read-only arrays or frozen metadata. No shared mutable state
+    is written, making this safe for concurrent invocation via ThreadPoolExecutor.
+    Returns (rep_idx, df_rep, proto_row, bot_row) for slot-indexed accumulation.
+    """
+    df_rep, T_k_rep, B_k_rep, D_k_rep = run_uot_batch_with_events(
+        A=A_rep,
+        B=B_rep,
+        lambda_pl=lambda_arr,
+        kernels=kernels,
+        uot_cfg=uot_cfg,
+        pair_meta=pair_meta_anchor_runtime,
+        tau_external=tau_arr,
+        external_support_mask=support_masks,
+    )
+    df_rep = compute_arm3_density_metrics(df_rep, A_rep, B_rep)
+
+    proto_row = _build_prototype_events_df(
+        pair_meta=pair_meta_anchor_runtime,
+        T_k=T_k_rep,
+        B_k=B_k_rep,
+        D_k=D_k_rep,
+        proto_labels=proto_labels,
+        coverage=coverage,
+        replicate_id=rep_idx,
+    )
+
+    floor_dom = compute_floor_dominated_flags(
+        A_dens=A_rep,
+        support_masks=support_masks,
+        eta_floor=uot_cfg.eta_floor,
+    )
+    df_rep["floor_dominated"] = floor_dom
+    df_rep["replicate_id"] = rep_idx
+    df_rep["coverage"] = coverage
+    df_rep["lambda_dens"] = lambda_arr
+    df_rep["tau"] = tau_arr
+
+    A_shape = A_rep / (A_rep.sum(axis=1, keepdims=True) + DENSITY_EPS)
+    B_shape = B_rep / (B_rep.sum(axis=1, keepdims=True) + DENSITY_EPS)
+    assert np.all(A_shape.sum(axis=1) <= 1.0 + 1e-9), (
+        f"Balanced OT self-check failed at coverage={coverage}, rep={rep_idx}: "
+        "A_shape rows are not L1-normalised"
+    )
+    bot_costs = run_balanced_ot_batch(
+        A_shape, B_shape, scaled_cost_matrix, n_min_proto=0.0
+    )
+    bot_row = pair_meta_anchor_runtime[
+        [
+            "pair_id",
+            "patient_id",
+            "pair_type",
+            "pair_family",
+            "compartment_a",
+            "compartment_b",
+        ]
+    ].copy()
+    bot_row["replicate_id"] = rep_idx
+    bot_row["coverage"] = coverage
+    bot_row["balanced_ot_cost"] = bot_costs
+    bot_row["comparator_type"] = "shape_only_bootstrap"
+
+    return rep_idx, df_rep, proto_row, bot_row
+
 
 # ---------------------------------------------------------------------------
 # Public runner (Phase 0–4)
@@ -584,74 +671,47 @@ def run_arm3(
         # (verified implicitly by the pseudo_meta n_blocks_sampled_* columns)
         all_pseudo_audit.append(pseudo_meta)
 
-        # Phase 6B: UOT + metrics for each replicate
-        # Patch 1: use run_uot_batch_with_events (single solver call per replicate)
-        for rep_idx in range(n_reps):
-            A_rep = A_reps[rep_idx]   # (N_anchor, K)
-            B_rep = B_reps[rep_idx]   # (N_anchor, K)
+        # Phase 6B: parallel UOT + Balanced OT for all replicates at this coverage.
+        # Each replicate uses a different (A_rep, B_rep) slice but the same frozen
+        # kernels/lambda/tau/support_masks — fully independent, safe for threads.
+        # Pre-allocated slots guarantee rep_idx ordering without a sort.
+        bootstrap_slots: list[pd.DataFrame | None] = [None] * n_reps
+        proto_slots: list[pd.DataFrame | None] = [None] * n_reps
+        bot_slots: list[pd.DataFrame | None] = [None] * n_reps
 
-            with _timed_section(timing_seconds, f"phase6.{coverage_key}.uot_with_events_seconds"):
-                df_rep, T_k_rep, B_k_rep, D_k_rep = run_uot_batch_with_events(
-                    A=A_rep,
-                    B=B_rep,
-                    lambda_pl=lambda_arr,
-                    kernels=kernels,
-                    uot_cfg=uot_cfg,
-                    pair_meta=pair_meta_anchor_runtime,
-                    tau_external=tau_arr,
-                    external_support_mask=support_masks,
-                )
-                df_rep = compute_arm3_density_metrics(df_rep, A_rep, B_rep)
+        t0_phase6b = perf_counter()
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            futures = {
+                pool.submit(
+                    _run_one_bootstrap_replicate,
+                    rep_idx,
+                    A_reps[rep_idx],
+                    B_reps[rep_idx],
+                    lambda_arr,
+                    tau_arr,
+                    kernels,
+                    uot_cfg,
+                    pair_meta_anchor_runtime,
+                    support_masks,
+                    scaled_cost_matrix,
+                    coverage,
+                    proto_labels,
+                ): rep_idx
+                for rep_idx in range(n_reps)
+            }
+            for fut in as_completed(futures):
+                idx, df_rep, proto_row, bot_row = fut.result()
+                bootstrap_slots[idx] = df_rep
+                proto_slots[idx] = proto_row
+                bot_slots[idx] = bot_row
 
-            # Prototype events for this replicate (long-format, one row per pair×prototype)
-            with _timed_section(timing_seconds, f"phase6.{coverage_key}.prototype_event_rows_seconds"):
-                all_proto_boot_rows.append(
-                    _build_prototype_events_df(
-                        pair_meta=pair_meta_anchor_runtime,
-                        T_k=T_k_rep, B_k=B_k_rep, D_k=D_k_rep,
-                        proto_labels=proto_labels,
-                        coverage=coverage,
-                        replicate_id=rep_idx,
-                    )
-                )
+        timing_seconds[f"phase6.{coverage_key}.parallel_bootstrap_seconds"] = (
+            perf_counter() - t0_phase6b
+        )
 
-            # Floor-dominated flags using frozen support masks
-            floor_dom = compute_floor_dominated_flags(
-                A_dens=A_rep,
-                support_masks=support_masks,
-                eta_floor=uot_cfg.eta_floor,
-            )
-            df_rep["floor_dominated"] = floor_dom
-            df_rep["replicate_id"] = rep_idx
-            df_rep["coverage"] = coverage
-            df_rep["lambda_dens"] = lambda_arr
-            df_rep["tau"] = tau_arr
-
-            all_bootstrap_results.append(df_rep)
-
-            # Balanced OT comparator: L1-normalise before passing
-            A_shape_rep = A_rep / (A_rep.sum(axis=1, keepdims=True) + DENSITY_EPS)
-            B_shape_rep = B_rep / (B_rep.sum(axis=1, keepdims=True) + DENSITY_EPS)
-
-            # Self-check: L1-normalised input
-            assert np.all(A_shape_rep.sum(axis=1) <= 1.0 + 1e-9), (
-                f"Balanced OT self-check failed at coverage={coverage}, rep={rep_idx}: "
-                "A_shape_rep rows are not L1-normalised"
-            )
-
-            with _timed_section(timing_seconds, f"phase6.{coverage_key}.balanced_ot_seconds"):
-                bot_costs = run_balanced_ot_batch(
-                    A_shape_rep, B_shape_rep, scaled_cost_matrix, n_min_proto=0.0
-                )
-            bot_row = pair_meta_anchor_runtime[
-                ["pair_id", "patient_id", "pair_type", "pair_family",
-                 "compartment_a", "compartment_b"]
-            ].copy()
-            bot_row["replicate_id"] = rep_idx
-            bot_row["coverage"] = coverage
-            bot_row["balanced_ot_cost"] = bot_costs
-            bot_row["comparator_type"] = "shape_only_bootstrap"
-            all_bot_rows.append(bot_row)
+        all_bootstrap_results.extend(bootstrap_slots)
+        all_proto_boot_rows.extend(proto_slots)
+        all_bot_rows.extend(bot_slots)
 
         print(
             f"[Arm-3 Phase 6] Coverage={coverage:.0%}: "

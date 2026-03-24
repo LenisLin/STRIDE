@@ -22,6 +22,7 @@ if importlib.util.find_spec("anndata") is None:
     anndata_stub.AnnData = _AnnData
     sys.modules["anndata"] = anndata_stub
 
+import slotar.uot as uot_mod
 from slotar.uot import UOTSolveConfig, batched_uot_solve, precompute_logKernels
 
 CORE_METRICS = ("T", "D_pos", "B_pos", "d_rel", "b_rel", "M")
@@ -317,6 +318,61 @@ def test_batched_uot_plan_output_matches_singletons_when_requested() -> None:
         cfg=cfg,
         return_plan=True,
     )
+
+    np.testing.assert_array_equal(batched_status, singleton_status)
+    _assert_metric_match(batched_metrics, singleton_metrics, names=ALL_METRICS)
+    _assert_detail_match(batched_details, singleton_details, names=(*DETAIL_KEYS, "Pi"))
+
+
+def test_batched_uot_matches_singletons_with_chunked_extraction() -> None:
+    A = np.array(
+        [
+            [0.60, 0.40],
+            [0.25, 0.75],
+            [0.50, 0.50],
+        ],
+        dtype=float,
+    )
+    B = np.array(
+        [
+            [0.30, 0.70],
+            [0.55, 0.45],
+            [0.20, 0.80],
+        ],
+        dtype=float,
+    )
+    lambda_pl = np.array([1.2, 0.9, 1.5], dtype=float)
+    cost = np.array(
+        [
+            [0.0, 0.8],
+            [0.8, 0.0],
+        ],
+        dtype=float,
+    )
+    cfg = UOTSolveConfig(eps_schedule=[1.0, 0.2], max_iter=4000, tol=1e-8)
+    kernels = precompute_logKernels(cost, cfg.eps_schedule)
+
+    previous_target = uot_mod._EXTRACTION_TARGET_PLAN_ELEMENTS
+    try:
+        uot_mod._EXTRACTION_TARGET_PLAN_ELEMENTS = 4
+        batched_metrics, batched_details, batched_status = batched_uot_solve(
+            A=A,
+            B=B,
+            lambda_pl=lambda_pl,
+            kernels=kernels,
+            cfg=cfg,
+            return_plan=True,
+        )
+        singleton_metrics, singleton_details, singleton_status = _run_singletons(
+            A=A,
+            B=B,
+            lambda_pl=lambda_pl,
+            kernels=kernels,
+            cfg=cfg,
+            return_plan=True,
+        )
+    finally:
+        uot_mod._EXTRACTION_TARGET_PLAN_ELEMENTS = previous_target
 
     np.testing.assert_array_equal(batched_status, singleton_status)
     _assert_metric_match(batched_metrics, singleton_metrics, names=ALL_METRICS)

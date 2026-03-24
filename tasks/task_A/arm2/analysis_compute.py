@@ -101,15 +101,14 @@ def _aligned_pair_metric_frame(
 
 def _build_transport_surface(
     *,
-    edge_shares: np.ndarray,
-    source_transport_mass: np.ndarray,
-    target_transport_mass: np.ndarray,
+    source_transport_marginal: np.ndarray,
+    target_transport_marginal: np.ndarray,
     proto_ids: np.ndarray,
 ) -> PairPrototypeTransportSurface:
-    """Project full-axis edge shares to active-prototype transport surfaces."""
+    """Project full-axis marginals to active-prototype transport surfaces."""
 
-    source_abs_full = source_transport_mass[:, None] * np.sum(edge_shares, axis=2, dtype=float)
-    target_abs_full = target_transport_mass[:, None] * np.sum(edge_shares, axis=1, dtype=float)
+    source_abs_full = np.asarray(source_transport_marginal, dtype=float)
+    target_abs_full = np.asarray(target_transport_marginal, dtype=float)
     source_abs = source_abs_full[:, proto_ids]
     target_abs = target_abs_full[:, proto_ids]
     return PairPrototypeTransportSurface(
@@ -202,6 +201,27 @@ def build_uot_solver_config(task_config: dict[str, Any]) -> UOTSolveConfig:
     )
 
 
+def prepare_uot_solver_assets(
+    inputs: LoadedArm2Inputs,
+) -> tuple[UOTSolveConfig, tuple[np.ndarray, ...], np.ndarray]:
+    """Build the shared UOT solver assets once for one Arm-II analysis chain."""
+
+    cfg = build_uot_solver_config(inputs.task_config)
+    aligned = _aligned_pair_metric_frame(inputs, ["lambda_pl"])
+    lambda_pl = aligned["lambda_pl"].to_numpy(dtype=float)
+    if not np.isfinite(lambda_pl).all() or (lambda_pl <= 0.0).any():
+        raise ValueError("Aligned Arm-II lambda_pl values must be finite and strictly positive")
+
+    kernels = tuple(
+        precompute_logKernels(
+            inputs.stage0.cost_matrix,
+            cfg.eps_schedule,
+            s_C=inputs.stage0.cost_scale,
+        )
+    )
+    return cfg, kernels, lambda_pl
+
+
 # ---------------------------------------------------------------------------
 # Solver reruns
 # ---------------------------------------------------------------------------
@@ -210,54 +230,24 @@ def build_uot_solver_config(task_config: dict[str, Any]) -> UOTSolveConfig:
 def rerun_uot(inputs: LoadedArm2Inputs) -> UotPlanBundle:
     """Rerun UOT on the fixed ordered Arm-II pair set exactly once."""
 
-    cfg = build_uot_solver_config(inputs.task_config)
-    aligned = _aligned_pair_metric_frame(inputs, ["lambda_pl"])
-    lambda_pl = aligned["lambda_pl"].to_numpy(dtype=float)
-    if not np.isfinite(lambda_pl).all() or (lambda_pl <= 0.0).any():
-        raise ValueError("Aligned Arm-II lambda_pl values must be finite and strictly positive")
-
-    A = inputs.pair_tensors.A_density
-    B = inputs.pair_tensors.B_density
-    n_items, k_full = A.shape
-    kernels = precompute_logKernels(
-        inputs.stage0.cost_matrix,
-        cfg.eps_schedule,
-        s_C=inputs.stage0.cost_scale,
-    )
-
+    cfg, kernels, lambda_pl = prepare_uot_solver_assets(inputs)
     metrics, details, status = batched_uot_solve(
-        A=A,
-        B=B,
+        A=inputs.pair_tensors.A_density,
+        B=inputs.pair_tensors.B_density,
         lambda_pl=lambda_pl,
         kernels=kernels,
         cfg=cfg,
         tau_external=None,
-        return_plan=True,
+        return_plan=False,
     )
 
     transport_mass = np.asarray(metrics["T"], dtype=float)
-    plans = np.asarray(details["Pi"], dtype=float)
-    edge_shares = np.full((n_items, k_full, k_full), np.nan, dtype=float)
-    ok_mask = (
-        np.asarray(status, dtype=object) == STATUS_OK
-    ) & np.isfinite(transport_mass) & (transport_mass > 0.0)
-    if np.any(ok_mask):
-        ok_idx = np.flatnonzero(ok_mask)
-        ok_plans = plans[ok_idx]
-        ok_transport = transport_mass[ok_idx]
-        finite_plan_rows = np.isfinite(ok_plans).all(axis=(1, 2))
-        if not np.all(finite_plan_rows):
-            status[ok_idx[~finite_plan_rows]] = ERR_UOT_NUMERICAL
-            ok_idx = ok_idx[finite_plan_rows]
-            ok_plans = ok_plans[finite_plan_rows]
-            ok_transport = ok_transport[finite_plan_rows]
-        if ok_idx.size > 0:
-            edge_shares[ok_idx] = np.divide(
-                ok_plans,
-                ok_transport[:, None, None],
-                out=np.zeros_like(ok_plans, dtype=float),
-                where=ok_transport[:, None, None] > 0.0,
-            )
+    source_transport_marginal = np.asarray(details["source_transport_marginal"], dtype=float)
+    target_transport_marginal = np.asarray(details["target_transport_marginal"], dtype=float)
+    if source_transport_marginal.shape != inputs.pair_tensors.A_density.shape:
+        raise ValueError("UOT source transport marginal shape does not match the fixed Arm-II pair tensor")
+    if target_transport_marginal.shape != inputs.pair_tensors.B_density.shape:
+        raise ValueError("UOT target transport marginal shape does not match the fixed Arm-II pair tensor")
 
     status_columns = pd.DataFrame(
         {
@@ -275,7 +265,8 @@ def rerun_uot(inputs: LoadedArm2Inputs) -> UotPlanBundle:
         }
     )
     return UotPlanBundle(
-        edge_shares=edge_shares,
+        source_transport_marginal=source_transport_marginal,
+        target_transport_marginal=target_transport_marginal,
         transport_mass=transport_mass,
         status_columns=status_columns,
     )
@@ -295,7 +286,8 @@ def rerun_balanced_ot(inputs: LoadedArm2Inputs) -> BalancedPlanBundle:
     n_items, k_full = A.shape
     scaled_cost = np.asarray(inputs.stage0.cost_matrix, dtype=float) / float(inputs.stage0.cost_scale)
 
-    edge_shares = np.full((n_items, k_full, k_full), np.nan, dtype=float)
+    source_transport_marginal = np.full((n_items, k_full), np.nan, dtype=float)
+    target_transport_marginal = np.full((n_items, k_full), np.nan, dtype=float)
     balanced_status = np.full(n_items, "ok", dtype=object)
     balanced_cost = np.full(n_items, np.nan, dtype=float)
     source_total_mass = np.sum(A, axis=1, dtype=float)
@@ -327,9 +319,12 @@ def rerun_balanced_ot(inputs: LoadedArm2Inputs) -> BalancedPlanBundle:
                 continue
 
             normalized_plan = masked_plan / total_mass
-            full_plan = np.zeros((k_full, k_full), dtype=float)
-            full_plan[np.ix_(active_mask, active_mask)] = normalized_plan
-            edge_shares[idx] = full_plan
+            full_source = np.zeros(k_full, dtype=float)
+            full_target = np.zeros(k_full, dtype=float)
+            full_source[active_mask] = np.sum(normalized_plan, axis=1, dtype=float) * source_total_mass[idx]
+            full_target[active_mask] = np.sum(normalized_plan, axis=0, dtype=float) * target_total_mass[idx]
+            source_transport_marginal[idx] = full_source
+            target_transport_marginal[idx] = full_target
             balanced_cost[idx] = float(np.sum(normalized_plan * masked_cost, dtype=float))
         except Exception as exc:  # pragma: no cover - exact branch depends on OT backend
             balanced_status[idx] = f"balanced_plan_failure::{type(exc).__name__}"
@@ -341,7 +336,8 @@ def rerun_balanced_ot(inputs: LoadedArm2Inputs) -> BalancedPlanBundle:
         }
     )
     return BalancedPlanBundle(
-        edge_shares=edge_shares,
+        source_transport_marginal=source_transport_marginal,
+        target_transport_marginal=target_transport_marginal,
         source_total_mass=source_total_mass,
         target_total_mass=target_total_mass,
         status_columns=status_columns,
@@ -408,27 +404,25 @@ def build_uot_pair_prototype_transport_surface(
 
     proto_ids = _active_proto_ids(inputs)
     return _build_transport_surface(
-        edge_shares=np.asarray(uot_plan.edge_shares, dtype=float),
-        source_transport_mass=np.asarray(uot_plan.transport_mass, dtype=float),
-        target_transport_mass=np.asarray(uot_plan.transport_mass, dtype=float),
+        source_transport_marginal=np.asarray(uot_plan.source_transport_marginal, dtype=float),
+        target_transport_marginal=np.asarray(uot_plan.target_transport_marginal, dtype=float),
         proto_ids=proto_ids,
     )
 
 
 def build_uot_pair_prototype_unmatched_surface(
     inputs: LoadedArm2Inputs,
-    uot_plan: UotPlanBundle,
+    uot_transport_surface: PairPrototypeTransportSurface,
 ) -> PairPrototypeUnmatchedSurface:
     """Build the all-prototype pair-by-prototype UOT unmatched surface."""
 
-    transport_surface = build_uot_pair_prototype_transport_surface(inputs, uot_plan)
-    proto_ids = np.asarray(transport_surface.proto_ids, dtype=int)
+    proto_ids = np.asarray(uot_transport_surface.proto_ids, dtype=int)
     destroy_abs = np.maximum(
-        inputs.pair_tensors.A_density[:, proto_ids] - transport_surface.source_abs,
+        inputs.pair_tensors.A_density[:, proto_ids] - uot_transport_surface.source_abs,
         0.0,
     )
     birth_abs = np.maximum(
-        inputs.pair_tensors.B_density[:, proto_ids] - transport_surface.target_abs,
+        inputs.pair_tensors.B_density[:, proto_ids] - uot_transport_surface.target_abs,
         0.0,
     )
     return PairPrototypeUnmatchedSurface(
@@ -448,9 +442,8 @@ def build_balanced_pair_prototype_transport_surface(
 
     proto_ids = _active_proto_ids(inputs)
     return _build_transport_surface(
-        edge_shares=np.asarray(balanced_plan.edge_shares, dtype=float),
-        source_transport_mass=np.asarray(balanced_plan.source_total_mass, dtype=float),
-        target_transport_mass=np.asarray(balanced_plan.target_total_mass, dtype=float),
+        source_transport_marginal=np.asarray(balanced_plan.source_transport_marginal, dtype=float),
+        target_transport_marginal=np.asarray(balanced_plan.target_transport_marginal, dtype=float),
         proto_ids=proto_ids,
     )
 
@@ -476,7 +469,10 @@ def compute_all_surfaces(inputs: LoadedArm2Inputs) -> ComputedArm2Surfaces:
         balanced_plan=balanced_plan,
     )
     uot_transport_surface = build_uot_pair_prototype_transport_surface(inputs, uot_plan)
-    uot_unmatched_surface = build_uot_pair_prototype_unmatched_surface(inputs, uot_plan)
+    uot_unmatched_surface = build_uot_pair_prototype_unmatched_surface(
+        inputs,
+        uot_transport_surface,
+    )
     balanced_transport_surface = build_balanced_pair_prototype_transport_surface(
         inputs,
         balanced_plan,

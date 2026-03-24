@@ -10,6 +10,7 @@ Constraints:
 from __future__ import annotations
 
 from collections.abc import Sequence
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 
 import numpy as np
@@ -26,6 +27,7 @@ from .utils import _active_mask_from_combined_mass
 
 STATUS_OK: str = "ok"
 MICRO_METRICS: tuple[str, ...] = ("T", "D_pos", "B_pos", "d_rel", "b_rel", "M", "R", "tau")
+_EXTRACTION_TARGET_PLAN_ELEMENTS = 250_000
 
 
 @dataclass(frozen=True)
@@ -75,6 +77,52 @@ def precompute_logKernels(C: np.ndarray, eps_schedule: Sequence[float], s_C: flo
     return [-(scaled_C / eps) for eps in eps_arr]
 
 
+def _calibrate_one_candidate(
+    candidate: float,
+    A: np.ndarray,
+    B: np.ndarray,
+    kernels: Sequence[np.ndarray],
+    cfg: UOTSolveConfig,
+    target_alpha: float,
+) -> tuple[float, float]:
+    """
+    Evaluate one lambda candidate and return (candidate, error).
+
+    Returns (candidate, inf) if the candidate produces no valid solutions or a
+    non-finite median unmatched ratio. Thread-safe: batched_uot_solve allocates
+    all working arrays internally and shares no mutable state between calls.
+    """
+    lambda_pl = np.full(A.shape[0], float(candidate), dtype=float)
+    metrics, _details, status = batched_uot_solve(
+        A=A,
+        B=B,
+        lambda_pl=lambda_pl,
+        kernels=kernels,
+        cfg=cfg,
+        tau_external=None,
+    )
+    ok_mask = status == STATUS_OK
+    if not np.any(ok_mask):
+        return float(candidate), np.inf
+
+    denom = (
+        metrics["T"][ok_mask]
+        + metrics["B_pos"][ok_mask]
+        + metrics["D_pos"][ok_mask]
+    )
+    unmatched_ratio = np.divide(
+        metrics["B_pos"][ok_mask] + metrics["D_pos"][ok_mask],
+        denom,
+        out=np.full_like(denom, np.nan, dtype=float),
+        where=denom > 0.0,
+    )
+    family_median = float(np.nanmedian(unmatched_ratio))
+    if not np.isfinite(family_median):
+        return float(candidate), np.inf
+
+    return float(candidate), abs(family_median - float(target_alpha))
+
+
 def calibrate_joint_lambda(
     A: np.ndarray,
     B: np.ndarray,
@@ -86,9 +134,10 @@ def calibrate_joint_lambda(
     """
     Calibrate one shared lambda on a task-provided pair pool.
 
-    The current local Arm-II startup slice uses this helper to scan a fixed
-    candidate grid, solve UOT without an external tau, and choose the lambda
-    whose median unmatched ratio is closest to the task-level target.
+    Scans the candidate grid in parallel (one thread per candidate) using
+    ThreadPoolExecutor. batched_uot_solve is stateless and safe for concurrent
+    invocation. The candidate with the minimum |median_unmatched - target_alpha|
+    is returned.
     """
     A = np.asarray(A, dtype=float)
     B = np.asarray(B, dtype=float)
@@ -105,46 +154,21 @@ def calibrate_joint_lambda(
     if not np.isfinite(target_alpha):
         raise DataContractError("target_alpha must be finite")
 
-    best_lambda: float | None = None
-    best_error = np.inf
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        futures = {
+            pool.submit(_calibrate_one_candidate, c, A, B, kernels, cfg, target_alpha): c
+            for c in candidates
+        }
+        results = [fut.result() for fut in as_completed(futures)]
 
-    for candidate in candidates:
-        lambda_pl = np.full(A.shape[0], float(candidate), dtype=float)
-        metrics, _details, status = batched_uot_solve(
-            A=A,
-            B=B,
-            lambda_pl=lambda_pl,
-            kernels=kernels,
-            cfg=cfg,
-            tau_external=None,
-        )
-        ok_mask = status == STATUS_OK
-        if not np.any(ok_mask):
-            continue
-
-        denom = (
-            metrics["T"][ok_mask]
-            + metrics["B_pos"][ok_mask]
-            + metrics["D_pos"][ok_mask]
-        )
-        unmatched_ratio = np.divide(
-            metrics["B_pos"][ok_mask] + metrics["D_pos"][ok_mask],
-            denom,
-            out=np.full_like(denom, np.nan, dtype=float),
-            where=denom > 0.0,
-        )
-        family_median = float(np.nanmedian(unmatched_ratio))
-        if not np.isfinite(family_median):
-            continue
-
-        error = abs(family_median - float(target_alpha))
-        if error < best_error:
-            best_error = error
-            best_lambda = float(candidate)
-
-    if best_lambda is None:
+    best = min(
+        ((c, e) for c, e in results if np.isfinite(e)),
+        key=lambda x: x[1],
+        default=None,
+    )
+    if best is None:
         raise ValueError("No lambda candidate produced a finite calibration summary")
-    return best_lambda
+    return best[0]
 
 
 def _nan_metrics(n_items: int) -> dict[str, np.ndarray]:
@@ -446,6 +470,27 @@ def _batched_log_sinkhorn_eps_scaling(
     return batch, log_u, log_v, last_log_kernel, last_eps
 
 
+def _empty_extracted_details(
+    n_proto: int,
+    *,
+    return_plan: bool,
+) -> dict[str, np.ndarray]:
+    details = {
+        "source_transport_marginal": np.empty((0, n_proto), dtype=float),
+        "target_transport_marginal": np.empty((0, n_proto), dtype=float),
+        "D_k": np.empty((0, n_proto), dtype=float),
+        "B_k": np.empty((0, n_proto), dtype=float),
+    }
+    if return_plan:
+        details["Pi"] = np.empty((0, n_proto, n_proto), dtype=float)
+    return details
+
+
+def _extraction_chunk_size(n_proto: int) -> int:
+    plan_elements = max(int(n_proto) * int(n_proto), 1)
+    return max(1, int(_EXTRACTION_TARGET_PLAN_ELEMENTS // plan_elements))
+
+
 def _extract_batched_metrics(
     batch: _WorkingBatch,
     log_u: np.ndarray,
@@ -455,100 +500,126 @@ def _extract_batched_metrics(
     status: np.ndarray,
     return_plan: bool,
 ) -> tuple[np.ndarray, dict[str, np.ndarray], dict[str, np.ndarray]]:
-    log_pi = log_u[:, :, None] + last_log_kernel[None, :, :] + log_v[:, None, :]
-    row_shift = np.max(log_pi, axis=(1, 2))
-
-    finite_rows = np.isfinite(row_shift)
-    if not np.all(finite_rows):
-        status[batch.row_idx[~finite_rows]] = ERR_UOT_NUMERICAL
-        batch = _subset_working_batch(batch, finite_rows)
-        log_pi = log_pi[finite_rows]
-        row_shift = row_shift[finite_rows]
-        if batch.row_idx.size == 0:
-            return np.empty(0, dtype=int), _nan_metrics(0), {}
-
-    with np.errstate(over="ignore", under="ignore", invalid="ignore"):
-        plan_scaled = np.exp(log_pi - row_shift[:, None, None])
-        scale = np.exp(row_shift)
-
-    transport_scaled = np.sum(plan_scaled, axis=(1, 2), dtype=float)
-    pre_scaled = np.sum(plan_scaled, axis=2, dtype=float)
-    post_scaled = np.sum(plan_scaled, axis=1, dtype=float)
-    transport_mass = scale * transport_scaled
-    pre_marginal = scale[:, None] * pre_scaled
-    post_marginal = scale[:, None] * post_scaled
-
-    a_masked = np.where(batch.mask, batch.A, 0.0)
-    b_masked = np.where(batch.mask, batch.B, 0.0)
-    source_mass = np.sum(a_masked, axis=1, dtype=float)
-    target_mass = np.sum(b_masked, axis=1, dtype=float)
+    n_proto = int(batch.A.shape[1])
+    chunk_size = _extraction_chunk_size(n_proto)
     final_cost = _scaled_cost_from_kernel(last_log_kernel, last_eps)
 
-    destruction = np.sum(np.maximum(a_masked - pre_marginal, 0.0), axis=1, dtype=float)
-    creation = np.sum(np.maximum(b_masked - post_marginal, 0.0), axis=1, dtype=float)
-    d_rel = destruction / source_mass
-    b_rel = creation / target_mass
-    metric_m = np.sum(final_cost[None, :, :] * plan_scaled, axis=(1, 2), dtype=float) / transport_scaled
-
-    tau_metric = np.full(batch.row_idx.size, np.nan, dtype=float)
-    retention = np.full(batch.row_idx.size, np.nan, dtype=float)
-    if batch.tau is not None:
-        finite_tau = np.isfinite(batch.tau)
-        tau_metric[finite_tau] = batch.tau[finite_tau]
-        if np.any(finite_tau):
-            retained_mass = np.sum(
-                plan_scaled * (final_cost[None, :, :] <= batch.tau[:, None, None]),
-                axis=(1, 2),
-                dtype=float,
-            )
-            retention[finite_tau] = retained_mass[finite_tau] / transport_scaled[finite_tau]
-
-    core_finite = (
-        np.isfinite(transport_mass)
-        & (transport_mass > 0.0)
-        & np.isfinite(destruction)
-        & np.isfinite(creation)
-        & np.isfinite(d_rel)
-        & np.isfinite(b_rel)
-        & np.isfinite(metric_m)
-    )
-    tau_finite_or_missing = np.ones(batch.row_idx.size, dtype=bool)
-    if batch.tau is not None:
-        tau_finite_or_missing = ~np.isfinite(batch.tau) | np.isfinite(retention)
-
-    valid_rows = core_finite & tau_finite_or_missing
-    if not np.all(valid_rows):
-        status[batch.row_idx[~valid_rows]] = ERR_UOT_NUMERICAL
-
-    row_idx = batch.row_idx[valid_rows]
-    source_transport_marginal = pre_marginal[valid_rows]
-    target_transport_marginal = post_marginal[valid_rows]
-    destruction_by_proto = np.maximum(
-        a_masked[valid_rows] - source_transport_marginal,
-        0.0,
-    )
-    creation_by_proto = np.maximum(
-        b_masked[valid_rows] - target_transport_marginal,
-        0.0,
-    )
-    metrics = {
-        "T": transport_mass[valid_rows],
-        "D_pos": destruction[valid_rows],
-        "B_pos": creation[valid_rows],
-        "d_rel": d_rel[valid_rows],
-        "b_rel": b_rel[valid_rows],
-        "M": metric_m[valid_rows],
-        "R": retention[valid_rows],
-        "tau": tau_metric[valid_rows],
-    }
-    details = {
-        "source_transport_marginal": source_transport_marginal,
-        "target_transport_marginal": target_transport_marginal,
-        "D_k": destruction_by_proto,
-        "B_k": creation_by_proto,
+    row_chunks: list[np.ndarray] = []
+    metric_chunks = {name: [] for name in MICRO_METRICS}
+    detail_chunks: dict[str, list[np.ndarray]] = {
+        "source_transport_marginal": [],
+        "target_transport_marginal": [],
+        "D_k": [],
+        "B_k": [],
     }
     if return_plan:
-        details["Pi"] = scale[valid_rows, None, None] * plan_scaled[valid_rows]
+        detail_chunks["Pi"] = []
+
+    for start in range(0, batch.row_idx.size, chunk_size):
+        stop = min(start + chunk_size, batch.row_idx.size)
+        row_idx_chunk = batch.row_idx[start:stop]
+        log_u_chunk = log_u[start:stop]
+        log_v_chunk = log_v[start:stop]
+        mask_chunk = batch.mask[start:stop]
+        a_chunk = batch.A[start:stop]
+        b_chunk = batch.B[start:stop]
+        tau_chunk = None if batch.tau is None else batch.tau[start:stop]
+
+        log_pi_chunk = log_u_chunk[:, :, None] + last_log_kernel[None, :, :] + log_v_chunk[:, None, :]
+        row_shift = np.max(log_pi_chunk, axis=(1, 2))
+        finite_rows = np.isfinite(row_shift)
+        if not np.all(finite_rows):
+            status[row_idx_chunk[~finite_rows]] = ERR_UOT_NUMERICAL
+        if not np.any(finite_rows):
+            continue
+
+        row_idx_chunk = row_idx_chunk[finite_rows]
+        log_pi_chunk = log_pi_chunk[finite_rows]
+        row_shift = row_shift[finite_rows]
+        mask_chunk = mask_chunk[finite_rows]
+        a_chunk = a_chunk[finite_rows]
+        b_chunk = b_chunk[finite_rows]
+        if tau_chunk is not None:
+            tau_chunk = tau_chunk[finite_rows]
+
+        with np.errstate(over="ignore", under="ignore", invalid="ignore"):
+            plan_scaled = np.exp(log_pi_chunk - row_shift[:, None, None])
+            scale = np.exp(row_shift)
+
+        transport_scaled = np.sum(plan_scaled, axis=(1, 2), dtype=float)
+        pre_scaled = np.sum(plan_scaled, axis=2, dtype=float)
+        post_scaled = np.sum(plan_scaled, axis=1, dtype=float)
+        transport_mass = scale * transport_scaled
+        source_transport_marginal = scale[:, None] * pre_scaled
+        target_transport_marginal = scale[:, None] * post_scaled
+
+        a_masked = np.where(mask_chunk, a_chunk, 0.0)
+        b_masked = np.where(mask_chunk, b_chunk, 0.0)
+        source_mass = np.sum(a_masked, axis=1, dtype=float)
+        target_mass = np.sum(b_masked, axis=1, dtype=float)
+
+        destruction_by_proto = np.maximum(a_masked - source_transport_marginal, 0.0)
+        creation_by_proto = np.maximum(b_masked - target_transport_marginal, 0.0)
+        destruction = np.sum(destruction_by_proto, axis=1, dtype=float)
+        creation = np.sum(creation_by_proto, axis=1, dtype=float)
+        d_rel = destruction / source_mass
+        b_rel = creation / target_mass
+        metric_m = np.sum(final_cost[None, :, :] * plan_scaled, axis=(1, 2), dtype=float) / transport_scaled
+
+        tau_metric = np.full(row_idx_chunk.size, np.nan, dtype=float)
+        retention = np.full(row_idx_chunk.size, np.nan, dtype=float)
+        if tau_chunk is not None:
+            finite_tau = np.isfinite(tau_chunk)
+            tau_metric[finite_tau] = tau_chunk[finite_tau]
+            if np.any(finite_tau):
+                retained_mass = np.sum(
+                    plan_scaled * (final_cost[None, :, :] <= tau_chunk[:, None, None]),
+                    axis=(1, 2),
+                    dtype=float,
+                )
+                retention[finite_tau] = retained_mass[finite_tau] / transport_scaled[finite_tau]
+
+        core_finite = (
+            np.isfinite(transport_mass)
+            & (transport_mass > 0.0)
+            & np.isfinite(destruction)
+            & np.isfinite(creation)
+            & np.isfinite(d_rel)
+            & np.isfinite(b_rel)
+            & np.isfinite(metric_m)
+        )
+        tau_finite_or_missing = np.ones(row_idx_chunk.size, dtype=bool)
+        if tau_chunk is not None:
+            tau_finite_or_missing = ~np.isfinite(tau_chunk) | np.isfinite(retention)
+
+        valid_rows = core_finite & tau_finite_or_missing
+        if not np.all(valid_rows):
+            status[row_idx_chunk[~valid_rows]] = ERR_UOT_NUMERICAL
+        if not np.any(valid_rows):
+            continue
+
+        row_chunks.append(row_idx_chunk[valid_rows])
+        metric_chunks["T"].append(transport_mass[valid_rows])
+        metric_chunks["D_pos"].append(destruction[valid_rows])
+        metric_chunks["B_pos"].append(creation[valid_rows])
+        metric_chunks["d_rel"].append(d_rel[valid_rows])
+        metric_chunks["b_rel"].append(b_rel[valid_rows])
+        metric_chunks["M"].append(metric_m[valid_rows])
+        metric_chunks["R"].append(retention[valid_rows])
+        metric_chunks["tau"].append(tau_metric[valid_rows])
+        detail_chunks["source_transport_marginal"].append(source_transport_marginal[valid_rows])
+        detail_chunks["target_transport_marginal"].append(target_transport_marginal[valid_rows])
+        detail_chunks["D_k"].append(destruction_by_proto[valid_rows])
+        detail_chunks["B_k"].append(creation_by_proto[valid_rows])
+        if return_plan:
+            detail_chunks["Pi"].append(scale[valid_rows, None, None] * plan_scaled[valid_rows])
+
+    if not row_chunks:
+        return np.empty(0, dtype=int), _nan_metrics(0), _empty_extracted_details(n_proto, return_plan=return_plan)
+
+    row_idx = np.concatenate(row_chunks)
+    metrics = {name: np.concatenate(chunks, axis=0) for name, chunks in metric_chunks.items()}
+    details = {name: np.concatenate(chunks, axis=0) for name, chunks in detail_chunks.items()}
     return row_idx, metrics, details
 
 

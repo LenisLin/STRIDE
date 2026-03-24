@@ -18,7 +18,12 @@ from .arm1_noise_baseline import (
     expand_fixed_values,
     generate_anchored_arm1_slots,
 )
-from .common import assemble_tensors, resolve_task_a_mass_mode, run_uot_batch_safe
+from .common import (
+    TaskARoiReferenceBundle,
+    assemble_tensors,
+    resolve_task_a_mass_mode,
+    run_uot_batch_safe,
+)
 
 ARM_NAME = "A1_broken_reference"
 
@@ -83,6 +88,7 @@ def run_arm1(
     config: Mapping[str, Any],
     uot_cfg: UOTSolveConfig,
     kernels: Sequence[np.ndarray],
+    roi_references: TaskARoiReferenceBundle | None = None,
 ) -> pd.DataFrame:
     """
     Generate anchored broken-locality ROI draws and execute the frozen batched UOT
@@ -99,13 +105,16 @@ def run_arm1(
 
     k_full = int(config["data"]["k_full"])
     mass_mode = resolve_task_a_mass_mode(config, ARM_NAME)
-    A, B, mass_gap = assemble_tensors(adata, pair_meta, k_full=k_full, mass_mode=mass_mode)
+    A, B, mass_gap = assemble_tensors(
+        adata,
+        pair_meta,
+        k_full=k_full,
+        mass_mode=mass_mode,
+        roi_references=roi_references,
+    )
     pair_meta = pair_meta.copy()
     pair_meta["mass_gap"] = mass_gap
 
-    # Broken-locality reference anchors solver scaffolding to side A only.
-    # Side B intentionally breaks patient and compartment locality; lambda/tau
-    # are not mixed across A/B.
     lambda_pl = expand_fixed_values(
         pair_meta["compartment_a"],
         fixed_by_compartment=arm_cfg["fixed_lambda_by_compartment"],

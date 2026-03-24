@@ -14,8 +14,20 @@ from typing import Any, Mapping
 
 import pandas as pd
 
-# 延迟或直接导入 Step 1 中定义的契约验证器
-from ..contracts import validate_events_table, validate_metrics_table
+from ..contracts import DataContractError, validate_events_table, validate_metrics_table
+
+METRICS_FILENAME = "metrics_.csv"
+EVENTS_FILENAME = "events_.parquet"
+META_FILENAME = "meta_.json"
+
+
+def _validate_aux_name(name: str) -> str:
+    normalized = str(name).strip()
+    if not normalized:
+        raise DataContractError("aux_tables keys must be non-empty strings")
+    if normalized in {"metrics", "events", "meta"}:
+        raise DataContractError(f"aux_tables key {normalized!r} collides with a canonical artifact name")
+    return normalized
 
 
 def save_for_r(
@@ -24,39 +36,50 @@ def save_for_r(
     output_dir: str | Path,
     meta_audit: dict[str, Any],
     aux_tables: Mapping[str, pd.DataFrame] | None = None,
-) -> None:
+) -> dict[str, Path]:
     """
-    Exports SLOTAR results (metrics and events) to disk for downstream R analysis,
-    strictly enforcing data contracts before writing.
-
-    Args:
-        metrics_df: DataFrame containing patient/group level metrics and statuses.
-        events_df: DataFrame containing micro-level transport events.
-        output_dir: Target directory for export. Must be created if it doesn't exist.
-        meta_audit: Dictionary containing global audit fields (e.g., s_C, UQ_mode, thresholds).
-        aux_tables: Optional mapping of task-scoped auxiliary tables for compliant downstream
-            handoff (e.g., baseline comparison summaries). These tables are optional extensions,
-            not core canonical SLOTAR artifacts.
-
-    Side Effects:
-        - Writes `metrics_.csv` to `output_dir`.
-        - Writes `events_.parquet` to `output_dir`.
-        - Writes `meta_.json` to `output_dir`.
-        - May write optional task-scoped auxiliary tables if provided by the caller.
-
-    Constraints for Codex:
-        1. CONFIG ISOLATION: You MUST NOT import `yaml` or attempt to read any `config.yaml`. 
-           Use the `output_dir` provided in the arguments exclusively.
-        2. CONTRACT ENFORCEMENT: You MUST call `validate_metrics_table(metrics_df)` and 
-           `validate_events_table(events_df)` BEFORE any file operations. Let DataContractError 
-           propagate if validation fails.
-        3. META SIDECAR: You MUST inject `{"schema_version": "v2.0"}` into the `meta_audit` 
-           dictionary (if not already present) and export it cleanly via `json.dump`.
-        4. OPTIONAL TASK AUX TABLES: `aux_tables` is reserved for task-scoped optional
-           extensions only. It MUST NOT redefine core canonical artifacts or imply a universal
-           baseline schema.
+    Export canonical SLOTAR bridge artifacts to disk.
     """
-    raise NotImplementedError(
-        "Codex: Implement the contract-aware export logic here, including optional task-scoped "
-        "auxiliary tables, while enforcing absolute config decoupling."
-    )
+    validate_metrics_table(metrics_df)
+    validate_events_table(events_df)
+
+    out_dir = Path(output_dir).expanduser().resolve()
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    metrics_path = out_dir / METRICS_FILENAME
+    events_path = out_dir / EVENTS_FILENAME
+    meta_path = out_dir / META_FILENAME
+
+    metrics_df.to_csv(metrics_path, index=False)
+    events_df.to_parquet(events_path, index=False)
+
+    written_paths: dict[str, Path] = {
+        "metrics": metrics_path,
+        "events": events_path,
+        "meta": meta_path,
+    }
+    aux_payload: dict[str, str] = {}
+    if aux_tables is not None:
+        for name, table in aux_tables.items():
+            normalized_name = _validate_aux_name(name)
+            if not isinstance(table, pd.DataFrame):
+                raise DataContractError(f"aux_tables[{normalized_name!r}] must be a pandas DataFrame")
+            aux_path = out_dir / f"aux_{normalized_name}.csv"
+            table.to_csv(aux_path, index=False)
+            written_paths[f"aux:{normalized_name}"] = aux_path
+            aux_payload[normalized_name] = aux_path.name
+
+    payload = dict(meta_audit)
+    payload.setdefault("schema_version", "v2.0")
+    payload["artifacts"] = {
+        "metrics": metrics_path.name,
+        "events": events_path.name,
+        "meta": meta_path.name,
+    }
+    if aux_payload:
+        payload["aux_tables"] = aux_payload
+
+    with meta_path.open("w", encoding="utf-8") as handle:
+        json.dump(payload, handle, indent=2, sort_keys=True)
+
+    return written_paths

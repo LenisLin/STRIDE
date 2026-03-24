@@ -221,7 +221,7 @@ def test_load_expression_matrix_binary_roundtrip(tmp_path: Path) -> None:
 
 def test_stage0_pipeline_smoke_arm1(tmp_path: Path) -> None:
     from tasks.task_A.build_stage0_artifacts import build_stage0_adata_from_cell_table
-    from tasks.task_A.pipeline import TEMPORARY_METRICS_FILENAME, main
+    from tasks.task_A.pipeline import TASK_A_MANIFEST_FILENAME, TEMPORARY_METRICS_FILENAME, main
 
     cell_table = _build_small_stage0_cell_table()
     expression_matrix, marker_names = _build_small_expression_bundle(cell_table.shape[0])
@@ -254,11 +254,12 @@ def test_stage0_pipeline_smoke_arm1(tmp_path: Path) -> None:
     assert (~df_metrics.loc[df_metrics["arm"] == "A1_broken_reference", "same_patient"]).all()
     assert (~df_metrics.loc[df_metrics["arm"] == "A1_broken_reference", "same_compartment"]).all()
     assert (output_dir / TEMPORARY_METRICS_FILENAME).exists()
+    assert (output_dir / TASK_A_MANIFEST_FILENAME).exists()
 
 
 def test_stage0_pipeline_smoke_arm2(tmp_path: Path) -> None:
     from tasks.task_A.build_stage0_artifacts import build_stage0_adata_from_cell_table
-    from tasks.task_A.pipeline import TEMPORARY_METRICS_FILENAME, main
+    from tasks.task_A.pipeline import TASK_A_MANIFEST_FILENAME, TEMPORARY_METRICS_FILENAME, main
 
     cell_table = _build_small_stage0_cell_table()
     expression_matrix, marker_names = _build_small_expression_bundle(cell_table.shape[0])
@@ -303,3 +304,4 @@ def test_stage0_pipeline_smoke_arm2(tmp_path: Path) -> None:
         assert np.isfinite(df_metrics.loc[ok_mask, "M_balanced"].to_numpy(dtype=float)).all()
 
     assert (output_dir / TEMPORARY_METRICS_FILENAME).exists()
+    assert (output_dir / TASK_A_MANIFEST_FILENAME).exists()

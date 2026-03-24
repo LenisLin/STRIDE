@@ -196,7 +196,8 @@ class LoadedArm2Inputs:
 class UotPlanBundle:
     """Raw UOT rerun products for the fixed Arm-II pair set."""
 
-    edge_shares: np.ndarray
+    source_transport_marginal: np.ndarray
+    target_transport_marginal: np.ndarray
     transport_mass: np.ndarray
     status_columns: pd.DataFrame
 
@@ -205,7 +206,8 @@ class UotPlanBundle:
 class BalancedPlanBundle:
     """Raw same-pair Balanced OT rerun products for the fixed Arm-II pair set."""
 
-    edge_shares: np.ndarray
+    source_transport_marginal: np.ndarray
+    target_transport_marginal: np.ndarray
     source_total_mass: np.ndarray
     target_total_mass: np.ndarray
     status_columns: pd.DataFrame

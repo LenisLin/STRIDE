@@ -15,8 +15,8 @@ from slotar.uot import UOTSolveConfig, calibrate_joint_lambda
 
 from .arm1_noise_baseline import build_arm1_roi_table
 from .common import (
-    assemble_pair_tensors_from_roi_vectors,
-    build_task_a_density_reference_from_adata,
+    TaskARoiReferenceBundle,
+    assemble_tensors,
     resolve_task_a_mass_mode,
     run_balanced_ot_batch,
     run_uot_batch_safe,
@@ -41,6 +41,7 @@ def run_arm2(
     config: Mapping[str, Any],
     uot_cfg: UOTSolveConfig,
     kernels: Sequence[np.ndarray],
+    roi_references: TaskARoiReferenceBundle | None = None,
 ) -> pd.DataFrame:
     """
     Generate deterministic within-patient ordered cross-compartment pairs for
@@ -54,14 +55,12 @@ def run_arm2(
     k_full = int(config["data"]["k_full"])
     mass_mode = resolve_task_a_mass_mode(config, ARM_NAME)
 
-    roi_density_vectors, _roi_count_vectors, _roi_total_areas = build_task_a_density_reference_from_adata(
+    A, B, mass_gap = assemble_tensors(
         adata,
-        k_full=k_full,
-    )
-    A, B, mass_gap = assemble_pair_tensors_from_roi_vectors(
-        roi_density_vectors,
         pair_meta,
         k_full=k_full,
+        mass_mode=mass_mode,
+        roi_references=roi_references,
     )
     pair_meta = pair_meta.copy()
     pair_meta["mass_gap"] = mass_gap

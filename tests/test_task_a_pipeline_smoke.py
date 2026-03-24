@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib
 import importlib.util
+import json
 import sys
 import types
 from pathlib import Path
@@ -76,7 +77,7 @@ def test_pipeline_rejects_unsupported_arm_before_import(
 
 
 def test_pipeline_smoke_runs_arm1_only(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    from tasks.task_A.pipeline import TEMPORARY_METRICS_FILENAME, main
+    from tasks.task_A.pipeline import TASK_A_MANIFEST_FILENAME, TEMPORARY_METRICS_FILENAME, main
     from tests.helpers_task_a_fixture import write_task_a_fixture
 
     fixture_path = write_task_a_fixture(tmp_path / "fixture.h5ad")
@@ -112,13 +113,15 @@ def test_pipeline_smoke_runs_arm1_only(tmp_path: Path, monkeypatch: pytest.Monke
         )
 
     assert (output_dir / TEMPORARY_METRICS_FILENAME).exists()
+    manifest = json.loads((output_dir / TASK_A_MANIFEST_FILENAME).read_text(encoding="utf-8"))
+    assert manifest["metrics_parquet"] == str((output_dir / TEMPORARY_METRICS_FILENAME).resolve())
 
 
 def test_pipeline_smoke_runs_constrained_and_broken_reference(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from tasks.task_A.pipeline import TEMPORARY_METRICS_FILENAME, main
+    from tasks.task_A.pipeline import TASK_A_MANIFEST_FILENAME, TEMPORARY_METRICS_FILENAME, main
     from tests.helpers_task_a_fixture import write_task_a_fixture
 
     fixture_path = write_task_a_fixture(tmp_path / "fixture.h5ad")
@@ -152,13 +155,15 @@ def test_pipeline_smoke_runs_constrained_and_broken_reference(
     assert (~df_metrics.loc[df_metrics["arm"] == "A1_broken_reference", "same_patient"]).all()
     assert (~df_metrics.loc[df_metrics["arm"] == "A1_broken_reference", "same_compartment"]).all()
     assert (output_dir / TEMPORARY_METRICS_FILENAME).exists()
+    manifest = json.loads((output_dir / TASK_A_MANIFEST_FILENAME).read_text(encoding="utf-8"))
+    assert manifest["metrics_parquet"] == str((output_dir / TEMPORARY_METRICS_FILENAME).resolve())
 
 
 def test_pipeline_smoke_runs_arm2_startup_slice(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from tasks.task_A.pipeline import TEMPORARY_METRICS_FILENAME, main
+    from tasks.task_A.pipeline import TASK_A_MANIFEST_FILENAME, TEMPORARY_METRICS_FILENAME, main
     from tests.helpers_task_a_fixture import write_task_a_fixture
 
     fixture_path = write_task_a_fixture(tmp_path / "fixture.h5ad")
@@ -205,6 +210,8 @@ def test_pipeline_smoke_runs_arm2_startup_slice(
         assert np.isfinite(df_metrics.loc[ok_mask, "M_balanced"].to_numpy(dtype=float)).all()
 
     assert (output_dir / TEMPORARY_METRICS_FILENAME).exists()
+    manifest = json.loads((output_dir / TASK_A_MANIFEST_FILENAME).read_text(encoding="utf-8"))
+    assert manifest["metrics_parquet"] == str((output_dir / TEMPORARY_METRICS_FILENAME).resolve())
 
 
 def test_pipeline_routes_arm3_through_shared_full_coverage_surface(
@@ -279,8 +286,7 @@ def test_pipeline_routes_arm3_through_shared_full_coverage_surface(
 
     monkeypatch.setattr("tasks.task_A.pipeline.import_module", tracking_import)
     monkeypatch.setattr(
-        pipeline,
-        "ad",
+        "tasks.task_A.runtime_contract.ad",
         types.SimpleNamespace(
             read_h5ad=lambda path: (_ for _ in ()).throw(AssertionError(f"unexpected AnnData load {path}"))
         ),
@@ -297,3 +303,220 @@ def test_pipeline_routes_arm3_through_shared_full_coverage_surface(
     assert set(df_metrics["pair_family"].astype(str)) == {"TC-IM"}
     assert (df_metrics["tau_mode"] == "task_fixed_by_compartment").all()
     assert (output_dir / pipeline.TEMPORARY_METRICS_FILENAME).exists()
+    manifest = json.loads((output_dir / pipeline.TASK_A_MANIFEST_FILENAME).read_text(encoding="utf-8"))
+    assert manifest["arm_artifact_roots"]["A3_uq_stress"] == str(output_dir.resolve())
+
+
+def test_pipeline_builds_shared_roi_references_once_for_multi_arm_density_run(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import tasks.task_A.runtime_contract as runtime_contract
+    from tasks.task_A.pipeline import main
+    from tests.helpers_task_a_fixture import write_task_a_fixture
+
+    fixture_path = write_task_a_fixture(tmp_path / "fixture.h5ad")
+    config_path = _write_config(
+        tmp_path / "config.yaml",
+        enabled_arms=["A1_baseline", "A2_cross_compartment"],
+    )
+    output_dir = tmp_path / "outputs"
+
+    original_builder = runtime_contract.build_task_a_roi_reference_bundle_from_adata
+    call_count = {"n": 0}
+
+    def tracking_builder(adata, *, k_full: int):
+        call_count["n"] += 1
+        return original_builder(adata, k_full=k_full)
+
+    monkeypatch.setattr(runtime_contract, "build_task_a_roi_reference_bundle_from_adata", tracking_builder)
+
+    df_metrics = main(str(config_path), str(fixture_path), str(output_dir))
+
+    assert call_count["n"] == 1
+    assert set(df_metrics["arm"].astype(str)) == {"A1_baseline", "A2_cross_compartment"}
+
+
+# ---------------------------------------------------------------------------
+# Arm3 calibration + bootstrap chain smoke tests
+# ---------------------------------------------------------------------------
+
+
+def _build_arm3_smoke_fixture(k_full: int = 25) -> tuple[dict, dict, dict, dict, pd.DataFrame]:
+    """
+    Build a minimal synthetic Arm3 fixture with all three pair families:
+      - 12 ROIs (2 patients × 3 compartments × 2 ROIs each)
+      - 10 blocks per ROI
+    Returns roi_block_summary, roi_density_vectors, roi_compartment_map,
+    roi_patient_map, pair_meta.
+    """
+    rng = np.random.default_rng(99)
+    count_cols = [f"count_k{k}" for k in range(k_full)]
+    specs = [
+        ("P01", "TC", "P01_TC_01"), ("P01", "TC", "P01_TC_02"),
+        ("P01", "IM", "P01_IM_01"), ("P01", "IM", "P01_IM_02"),
+        ("P01", "PT", "P01_PT_01"), ("P01", "PT", "P01_PT_02"),
+        ("P02", "TC", "P02_TC_01"), ("P02", "TC", "P02_TC_02"),
+        ("P02", "IM", "P02_IM_01"), ("P02", "IM", "P02_IM_02"),
+        ("P02", "PT", "P02_PT_01"), ("P02", "PT", "P02_PT_02"),
+    ]
+    n_blocks = 10
+    roi_block_summary: dict[str, pd.DataFrame] = {}
+    roi_density_vectors: dict[str, np.ndarray] = {}
+    roi_compartment_map: dict[str, str] = {}
+    roi_patient_map: dict[str, str] = {}
+
+    for patient_id, compartment, roi_id in specs:
+        roi_compartment_map[roi_id] = compartment
+        roi_patient_map[roi_id] = patient_id
+        block_ids = [f"{roi_id}_b{b}" for b in range(n_blocks)]
+        areas = rng.uniform(0.01, 0.05, size=n_blocks)
+        counts = rng.integers(1, 15, size=(n_blocks, k_full)).astype(float)
+        df = pd.DataFrame({"block_id": block_ids, "block_area_mm2": areas})
+        for k, col in enumerate(count_cols):
+            df[col] = counts[:, k]
+        roi_block_summary[roi_id] = df
+        roi_density_vectors[roi_id] = counts.sum(axis=0) / float(areas.sum())
+
+    direction_to_family = {
+        ("TC", "IM"): "TC-IM", ("IM", "TC"): "TC-IM",
+        ("IM", "PT"): "IM-PT", ("PT", "IM"): "IM-PT",
+        ("TC", "PT"): "TC-PT", ("PT", "TC"): "TC-PT",
+    }
+    pair_records = []
+    for patient_id in ("P01", "P02"):
+        comp_rois: dict[str, list[str]] = {}
+        for pid, comp, roi_id in specs:
+            if pid == patient_id:
+                comp_rois.setdefault(comp, []).append(roi_id)
+        for (ca, cb), family in direction_to_family.items():
+            for roi_a in comp_rois.get(ca, []):
+                for roi_b in comp_rois.get(cb, []):
+                    pair_records.append({
+                        "pair_id": f"smoke::{patient_id}::{roi_a}::{roi_b}",
+                        "patient_id": patient_id,
+                        "roi_a": roi_a,
+                        "roi_b": roi_b,
+                        "pair_family": family,
+                        "compartment_a": ca,
+                        "compartment_b": cb,
+                    })
+    pair_meta = pd.DataFrame.from_records(pair_records)
+    return roi_block_summary, roi_density_vectors, roi_compartment_map, roi_patient_map, pair_meta
+
+
+def test_pipeline_smoke_calibrate_arm3_lambda_and_tau() -> None:
+    """Arm3 Phase 4: calibrate_lambda_dens + calibrate_tau_by_compartment return valid dicts."""
+    from slotar.uot import UOTSolveConfig, precompute_logKernels
+    from tasks.task_A.arm3.calibrate import calibrate_lambda_dens, calibrate_tau_by_compartment
+
+    k_full = 25
+    eps_schedule = [1.0, 0.5]
+    lambda_grid = (0.1, 0.5, 1.0, 2.0)
+    C = np.abs(np.arange(k_full, dtype=float)[:, None] - np.arange(k_full, dtype=float)[None, :])
+    kernels = precompute_logKernels(C, eps_schedule, s_C=1.0)
+    cfg = UOTSolveConfig(eps_schedule=eps_schedule, max_iter=200, tol=1e-5)
+
+    roi_block_summary, roi_density_vectors, roi_compartment_map, roi_patient_map, pair_meta = (
+        _build_arm3_smoke_fixture(k_full)
+    )
+
+    # Phase 4a: calibrate_lambda_dens across all three families
+    lambda_dens = calibrate_lambda_dens(
+        roi_density_vectors=roi_density_vectors,
+        pair_meta=pair_meta,
+        k_full=k_full,
+        lambda_grid=lambda_grid,
+        uot_cfg=cfg,
+        kernels=kernels,
+        target_alpha=0.05,
+    )
+    assert set(lambda_dens.keys()) == {"TC-IM", "IM-PT", "TC-PT"}
+    for fam, val in lambda_dens.items():
+        assert np.isfinite(val), f"lambda_dens[{fam!r}] is not finite: {val}"
+        assert val > 0.0, f"lambda_dens[{fam!r}] is not positive: {val}"
+
+    # Phase 4b: calibrate_tau_by_compartment (each patient has 2 ROIs per compartment
+    # so within-patient same-compartment pairs are available for TC, IM, PT).
+    tau_by_compartment = calibrate_tau_by_compartment(
+        roi_density_vectors=roi_density_vectors,
+        roi_compartment_map=roi_compartment_map,
+        roi_patient_map=roi_patient_map,
+        k_full=k_full,
+        scaled_cost_matrix=C,
+        frozen_lambdas=lambda_dens,
+        uot_cfg=cfg,
+        kernels=kernels,
+    )
+    assert set(tau_by_compartment.keys()) == {"TC", "IM", "PT"}
+    for comp, val in tau_by_compartment.items():
+        assert np.isfinite(val), f"tau[{comp!r}] is not finite: {val}"
+        assert val > 0.0, f"tau[{comp!r}] is not positive: {val}"
+
+
+def test_pipeline_smoke_arm3_bootstrap_pass() -> None:
+    """Arm3 Phase 5: run_bootstrap_pass returns correct shapes and audit frame."""
+    from tasks.task_A.arm3.pseudo_roi import run_bootstrap_pass
+
+    k_full = 25
+    n_reps = 5
+    coverage = 0.75
+
+    roi_block_summary, _, _, _, pair_meta = _build_arm3_smoke_fixture(k_full)
+    n_pairs = len(pair_meta)
+
+    A_reps, B_reps, pseudo_meta = run_bootstrap_pass(
+        roi_block_summary=roi_block_summary,
+        pair_meta=pair_meta,
+        coverage=coverage,
+        n_reps=n_reps,
+        k_full=k_full,
+        rng_seed=7,
+    )
+
+    assert A_reps.shape == (n_reps, n_pairs, k_full)
+    assert B_reps.shape == (n_reps, n_pairs, k_full)
+    assert np.all(np.isfinite(A_reps))
+    assert np.all(np.isfinite(B_reps))
+    assert np.all(A_reps >= 0.0)
+    assert np.all(B_reps >= 0.0)
+    assert len(pseudo_meta) == n_reps * n_pairs
+    assert set(pseudo_meta.columns) >= {
+        "replicate_id", "pair_id", "coverage",
+        "pseudo_area_a_mm2", "pseudo_area_b_mm2",
+        "n_blocks_sampled_a", "n_blocks_sampled_b",
+    }
+    assert (pseudo_meta["coverage"] == coverage).all()
+
+
+def test_pipeline_smoke_arm2_batched_solve() -> None:
+    """Arm2 smoke: batched_uot_solve on a 12-pair fixture returns correct shapes and status."""
+    from slotar.uot import UOTSolveConfig, batched_uot_solve, precompute_logKernels
+    from tests.helpers_task_a_fixture import expected_arm2_pair_records, expected_roi_vectors
+
+    k_full = 25
+    eps_schedule = [1.0, 0.5, 0.1]
+    C = np.abs(np.arange(k_full, dtype=float)[:, None] - np.arange(k_full, dtype=float)[None, :])
+    kernels = precompute_logKernels(C, eps_schedule, s_C=1.0)
+    cfg = UOTSolveConfig(eps_schedule=eps_schedule, max_iter=300, tol=1e-6)
+
+    roi_vectors = expected_roi_vectors(k_full)
+    pair_records = expected_arm2_pair_records()
+    pair_meta = pd.DataFrame.from_records(pair_records)
+    n = len(pair_meta)
+
+    A = np.stack([roi_vectors[str(r)] for r in pair_meta["roi_a"]], axis=0).astype(float)
+    B = np.stack([roi_vectors[str(r)] for r in pair_meta["roi_b"]], axis=0).astype(float)
+    lambda_pl = np.full(n, 1.0, dtype=float)
+
+    metrics, details, status = batched_uot_solve(
+        A=A, B=B, lambda_pl=lambda_pl, kernels=kernels, cfg=cfg
+    )
+
+    assert status.shape == (n,)
+    for key in ("T", "D_pos", "B_pos", "d_rel", "b_rel", "M"):
+        assert metrics[key].shape == (n,)
+    ok_mask = status == "ok"
+    assert ok_mask.any(), "Expected at least some successful solves on the Arm2 fixture"
+    assert np.all(metrics["T"][ok_mask] > 0.0)
+    assert np.all(np.isfinite(metrics["M"][ok_mask]))

@@ -21,16 +21,22 @@ from tasks.task_A.arm2.analysis_response import (
     can_rebuild_from_existing_focused_dir,
     write_corrected_output_package,
 )
+from tasks.task_A.runtime_contract import (
+    TASK_A_METRICS_FILENAME,
+    load_task_a_run_manifest,
+    resolve_task_a_arm_focused_output_dir,
+)
 
 DEFAULT_TASK_A_ROOT = Path("/mnt/NAS_21T/ProjectResult/SLOTAR/task_A")
-DEFAULT_OUTPUT_DIR = DEFAULT_TASK_A_ROOT / "arm2_cross_compartment" / "analysis"
-FOCUSED_OUTPUT_SUBDIR = "focused"
+DEFAULT_ARM2_RUN_ROOT = DEFAULT_TASK_A_ROOT / "arm2_cross_compartment"
 DEFAULT_STAGE0_PATH = Path("/mnt/NAS_21T/ProjectData/SLOTAR/task_A_stage0/task_A_stage0_k25.h5ad")
 DEFAULT_CONFIG_PATH = Path(__file__).with_name("config.yaml")
+DEFAULT_OUTPUT_DIR = DEFAULT_ARM2_RUN_ROOT / "analysis" / "focused"
+FOCUSED_OUTPUT_SUBDIR = "focused"
 DEFAULT_ARM2_CANDIDATES: tuple[Path, ...] = (
-    DEFAULT_TASK_A_ROOT / "arm2_cross_compartment" / "task_A_metrics.parquet",
-    DEFAULT_TASK_A_ROOT / "arm2_cross_compartment" / "task_A_arm2_metrics.parquet",
-    DEFAULT_TASK_A_ROOT / "task_A_metrics.parquet",
+    DEFAULT_ARM2_RUN_ROOT / TASK_A_METRICS_FILENAME,
+    DEFAULT_TASK_A_ROOT / TASK_A_METRICS_FILENAME,
+    DEFAULT_ARM2_RUN_ROOT / "task_A_arm2_metrics.parquet",
 )
 
 
@@ -45,41 +51,43 @@ def _read_arm_column(path: Path) -> set[str]:
     return set(arms.dropna().unique().tolist())
 
 
+def _validate_arm2_parquet(path: Path) -> Path:
+    resolved = path.expanduser().resolve()
+    if not resolved.exists():
+        raise FileNotFoundError(f"Arm-II parquet does not exist: {resolved}")
+    if ARM_NAME not in _read_arm_column(resolved):
+        raise ValueError(f"Parquet does not contain arm={ARM_NAME!r}: {resolved}")
+    return resolved
+
+
 def discover_arm2_parquet(explicit_path: str | None, search_root: Path) -> Path:
     if explicit_path is not None:
-        path = Path(explicit_path).expanduser().resolve()
-        if not path.exists():
-            raise FileNotFoundError(f"Arm-II parquet does not exist: {path}")
-        if ARM_NAME not in _read_arm_column(path):
-            raise ValueError(f"Parquet does not contain arm={ARM_NAME!r}: {path}")
-        return path
+        return _validate_arm2_parquet(Path(explicit_path))
 
-    candidates: list[Path] = []
     for path in DEFAULT_ARM2_CANDIDATES:
-        if path.exists():
-            candidates.append(path.resolve())
+        if path.exists() and ARM_NAME in _read_arm_column(path):
+            return path.resolve()
 
+    discovered: list[Path] = []
     if search_root.exists():
-        for path in search_root.rglob("*.parquet"):
+        for path in sorted(search_root.rglob("*.parquet")):
             if "analysis" in path.parts:
                 continue
             resolved = path.resolve()
-            if resolved not in candidates and ARM_NAME in _read_arm_column(resolved):
-                candidates.append(resolved)
+            if ARM_NAME in _read_arm_column(resolved):
+                discovered.append(resolved)
 
-    if not candidates:
+    if not discovered:
         raise FileNotFoundError(
             "No Arm-II parquet containing arm='A2_cross_compartment' was found under "
             f"{search_root}. Pass --input-parquet explicitly."
         )
-
-    preferred = [path.resolve() for path in DEFAULT_ARM2_CANDIDATES if path.exists()]
-    for path in preferred:
-        if path in candidates:
-            return path
-
-    candidates.sort(key=lambda path: path.stat().st_mtime, reverse=True)
-    return candidates[0]
+    if len(discovered) > 1:
+        raise FileExistsError(
+            "Multiple Arm-II parquets were found and no manifest/default candidate resolved the ambiguity. "
+            f"Pass --input-parquet explicitly. Found: {discovered}"
+        )
+    return discovered[0]
 
 
 def _resolve_focused_output_dir(output_dir: Path) -> Path:
@@ -89,34 +97,52 @@ def _resolve_focused_output_dir(output_dir: Path) -> Path:
     return resolved / FOCUSED_OUTPUT_SUBDIR
 
 
+def _load_manifest_from_args(args: argparse.Namespace):
+    if args.task_a_manifest is not None:
+        return load_task_a_run_manifest(args.task_a_manifest)
+    if args.task_a_run_root is not None:
+        return load_task_a_run_manifest(args.task_a_run_root)
+    return None
+
+
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Run the operative Arm-II focused end-to-end analysis workflow.",
     )
     parser.add_argument(
+        "--task-a-manifest",
+        default=None,
+        help="Optional Task-A run manifest JSON. When provided, it is the primary source of runtime/artifact paths.",
+    )
+    parser.add_argument(
+        "--task-a-run-root",
+        default=None,
+        help="Optional Task-A formal run root containing task_a_run_manifest.json.",
+    )
+    parser.add_argument(
         "--input-parquet",
         default=None,
-        help="Optional explicit Arm-II parquet path. Defaults to auto-discovery under ProjectResult.",
+        help="Optional explicit Arm-II parquet path. Defaults to manifest resolution, then deterministic candidate search.",
     )
     parser.add_argument(
         "--search-root",
         default=str(DEFAULT_TASK_A_ROOT),
-        help="Root directory used for Arm-II parquet auto-discovery.",
+        help="Root directory used for Arm-II parquet fallback discovery when no manifest is supplied.",
     )
     parser.add_argument(
         "--stage0-h5ad",
-        default=str(DEFAULT_STAGE0_PATH),
-        help="Frozen Stage-0 artifact used by the focused Arm-II pipeline.",
+        default=None,
+        help="Frozen Stage-0 artifact used by the focused Arm-II pipeline. Defaults to the Task-A manifest when provided.",
     )
     parser.add_argument(
         "--task-config",
-        default=str(DEFAULT_CONFIG_PATH),
-        help="Task-A config used by the focused Arm-II pipeline.",
+        default=None,
+        help="Task-A config used by the focused Arm-II pipeline. Defaults to the Task-A manifest when provided.",
     )
     parser.add_argument(
         "--output-dir",
-        default=str(DEFAULT_OUTPUT_DIR),
-        help="Analysis directory whose `focused/` package will be replaced.",
+        default=None,
+        help="Analysis directory whose `focused/` package will be replaced. Defaults to the Task-A manifest arm analysis root when provided.",
     )
     parser.add_argument(
         "--prototype-view-ids",
@@ -133,15 +159,46 @@ def build_paths_from_args(args: argparse.Namespace) -> Arm2FocusedPaths:
     if args.prototype_view_ids:
         prototype_view_ids = tuple(sorted({int(proto_id) for proto_id in args.prototype_view_ids}))
 
-    arm2_path = discover_arm2_parquet(
-        explicit_path=args.input_parquet,
-        search_root=Path(args.search_root).expanduser().resolve(),
-    )
+    manifest = _load_manifest_from_args(args)
+    if manifest is not None:
+        arm2_metrics_parquet = (
+            _validate_arm2_parquet(Path(args.input_parquet))
+            if args.input_parquet is not None
+            else _validate_arm2_parquet(manifest.metrics_parquet)
+        )
+        stage0_h5ad = (
+            Path(args.stage0_h5ad).expanduser().resolve()
+            if args.stage0_h5ad is not None
+            else manifest.stage0_h5ad
+        )
+        task_config = (
+            Path(args.task_config).expanduser().resolve()
+            if args.task_config is not None
+            else manifest.config_path
+        )
+        output_dir = _resolve_focused_output_dir(
+            Path(args.output_dir).expanduser().resolve()
+            if args.output_dir is not None
+            else resolve_task_a_arm_focused_output_dir(manifest, ARM_NAME)
+        )
+    else:
+        arm2_metrics_parquet = discover_arm2_parquet(
+            explicit_path=args.input_parquet,
+            search_root=Path(args.search_root).expanduser().resolve(),
+        )
+        stage0_h5ad = Path(args.stage0_h5ad or DEFAULT_STAGE0_PATH).expanduser().resolve()
+        task_config = Path(args.task_config or DEFAULT_CONFIG_PATH).expanduser().resolve()
+        output_dir = _resolve_focused_output_dir(
+            Path(args.output_dir).expanduser().resolve()
+            if args.output_dir is not None
+            else DEFAULT_OUTPUT_DIR
+        )
+
     return Arm2FocusedPaths(
-        arm2_metrics_parquet=arm2_path,
-        stage0_h5ad=Path(args.stage0_h5ad).expanduser().resolve(),
-        task_config=Path(args.task_config).expanduser().resolve(),
-        output_dir=_resolve_focused_output_dir(Path(args.output_dir)),
+        arm2_metrics_parquet=arm2_metrics_parquet,
+        stage0_h5ad=stage0_h5ad,
+        task_config=task_config,
+        output_dir=output_dir,
         prototype_view_ids=prototype_view_ids,
     )
 

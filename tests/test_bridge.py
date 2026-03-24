@@ -1,69 +1,94 @@
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 
 import pandas as pd
 import pytest
 
+ROOT = Path(__file__).resolve().parents[1]
+SRC = ROOT / "src"
+if str(SRC) not in sys.path:
+    sys.path.insert(0, str(SRC))
+
 from slotar.io.bridge import DataContractError, save_for_r
 
 
-def test_save_for_r_writes_data_and_meta(tmp_path: Path) -> None:
-    cfg_dir = tmp_path / "config"
-    cfg_dir.mkdir(parents=True, exist_ok=True)
-    cfg_path = cfg_dir / "config.yaml"
-    cfg_path.write_text(
-        "paths:\n  interim_viz_dir: " + str((tmp_path / "viz").as_posix()) + "\n",
-        encoding="utf-8",
+def _valid_metrics() -> pd.DataFrame:
+    return pd.DataFrame(
+        [
+            {
+                "patient_group_id": "g1",
+                "uot_status": "ok",
+                "T": 1.0,
+                "D_pos": 0.1,
+                "B_pos": 0.2,
+                "d_rel": 0.1,
+                "b_rel": 0.2,
+                "M": 0.3,
+                "R": float("nan"),
+                "tau": float("nan"),
+            }
+        ]
     )
 
-    df = pd.DataFrame({"a": [1, 2, 3], "b": ["x", "y", "z"]})
 
-    data_path, meta_path = save_for_r(
-        df=df,
-        filename="example.parquet",
-        config_path=cfg_path,
-        primary_key="row_id",
-        provenance_script="tests/test_bridge.py",
-        git_commit="unknown",
+def _valid_events() -> pd.DataFrame:
+    return pd.DataFrame(
+        [
+            {
+                "patient_group_id": "g1",
+                "event_type": "remodeling",
+                "source_proto": 0,
+                "target_proto": 1,
+            }
+        ]
     )
 
-    assert data_path.exists()
-    assert meta_path.exists()
 
-    meta = json.loads(meta_path.read_text(encoding="utf-8"))
-    assert meta["file"] == data_path.name
-    assert meta["primary_key"] == "row_id"
-    assert "columns" in meta and isinstance(meta["columns"], dict)
-    assert "provenance" in meta and isinstance(meta["provenance"], dict)
-    assert meta["provenance"]["config"].endswith("config.yaml")
-
-
-def test_save_for_r_resolves_relative_output_path_from_repo_root(tmp_path: Path) -> None:
-    cfg_path = tmp_path / "config" / "config.yaml"
-    cfg_path.parent.mkdir(parents=True, exist_ok=True)
-    cfg_path.write_text("paths:\n  interim_viz_dir: data/interim_viz\n", encoding="utf-8")
-
-    df = pd.DataFrame({"row_id": [1, 2], "value": [10, 20]})
-    data_path, meta_path = save_for_r(
-        df=df,
-        filename="example.csv",
-        config_path=cfg_path,
-        primary_key="row_id",
+def test_save_for_r_writes_canonical_bridge_artifacts(tmp_path: Path) -> None:
+    paths = save_for_r(
+        metrics_df=_valid_metrics(),
+        events_df=_valid_events(),
+        output_dir=tmp_path / "bridge_out",
+        meta_audit={"run_id": "task-a-demo"},
+        aux_tables={"baseline_summary": pd.DataFrame({"row_id": [1], "value": [2.0]})},
     )
 
-    expected = tmp_path / "data" / "interim_viz" / "example.csv"
-    assert data_path == expected
-    assert data_path.exists()
-    assert meta_path.exists()
+    assert paths["metrics"].name == "metrics_.csv"
+    assert paths["events"].name == "events_.parquet"
+    assert paths["meta"].name == "meta_.json"
+    assert paths["metrics"].exists()
+    assert paths["events"].exists()
+    assert paths["meta"].exists()
+    assert paths["aux:baseline_summary"].exists()
+
+    meta = json.loads(paths["meta"].read_text(encoding="utf-8"))
+    assert meta["schema_version"] == "v2.0"
+    assert meta["run_id"] == "task-a-demo"
+    assert meta["artifacts"]["metrics"] == "metrics_.csv"
+    assert meta["artifacts"]["events"] == "events_.parquet"
+    assert meta["aux_tables"]["baseline_summary"] == "aux_baseline_summary.csv"
 
 
-def test_save_for_r_rejects_invalid_extension(tmp_path: Path) -> None:
-    cfg_path = tmp_path / "config" / "config.yaml"
-    cfg_path.parent.mkdir(parents=True, exist_ok=True)
-    cfg_path.write_text("paths:\n  interim_viz_dir: data/interim_viz\n", encoding="utf-8")
+def test_save_for_r_preserves_existing_schema_version(tmp_path: Path) -> None:
+    paths = save_for_r(
+        metrics_df=_valid_metrics(),
+        events_df=_valid_events(),
+        output_dir=tmp_path / "bridge_out",
+        meta_audit={"schema_version": "custom-vX"},
+    )
+    meta = json.loads(paths["meta"].read_text(encoding="utf-8"))
+    assert meta["schema_version"] == "custom-vX"
 
-    df = pd.DataFrame({"row_id": [1], "value": [10]})
-    with pytest.raises(DataContractError, match="filename must end with .parquet or .csv"):
-        save_for_r(df=df, filename="bad.json", config_path=cfg_path, primary_key="row_id")
+
+def test_save_for_r_enforces_contracts_before_writing(tmp_path: Path) -> None:
+    bad_metrics = pd.DataFrame({"uot_status": ["ok"]})
+    with pytest.raises(DataContractError, match="patient_group_id"):
+        save_for_r(
+            metrics_df=bad_metrics,
+            events_df=_valid_events(),
+            output_dir=tmp_path / "bridge_out",
+            meta_audit={},
+        )
