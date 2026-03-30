@@ -107,7 +107,7 @@ def _load_manifest_from_args(args: argparse.Namespace):
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Run the operative Arm-II focused end-to-end analysis workflow.",
+        description="Run the operative Arm-II real-data mirror rebuild workflow.",
     )
     parser.add_argument(
         "--task-a-manifest",
@@ -132,17 +132,17 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--stage0-h5ad",
         default=None,
-        help="Frozen Stage-0 artifact used by the focused Arm-II pipeline. Defaults to the Task-A manifest when provided.",
+        help="Frozen Stage-0 artifact used by the Arm-II real-data mirror pipeline. Defaults to the Task-A manifest when provided.",
     )
     parser.add_argument(
         "--task-config",
         default=None,
-        help="Task-A config used by the focused Arm-II pipeline. Defaults to the Task-A manifest when provided.",
+        help="Task-A config used by the Arm-II real-data mirror pipeline. Defaults to the Task-A manifest when provided.",
     )
     parser.add_argument(
         "--output-dir",
         default=None,
-        help="Analysis directory whose `focused/` package will be replaced. Defaults to the Task-A manifest arm analysis root when provided.",
+        help="Analysis directory whose compatibility `focused/` package will be replaced by the proposal-aligned real-data mirror outputs. Defaults to the Task-A manifest arm analysis root when provided.",
     )
     parser.add_argument(
         "--prototype-view-ids",

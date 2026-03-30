@@ -1,8 +1,8 @@
 name: slotar
-title: SLOTAR
-one_liner: Selection-aware Longitudinal Optimal Transport for Attribution & Remapping in multi-ROI spatial omics.
-domain: Computational Biology / Spatial Omics
-stage: Data / Pipeline / Method Development
+title: STRIDE
+one_liner: Longitudinal spatial remodeling analysis framework/package for patient-level open remodeling relations in multi-ROI spatial omics.
+domain: Computational Biology / Longitudinal Spatial Omics
+stage: Method / Analysis Framework Development
 owner: LenisLin
 license: MIT
 entrypoints:
@@ -10,9 +10,6 @@ entrypoints:
   - pytest -q
   - python scripts/dev/generate_readme.py --check
 datasets:
-  - Gastric Cancer IMC Longitudinal Cohort (pre/post, multi-ROI)
-outputs:
-  - data/interim_viz/*.parquet
-  - data/interim_viz/*.csv
-  - data/interim_viz/*_meta.json
+  - Gastric cancer IMC longitudinal cohort (multi-ROI, pre/post)
+outputs: []
 components: []

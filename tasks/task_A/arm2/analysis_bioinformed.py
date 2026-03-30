@@ -1,12 +1,12 @@
 """
 Module: tasks.task_A.arm2.analysis_bioinformed
 
-Build a biologically informed Arm-II extraction package on top of the existing
-focused-analysis compute surfaces.
+Build a biologically informed Arm-II bounded-audit package on top of the
+existing real-data-mirror compute surfaces.
 
 This module keeps the current `analysis/focused/` package untouched. It writes
 an independent `analysis/bioinformed/` package for panel-aware prototype
-comparisons and ordered-direction unmatched decomposition.
+comparisons and ordered-direction bounded residual decomposition.
 """
 
 from __future__ import annotations
@@ -43,12 +43,12 @@ PANEL_ORDER: dict[str, int] = {
 }
 
 BIOINFORMED_OUTPUT_FILENAMES: tuple[str, ...] = (
-    "20_tc_dominant_family_summary.csv",
-    "21_mixed_interface_family_summary.csv",
-    "22_bio_annotated_overlap_conflict_table.csv",
-    "23_ot_vs_uot_prototype_contrast.csv",
-    "24_bd_unmatched_directionality.csv",
-    "25_arm2_biointegrated_memo_table.csv",
+    "20_tc_dominant_backbone_context.csv",
+    "21_interface_residual_context.csv",
+    "22_bio_annotated_anchor_residual_overlap_audit.csv",
+    "23_closed_vs_open_prototype_contrast.csv",
+    "24_directional_residual_assignment_audit.csv",
+    "25_block2_biointegrated_audit_table.csv",
 )
 
 
@@ -175,11 +175,11 @@ def build_directional_unmatched_patient_proto_table(
                         else "audit_only"
                     ),
                     "proto_id": int(proto_id),
-                    "destroy_abs": float(destroy_abs[offset]),
-                    "birth_abs": float(birth_abs[offset]),
-                    "destroy_share": float(destroy_share[offset]),
-                    "birth_share": float(birth_share[offset]),
-                    "destroy_minus_birth_share": float(destroy_share[offset] - birth_share[offset]),
+                    "source_depletion_prone_abs": float(destroy_abs[offset]),
+                    "target_emergence_prone_abs": float(birth_abs[offset]),
+                    "source_depletion_prone_share": float(destroy_share[offset]),
+                    "target_emergence_prone_share": float(birth_share[offset]),
+                    "depletion_minus_emergence": float(destroy_share[offset] - birth_share[offset]),
                 }
             )
 
@@ -192,11 +192,11 @@ def build_directional_unmatched_patient_proto_table(
                 "pair_family",
                 "direction_role",
                 "proto_id",
-                "destroy_abs",
-                "birth_abs",
-                "destroy_share",
-                "birth_share",
-                "destroy_minus_birth_share",
+                "source_depletion_prone_abs",
+                "target_emergence_prone_abs",
+                "source_depletion_prone_share",
+                "target_emergence_prone_share",
+                "depletion_minus_emergence",
                 *PROTOTYPE_ANNOTATION_VALUE_COLUMNS,
             ]
         )
@@ -229,28 +229,28 @@ def summarize_directional_unmatched_by_proto(
         )
         .agg(
             patient_count=("patient_id", "nunique"),
-            destroy_share=("destroy_share", "median"),
-            birth_share=("birth_share", "median"),
-            destroy_minus_birth_share=("destroy_minus_birth_share", "median"),
-            destroy_abs=("destroy_abs", "median"),
-            birth_abs=("birth_abs", "median"),
-            destroy_gt_birth_patient_count=(
-                "destroy_minus_birth_share",
+            source_depletion_prone_share=("source_depletion_prone_share", "median"),
+            target_emergence_prone_share=("target_emergence_prone_share", "median"),
+            depletion_minus_emergence=("depletion_minus_emergence", "median"),
+            source_depletion_prone_abs=("source_depletion_prone_abs", "median"),
+            target_emergence_prone_abs=("target_emergence_prone_abs", "median"),
+            source_depletion_gt_emergence_patient_count=(
+                "depletion_minus_emergence",
                 lambda s: int((pd.to_numeric(s, errors="coerce").fillna(0.0) > 0.0).sum()),
             ),
-            birth_gt_destroy_patient_count=(
-                "destroy_minus_birth_share",
+            emergence_gt_source_depletion_patient_count=(
+                "depletion_minus_emergence",
                 lambda s: int((pd.to_numeric(s, errors="coerce").fillna(0.0) < 0.0).sum()),
             ),
         )
         .reset_index()
     )
-    grouped["destroy_gt_birth_patient_prop"] = (
-        pd.to_numeric(grouped["destroy_gt_birth_patient_count"], errors="coerce").astype(float)
+    grouped["source_depletion_gt_emergence_patient_prop"] = (
+        pd.to_numeric(grouped["source_depletion_gt_emergence_patient_count"], errors="coerce").astype(float)
         / pd.to_numeric(grouped["patient_count"], errors="coerce").astype(float)
     )
-    grouped["birth_gt_destroy_patient_prop"] = (
-        pd.to_numeric(grouped["birth_gt_destroy_patient_count"], errors="coerce").astype(float)
+    grouped["emergence_gt_source_depletion_patient_prop"] = (
+        pd.to_numeric(grouped["emergence_gt_source_depletion_patient_count"], errors="coerce").astype(float)
         / pd.to_numeric(grouped["patient_count"], errors="coerce").astype(float)
     )
     grouped = grouped.merge(
@@ -284,15 +284,15 @@ def summarize_directional_unmatched_by_proto(
         "panel_rule",
         "is_borderline_tc_like",
         "patient_count",
-        "destroy_share",
-        "birth_share",
-        "destroy_minus_birth_share",
-        "destroy_abs",
-        "birth_abs",
-        "destroy_gt_birth_patient_count",
-        "destroy_gt_birth_patient_prop",
-        "birth_gt_destroy_patient_count",
-        "birth_gt_destroy_patient_prop",
+        "source_depletion_prone_share",
+        "target_emergence_prone_share",
+        "depletion_minus_emergence",
+        "source_depletion_prone_abs",
+        "target_emergence_prone_abs",
+        "source_depletion_gt_emergence_patient_count",
+        "source_depletion_gt_emergence_patient_prop",
+        "emergence_gt_source_depletion_patient_count",
+        "emergence_gt_source_depletion_patient_prop",
     ]
     grouped = grouped.sort_values(["pair_type", "panel_sort_key", "proto_id"]).reset_index(drop=True)
     return grouped.loc[:, output_columns]
@@ -322,10 +322,10 @@ def build_tc_dominant_family_summary(
             :,
             [
                 "proto_id",
-                "shared_transport_anchor_score",
-                "uot_unmatched_contributor_score",
-                "shared_transport_and_unmatched_any_patient_count",
-                "shared_transport_and_unmatched_any_patient_count_prop",
+                "trusted_anchor_score",
+                "bounded_residual_score",
+                "trusted_anchor_and_bounded_residual_any_patient_count",
+                "trusted_anchor_and_bounded_residual_any_patient_count_prop",
             ],
         ],
         on="proto_id",
@@ -344,16 +344,16 @@ def build_tc_dominant_family_summary(
         *PROTOTYPE_ANNOTATION_VALUE_COLUMNS,
         "is_borderline_tc_like",
         "baseline_median_abs_delta_share",
-        "balanced_transport_share_median",
-        "uot_transport_share_median",
-        "balanced_minus_uot_transport_share_median",
-        "uot_unmatched_share_median",
+        "closed_comparator_share_median",
+        "continuity_backbone_share_median",
+        "forced_closure_excess_share_median",
+        "bounded_residual_share_median",
         "patient_count",
         "paired_confirmatory_patient_count",
-        "shared_transport_anchor_score",
-        "uot_unmatched_contributor_score",
-        "shared_transport_and_unmatched_any_patient_count",
-        "shared_transport_and_unmatched_any_patient_count_prop",
+        "trusted_anchor_score",
+        "bounded_residual_score",
+        "trusted_anchor_and_bounded_residual_any_patient_count",
+        "trusted_anchor_and_bounded_residual_any_patient_count_prop",
     ]
     return summary.loc[:, output_columns].sort_values(
         ["pair_family", "proto_id"]
@@ -371,10 +371,10 @@ def build_mixed_interface_family_summary(
             :,
             [
                 "proto_id",
-                "shared_transport_anchor_score",
-                "uot_unmatched_contributor_score",
-                "shared_transport_and_unmatched_any_patient_count",
-                "shared_transport_and_unmatched_any_patient_count_prop",
+                "trusted_anchor_score",
+                "bounded_residual_score",
+                "trusted_anchor_and_bounded_residual_any_patient_count",
+                "trusted_anchor_and_bounded_residual_any_patient_count_prop",
             ],
         ],
         on="proto_id",
@@ -393,16 +393,16 @@ def build_mixed_interface_family_summary(
         *PROTOTYPE_ANNOTATION_VALUE_COLUMNS,
         "is_borderline_tc_like",
         "baseline_median_abs_delta_share",
-        "balanced_transport_share_median",
-        "uot_transport_share_median",
-        "balanced_minus_uot_transport_share_median",
-        "uot_unmatched_share_median",
+        "closed_comparator_share_median",
+        "continuity_backbone_share_median",
+        "forced_closure_excess_share_median",
+        "bounded_residual_share_median",
         "patient_count",
         "paired_confirmatory_patient_count",
-        "shared_transport_anchor_score",
-        "uot_unmatched_contributor_score",
-        "shared_transport_and_unmatched_any_patient_count",
-        "shared_transport_and_unmatched_any_patient_count_prop",
+        "trusted_anchor_score",
+        "bounded_residual_score",
+        "trusted_anchor_and_bounded_residual_any_patient_count",
+        "trusted_anchor_and_bounded_residual_any_patient_count_prop",
     ]
     return summary.loc[:, output_columns].sort_values(
         ["panel_name", "pair_family", "proto_id"]
@@ -412,7 +412,7 @@ def build_mixed_interface_family_summary(
 def _membership_pattern(frame: pd.DataFrame) -> pd.Series:
     membership = frame.loc[
         :,
-        ["in_anchor_top_10", "in_forced_top_10", "in_unmatched_top_10"],
+        ["in_anchor_top_10", "in_forced_closure_top_10", "in_bounded_residual_top_10"],
     ].copy()
     for column in membership.columns:
         membership[column] = membership[column].astype("boolean").fillna(False).astype(bool)
@@ -421,10 +421,10 @@ def _membership_pattern(frame: pd.DataFrame) -> pd.Series:
         terms: list[str] = []
         if row.in_anchor_top_10:
             terms.append("anchor")
-        if row.in_forced_top_10:
-            terms.append("forced")
-        if row.in_unmatched_top_10:
-            terms.append("unmatched")
+        if row.in_forced_closure_top_10:
+            terms.append("forced_closure")
+        if row.in_bounded_residual_top_10:
+            terms.append("bounded_residual")
         labels.append("_and_".join(terms) if terms else "none")
     return pd.Series(labels, index=frame.index, dtype="object")
 
@@ -441,8 +441,8 @@ def build_bio_annotated_overlap_conflict_table(
             :,
             [
                 "proto_id",
-                "shared_transport_and_unmatched_any_patient_count",
-                "shared_transport_and_unmatched_any_patient_count_prop",
+                "trusted_anchor_and_bounded_residual_any_patient_count",
+                "trusted_anchor_and_bounded_residual_any_patient_count_prop",
             ],
         ],
         on="proto_id",
@@ -457,17 +457,17 @@ def build_bio_annotated_overlap_conflict_table(
         "panel_rule",
         "is_borderline_tc_like",
         "membership_pattern",
-        "shared_transport_anchor_rank",
-        "balanced_ot_forced_transport_rank",
-        "uot_unmatched_contributor_rank",
+        "trusted_anchor_rank",
+        "forced_closure_rank",
+        "bounded_residual_rank",
         "in_anchor_top_10",
-        "in_forced_top_10",
-        "in_unmatched_top_10",
-        "shared_transport_anchor_score",
-        "balanced_ot_forced_transport_score",
-        "uot_unmatched_contributor_score",
-        "shared_transport_and_unmatched_any_patient_count",
-        "shared_transport_and_unmatched_any_patient_count_prop",
+        "in_forced_closure_top_10",
+        "in_bounded_residual_top_10",
+        "trusted_anchor_score",
+        "forced_closure_score",
+        "bounded_residual_score",
+        "trusted_anchor_and_bounded_residual_any_patient_count",
+        "trusted_anchor_and_bounded_residual_any_patient_count_prop",
     ]
     return detail.loc[:, output_columns].sort_values(
         ["panel_name", "proto_id"]
@@ -484,17 +484,17 @@ def build_ot_vs_uot_prototype_contrast(
 ) -> pd.DataFrame:
     contrast = _merge_panel_columns(comparison_view, panel_assignment)
     contrast = contrast.merge(
-        anchors.loc[:, ["proto_id", "shared_transport_anchor_score"]],
+        anchors.loc[:, ["proto_id", "trusted_anchor_score"]],
         on="proto_id",
         how="left",
         validate="many_to_one",
     ).merge(
-        forced.loc[:, ["proto_id", "balanced_ot_forced_transport_score"]],
+        forced.loc[:, ["proto_id", "forced_closure_score"]],
         on="proto_id",
         how="left",
         validate="many_to_one",
     ).merge(
-        unmatched.loc[:, ["proto_id", "uot_unmatched_contributor_score"]],
+        unmatched.loc[:, ["proto_id", "bounded_residual_score"]],
         on="proto_id",
         how="left",
         validate="many_to_one",
@@ -503,8 +503,8 @@ def build_ot_vs_uot_prototype_contrast(
             :,
             [
                 "proto_id",
-                "shared_transport_and_unmatched_any_patient_count",
-                "shared_transport_and_unmatched_any_patient_count_prop",
+                "trusted_anchor_and_bounded_residual_any_patient_count",
+                "trusted_anchor_and_bounded_residual_any_patient_count_prop",
             ],
         ],
         on="proto_id",
@@ -517,19 +517,19 @@ def build_ot_vs_uot_prototype_contrast(
         "panel_name",
         "panel_rule",
         "is_borderline_tc_like",
-        "balanced_transport_share_tc_im",
-        "uot_transport_share_tc_im",
-        "uot_unmatched_share_tc_im",
-        "balanced_minus_uot_tc_im",
-        "balanced_transport_share_tc_pt",
-        "uot_transport_share_tc_pt",
-        "uot_unmatched_share_tc_pt",
-        "balanced_minus_uot_tc_pt",
-        "shared_transport_anchor_score",
-        "balanced_ot_forced_transport_score",
-        "uot_unmatched_contributor_score",
-        "shared_transport_and_unmatched_any_patient_count",
-        "shared_transport_and_unmatched_any_patient_count_prop",
+        "closed_comparator_share_tc_im",
+        "continuity_backbone_share_tc_im",
+        "bounded_residual_share_tc_im",
+        "forced_closure_excess_tc_im",
+        "closed_comparator_share_tc_pt",
+        "continuity_backbone_share_tc_pt",
+        "bounded_residual_share_tc_pt",
+        "forced_closure_excess_tc_pt",
+        "trusted_anchor_score",
+        "forced_closure_score",
+        "bounded_residual_score",
+        "trusted_anchor_and_bounded_residual_any_patient_count",
+        "trusted_anchor_and_bounded_residual_any_patient_count_prop",
     ]
     return contrast.loc[:, output_columns].sort_values(
         ["panel_name", "proto_id"]
@@ -541,8 +541,8 @@ def build_biointegrated_memo_table() -> pd.DataFrame:
         {
             "panel_name": PANEL_TC_DOMINANT,
             "pair_family": "TC-IM",
-            "primary_contrast": "balanced_transport_share vs uot_transport_share",
-            "primary_source_file": "20_tc_dominant_family_summary.csv",
+            "primary_contrast": "closed_comparator_share vs continuity_backbone_share",
+            "primary_source_file": "20_tc_dominant_backbone_context.csv",
             "availability_status": "generated_postprocessing",
             "requires_reextraction": False,
             "nonclaim_flag": False,
@@ -550,8 +550,8 @@ def build_biointegrated_memo_table() -> pd.DataFrame:
         {
             "panel_name": PANEL_TC_DOMINANT,
             "pair_family": "TC-PT",
-            "primary_contrast": "balanced_transport_share vs uot_transport_share",
-            "primary_source_file": "20_tc_dominant_family_summary.csv",
+            "primary_contrast": "closed_comparator_share vs continuity_backbone_share",
+            "primary_source_file": "20_tc_dominant_backbone_context.csv",
             "availability_status": "generated_postprocessing",
             "requires_reextraction": False,
             "nonclaim_flag": False,
@@ -559,8 +559,8 @@ def build_biointegrated_memo_table() -> pd.DataFrame:
         {
             "panel_name": PANEL_TC_DOMINANT,
             "pair_family": "TC-IM",
-            "primary_contrast": "uot_transport_share vs uot_unmatched_share",
-            "primary_source_file": "20_tc_dominant_family_summary.csv",
+            "primary_contrast": "continuity_backbone_share vs bounded_residual_share",
+            "primary_source_file": "20_tc_dominant_backbone_context.csv",
             "availability_status": "generated_postprocessing",
             "requires_reextraction": False,
             "nonclaim_flag": False,
@@ -568,8 +568,8 @@ def build_biointegrated_memo_table() -> pd.DataFrame:
         {
             "panel_name": PANEL_TC_DOMINANT,
             "pair_family": "TC-PT",
-            "primary_contrast": "uot_transport_share vs uot_unmatched_share",
-            "primary_source_file": "20_tc_dominant_family_summary.csv",
+            "primary_contrast": "continuity_backbone_share vs bounded_residual_share",
+            "primary_source_file": "20_tc_dominant_backbone_context.csv",
             "availability_status": "generated_postprocessing",
             "requires_reextraction": False,
             "nonclaim_flag": False,
@@ -577,8 +577,8 @@ def build_biointegrated_memo_table() -> pd.DataFrame:
         {
             "panel_name": PANEL_MIXED_INTERFACE,
             "pair_family": "TC-IM",
-            "primary_contrast": "balanced_minus_uot_transport_share vs uot_unmatched_share",
-            "primary_source_file": "21_mixed_interface_family_summary.csv",
+            "primary_contrast": "forced_closure_excess_share vs bounded_residual_share",
+            "primary_source_file": "21_interface_residual_context.csv",
             "availability_status": "generated_postprocessing",
             "requires_reextraction": False,
             "nonclaim_flag": False,
@@ -586,8 +586,8 @@ def build_biointegrated_memo_table() -> pd.DataFrame:
         {
             "panel_name": PANEL_MIXED_INTERFACE,
             "pair_family": "TC-PT",
-            "primary_contrast": "balanced_minus_uot_transport_share vs uot_unmatched_share",
-            "primary_source_file": "21_mixed_interface_family_summary.csv",
+            "primary_contrast": "forced_closure_excess_share vs bounded_residual_share",
+            "primary_source_file": "21_interface_residual_context.csv",
             "availability_status": "generated_postprocessing",
             "requires_reextraction": False,
             "nonclaim_flag": False,
@@ -595,8 +595,8 @@ def build_biointegrated_memo_table() -> pd.DataFrame:
         {
             "panel_name": PANEL_IMMUNE_STROMAL,
             "pair_family": "TC-IM",
-            "primary_contrast": "context-panel transport vs unmatched split",
-            "primary_source_file": "21_mixed_interface_family_summary.csv",
+            "primary_contrast": "context-panel continuity vs residual split",
+            "primary_source_file": "21_interface_residual_context.csv",
             "availability_status": "generated_postprocessing",
             "requires_reextraction": False,
             "nonclaim_flag": False,
@@ -604,8 +604,8 @@ def build_biointegrated_memo_table() -> pd.DataFrame:
         {
             "panel_name": PANEL_IMMUNE_STROMAL,
             "pair_family": "TC-PT",
-            "primary_contrast": "context-panel transport vs unmatched split",
-            "primary_source_file": "21_mixed_interface_family_summary.csv",
+            "primary_contrast": "context-panel continuity vs residual split",
+            "primary_source_file": "21_interface_residual_context.csv",
             "availability_status": "generated_postprocessing",
             "requires_reextraction": False,
             "nonclaim_flag": False,
@@ -613,8 +613,8 @@ def build_biointegrated_memo_table() -> pd.DataFrame:
         {
             "panel_name": "all_panels",
             "pair_family": "TC->IM",
-            "primary_contrast": "destroy_share vs birth_share",
-            "primary_source_file": "24_bd_unmatched_directionality.csv",
+            "primary_contrast": "source_depletion_prone_share vs target_emergence_prone_share",
+            "primary_source_file": "24_directional_residual_assignment_audit.csv",
             "availability_status": "generated_arm2_only_reextraction",
             "requires_reextraction": True,
             "nonclaim_flag": False,
@@ -622,8 +622,8 @@ def build_biointegrated_memo_table() -> pd.DataFrame:
         {
             "panel_name": "all_panels",
             "pair_family": "TC->PT",
-            "primary_contrast": "destroy_share vs birth_share",
-            "primary_source_file": "24_bd_unmatched_directionality.csv",
+            "primary_contrast": "source_depletion_prone_share vs target_emergence_prone_share",
+            "primary_source_file": "24_directional_residual_assignment_audit.csv",
             "availability_status": "generated_arm2_only_reextraction",
             "requires_reextraction": True,
             "nonclaim_flag": False,
@@ -632,7 +632,7 @@ def build_biointegrated_memo_table() -> pd.DataFrame:
             "panel_name": "all_panels",
             "pair_family": "IM-PT",
             "primary_contrast": "exploratory only; excluded from confirmatory claims",
-            "primary_source_file": "24_bd_unmatched_directionality.csv",
+            "primary_source_file": "24_directional_residual_assignment_audit.csv",
             "availability_status": "audit_only",
             "requires_reextraction": True,
             "nonclaim_flag": True,
@@ -647,13 +647,13 @@ def validate_bioinformed_output_package(tables_by_filename: dict[str, pd.DataFra
     if observed != expected:
         raise ValueError(f"Bioinformed output filenames do not match contract: observed={observed}, expected={expected}")
 
-    tc_summary = tables_by_filename["20_tc_dominant_family_summary.csv"]
+    tc_summary = tables_by_filename["20_tc_dominant_backbone_context.csv"]
     if not tc_summary["panel_name"].astype(str).eq(PANEL_TC_DOMINANT).all():
         raise ValueError("TC-dominant summary contains non-tc_dominant rows")
     if not tc_summary["pair_family"].astype(str).isin(CONFIRMATORY_FAMILIES).all():
         raise ValueError("TC-dominant summary contains non-confirmatory families")
 
-    mixed_summary = tables_by_filename["21_mixed_interface_family_summary.csv"]
+    mixed_summary = tables_by_filename["21_interface_residual_context.csv"]
     if mixed_summary.empty:
         raise ValueError("Mixed/interface summary is empty")
     if not mixed_summary["panel_name"].astype(str).isin(
@@ -661,11 +661,11 @@ def validate_bioinformed_output_package(tables_by_filename: dict[str, pd.DataFra
     ).all():
         raise ValueError("Mixed/interface summary contains unexpected panel labels")
 
-    overlap = tables_by_filename["22_bio_annotated_overlap_conflict_table.csv"]
+    overlap = tables_by_filename["22_bio_annotated_anchor_residual_overlap_audit.csv"]
     if overlap.empty:
         raise ValueError("Bio-annotated overlap/conflict table is empty")
 
-    contrast = tables_by_filename["23_ot_vs_uot_prototype_contrast.csv"]
+    contrast = tables_by_filename["23_closed_vs_open_prototype_contrast.csv"]
     contrast_proto_ids = sorted(contrast["proto_id"].astype(int).unique().tolist())
     summary_proto_ids = sorted(
         set(tc_summary["proto_id"].astype(int).tolist())
@@ -674,11 +674,11 @@ def validate_bioinformed_output_package(tables_by_filename: dict[str, pd.DataFra
     if contrast_proto_ids != summary_proto_ids:
         raise ValueError("OT-vs-UOT contrast table does not span the same prototype set as the family summaries")
 
-    bd = tables_by_filename["24_bd_unmatched_directionality.csv"]
+    bd = tables_by_filename["24_directional_residual_assignment_audit.csv"]
     if not set(PRIMARY_ANCHOR_PAIR_TYPES).issubset(set(bd["pair_type"].astype(str).tolist())):
         raise ValueError("B/D directionality table is missing the primary anchor directions")
 
-    memo = tables_by_filename["25_arm2_biointegrated_memo_table.csv"]
+    memo = tables_by_filename["25_block2_biointegrated_audit_table.csv"]
     if memo.empty:
         raise ValueError("Biointegrated memo table is empty")
 
@@ -700,7 +700,7 @@ def run_bioinformed_analysis(paths: Arm2FocusedPaths) -> dict[str, pd.DataFrame]
     focused_dir = paths.arm2_metrics_parquet.parent / "analysis" / "focused"
     if not can_rebuild_from_existing_focused_dir(focused_dir):
         raise FileNotFoundError(
-            "Current bioinformed extractor requires the persisted Arm-II focused package at "
+            "Current bounded-audit extractor requires the persisted Arm-II real-data mirror package at "
             f"{focused_dir}"
         )
     corrected_package = build_corrected_output_package_from_existing_dir(
@@ -709,13 +709,13 @@ def run_bioinformed_analysis(paths: Arm2FocusedPaths) -> dict[str, pd.DataFrame]
         task_config=paths.task_config,
     )
 
-    family_specific_summary = corrected_package.tables_by_filename["10_prototype_family_specific_summary.csv"].copy()
-    anchors = corrected_package.tables_by_filename["06_uot_shared_transport_anchors.csv"].copy()
-    forced = corrected_package.tables_by_filename["07_balanced_ot_forced_transport_prototypes.csv"].copy()
-    unmatched = corrected_package.tables_by_filename["08_uot_unmatched_contributors.csv"].copy()
-    overlap_conflict = corrected_package.tables_by_filename["09_prototype_overlap_conflict_audit.csv"].copy()
-    prototype_recurrence_summary = corrected_package.tables_by_filename["11_prototype_patient_recurrence_summary.csv"].copy()
-    comparison_view = corrected_package.tables_by_filename["12_auxiliary_legacy_prototype_comparison.csv"].copy()
+    family_specific_summary = corrected_package.tables_by_filename["10_confirmatory_family_backbone_summary.csv"].copy()
+    anchors = corrected_package.tables_by_filename["06_trusted_continuity_anchors.csv"].copy()
+    forced = corrected_package.tables_by_filename["07_closed_comparator_forced_closure.csv"].copy()
+    unmatched = corrected_package.tables_by_filename["08_bounded_residual_contributors.csv"].copy()
+    overlap_conflict = corrected_package.tables_by_filename["09_anchor_residual_overlap_audit.csv"].copy()
+    prototype_recurrence_summary = corrected_package.tables_by_filename["11_trusted_anchor_patient_recurrence.csv"].copy()
+    comparison_view = corrected_package.tables_by_filename["12_auxiliary_legacy_comparator_view.csv"].copy()
 
     uot_plan = rerun_uot(inputs)
     uot_unmatched_surface = build_uot_pair_prototype_unmatched_surface(inputs, uot_plan)
@@ -731,22 +731,22 @@ def run_bioinformed_analysis(paths: Arm2FocusedPaths) -> dict[str, pd.DataFrame]
     )
 
     tables_by_filename = {
-        "20_tc_dominant_family_summary.csv": build_tc_dominant_family_summary(
+        "20_tc_dominant_backbone_context.csv": build_tc_dominant_family_summary(
             family_specific_summary=family_specific_summary,
             panel_assignment=panel_assignment,
             prototype_recurrence_summary=prototype_recurrence_summary,
         ),
-        "21_mixed_interface_family_summary.csv": build_mixed_interface_family_summary(
+        "21_interface_residual_context.csv": build_mixed_interface_family_summary(
             family_specific_summary=family_specific_summary,
             panel_assignment=panel_assignment,
             prototype_recurrence_summary=prototype_recurrence_summary,
         ),
-        "22_bio_annotated_overlap_conflict_table.csv": build_bio_annotated_overlap_conflict_table(
+        "22_bio_annotated_anchor_residual_overlap_audit.csv": build_bio_annotated_overlap_conflict_table(
             overlap_conflict=overlap_conflict,
             panel_assignment=panel_assignment,
             prototype_recurrence_summary=prototype_recurrence_summary,
         ),
-        "23_ot_vs_uot_prototype_contrast.csv": build_ot_vs_uot_prototype_contrast(
+        "23_closed_vs_open_prototype_contrast.csv": build_ot_vs_uot_prototype_contrast(
             comparison_view=comparison_view,
             panel_assignment=panel_assignment,
             anchors=anchors,
@@ -754,8 +754,8 @@ def run_bioinformed_analysis(paths: Arm2FocusedPaths) -> dict[str, pd.DataFrame]
             unmatched=unmatched,
             prototype_recurrence_summary=prototype_recurrence_summary,
         ),
-        "24_bd_unmatched_directionality.csv": bd_directionality,
-        "25_arm2_biointegrated_memo_table.csv": build_biointegrated_memo_table(),
+        "24_directional_residual_assignment_audit.csv": bd_directionality,
+        "25_block2_biointegrated_audit_table.csv": build_biointegrated_memo_table(),
     }
     validate_bioinformed_output_package(tables_by_filename)
     return tables_by_filename

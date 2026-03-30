@@ -1,7 +1,11 @@
 # AVCP Guidelines
 
 ## Bridge
-**Rule:** Any Python→R handover must be produced via `src/slotar/io/bridge.py::save_for_r()` unless explicitly waived in `docs/constraints.md`.
+**Rule:** Any Python→R handover must be produced via `write_r_handover()` unless explicitly waived in `docs/constraints.md`.
+
+Compatibility note:
+- The current implementation path is `src/slotar/io/r_export.py::write_r_handover()` during migration.
+- `src/slotar/io/bridge.py::save_for_r()` remains available as a temporary compatibility alias; canonical docs should refer to `write_r_handover()`.
 
 Output rules:
 - Location: explicitly chosen by `tasks/task_*/` and passed into the bridge
@@ -10,7 +14,7 @@ Output rules:
 - Format: `.parquet` for large, `.csv` for small, explicitly chosen by `tasks/task_*/`
 - Sidecar: always generate `<stem>_meta.json` with `file`, `primary_key`, `columns`, `provenance`
 - No implicit index: always have an explicit primary key column
-- `src/slotar/` only receives explicit arguments; it does not parse yaml/config to discover output directories, file names, or export mode.
+- The reusable library layer (`src/slotar/` during the current transition) only receives explicit arguments; it does not parse yaml/config to discover output directories, file names, or export mode.
 
 ## Git and SemVer
 SemVer applies to release artifacts (repo-level or component-level), not individual files.

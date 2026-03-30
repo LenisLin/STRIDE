@@ -42,7 +42,7 @@ def _load_manifest_from_args(args: argparse.Namespace):
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Run the Arm-II biologically informed extraction workflow.",
+        description="Run the Arm-II bounded residual audit extraction workflow.",
     )
     parser.add_argument(
         "--task-a-manifest",
@@ -72,7 +72,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--output-dir",
         default=None,
-        help="Directory where the Arm-II bioinformed package will be written. Defaults to the manifest arm analysis root when available.",
+        help="Directory where the Arm-II bounded audit package will be written. Defaults to the manifest arm analysis root when available.",
     )
     return parser.parse_args(argv)
 

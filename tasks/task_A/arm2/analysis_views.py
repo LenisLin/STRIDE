@@ -79,7 +79,7 @@ def extract_prototype_comparison_view(
     recurrence_tables: RecurrenceAnalysisTables,
 ) -> pd.DataFrame:
     """
-    Build the focused prototype-comparison view for public output `06`.
+    Build the auxiliary prototype-comparator view for public output `12`.
 
     This is a pure downstream projection over the all-prototype tables.
     """
@@ -113,22 +113,22 @@ def extract_prototype_comparison_view(
                 "confirmatory_baseline_tc_pt_gt_tc_im_median_abs_delta_share_flag",
                 _prop_true,
             ),
-            balanced_transport_share_tc_im=("balanced_transport_source_share_tc_im", "median"),
-            balanced_transport_share_tc_pt=("balanced_transport_source_share_tc_pt", "median"),
-            balanced_transport_recurrence_tc_im=("balanced_transport_source_share_tc_im", _prop_positive),
-            balanced_transport_recurrence_tc_pt=("balanced_transport_source_share_tc_pt", _prop_positive),
-            uot_transport_share_tc_im=("uot_transport_source_share_tc_im", "median"),
-            uot_transport_share_tc_pt=("uot_transport_source_share_tc_pt", "median"),
-            uot_transport_recurrence_tc_im=("uot_transport_source_share_tc_im", _prop_positive),
-            uot_transport_recurrence_tc_pt=("uot_transport_source_share_tc_pt", _prop_positive),
-            balanced_minus_uot_tc_im=("balanced_minus_uot_delta_transport_source_share_tc_im", "median"),
-            balanced_minus_uot_tc_pt=("balanced_minus_uot_delta_transport_source_share_tc_pt", "median"),
-            balanced_minus_uot_recurrence_tc_im=("confirmatory_balanced_minus_uot_positive_flag_tc_im", _prop_true),
-            balanced_minus_uot_recurrence_tc_pt=("confirmatory_balanced_minus_uot_positive_flag_tc_pt", _prop_true),
-            uot_unmatched_share_tc_im=("uot_unmatched_share_tc_im", "median"),
-            uot_unmatched_share_tc_pt=("uot_unmatched_share_tc_pt", "median"),
-            uot_unmatched_recurrence_tc_im=("confirmatory_uot_unmatched_positive_flag_tc_im", _prop_true),
-            uot_unmatched_recurrence_tc_pt=("confirmatory_uot_unmatched_positive_flag_tc_pt", _prop_true),
+            closed_comparator_share_tc_im=("balanced_transport_source_share_tc_im", "median"),
+            closed_comparator_share_tc_pt=("balanced_transport_source_share_tc_pt", "median"),
+            closed_comparator_recurrence_tc_im=("balanced_transport_source_share_tc_im", _prop_positive),
+            closed_comparator_recurrence_tc_pt=("balanced_transport_source_share_tc_pt", _prop_positive),
+            continuity_backbone_share_tc_im=("uot_transport_source_share_tc_im", "median"),
+            continuity_backbone_share_tc_pt=("uot_transport_source_share_tc_pt", "median"),
+            continuity_backbone_recurrence_tc_im=("uot_transport_source_share_tc_im", _prop_positive),
+            continuity_backbone_recurrence_tc_pt=("uot_transport_source_share_tc_pt", _prop_positive),
+            forced_closure_excess_tc_im=("balanced_minus_uot_delta_transport_source_share_tc_im", "median"),
+            forced_closure_excess_tc_pt=("balanced_minus_uot_delta_transport_source_share_tc_pt", "median"),
+            forced_closure_recurrence_tc_im=("confirmatory_balanced_minus_uot_positive_flag_tc_im", _prop_true),
+            forced_closure_recurrence_tc_pt=("confirmatory_balanced_minus_uot_positive_flag_tc_pt", _prop_true),
+            bounded_residual_share_tc_im=("uot_unmatched_share_tc_im", "median"),
+            bounded_residual_share_tc_pt=("uot_unmatched_share_tc_pt", "median"),
+            bounded_residual_recurrence_tc_im=("confirmatory_uot_unmatched_positive_flag_tc_im", _prop_true),
+            bounded_residual_recurrence_tc_pt=("confirmatory_uot_unmatched_positive_flag_tc_pt", _prop_true),
         )
         .reset_index()
     )
@@ -154,22 +154,22 @@ def extract_prototype_comparison_view(
         "patient_count",
         "paired_confirmatory_patient_count",
         "recurrence_patient_level_prop_tc_pt_gt_tc_im_abs_delta_share",
-        "balanced_transport_share_tc_im",
-        "balanced_transport_share_tc_pt",
-        "balanced_transport_recurrence_tc_im",
-        "balanced_transport_recurrence_tc_pt",
-        "uot_transport_share_tc_im",
-        "uot_transport_share_tc_pt",
-        "uot_transport_recurrence_tc_im",
-        "uot_transport_recurrence_tc_pt",
-        "balanced_minus_uot_tc_im",
-        "balanced_minus_uot_tc_pt",
-        "balanced_minus_uot_recurrence_tc_im",
-        "balanced_minus_uot_recurrence_tc_pt",
-        "uot_unmatched_share_tc_im",
-        "uot_unmatched_share_tc_pt",
-        "uot_unmatched_recurrence_tc_im",
-        "uot_unmatched_recurrence_tc_pt",
+        "closed_comparator_share_tc_im",
+        "closed_comparator_share_tc_pt",
+        "closed_comparator_recurrence_tc_im",
+        "closed_comparator_recurrence_tc_pt",
+        "continuity_backbone_share_tc_im",
+        "continuity_backbone_share_tc_pt",
+        "continuity_backbone_recurrence_tc_im",
+        "continuity_backbone_recurrence_tc_pt",
+        "forced_closure_excess_tc_im",
+        "forced_closure_excess_tc_pt",
+        "forced_closure_recurrence_tc_im",
+        "forced_closure_recurrence_tc_pt",
+        "bounded_residual_share_tc_im",
+        "bounded_residual_share_tc_pt",
+        "bounded_residual_recurrence_tc_im",
+        "bounded_residual_recurrence_tc_pt",
     ]
     for column in output_columns:
         if column not in comparison.columns:
@@ -182,7 +182,7 @@ def extract_prototype_recurrence_view(
     recurrence_tables: RecurrenceAnalysisTables,
 ) -> pd.DataFrame:
     """
-    Build the focused prototype-recurrence view for public output `07`.
+    Build the auxiliary prototype-anchor view for public output `13`.
 
     This is a pure downstream subset over the all-prototype recurrence table.
     """
@@ -219,17 +219,29 @@ def extract_prototype_recurrence_view(
         "baseline_median_abs_delta_share_tc_pt",
         "confirmatory_baseline_tc_pt_minus_tc_im_median_abs_delta_share",
         "confirmatory_baseline_tc_pt_gt_tc_im_median_abs_delta_share_flag",
-        "balanced_transport_source_share_tc_im",
-        "balanced_transport_source_share_tc_pt",
-        "uot_transport_source_share_tc_im",
-        "uot_transport_source_share_tc_pt",
-        "balanced_minus_uot_delta_transport_source_share_tc_im",
-        "balanced_minus_uot_delta_transport_source_share_tc_pt",
-        "uot_unmatched_share_tc_im",
-        "uot_unmatched_share_tc_pt",
-        "confirmatory_uot_unmatched_positive_flag_tc_im",
-        "confirmatory_uot_unmatched_positive_flag_tc_pt",
+        "closed_comparator_source_share_tc_im",
+        "closed_comparator_source_share_tc_pt",
+        "continuity_backbone_source_share_tc_im",
+        "continuity_backbone_source_share_tc_pt",
+        "forced_closure_excess_source_share_tc_im",
+        "forced_closure_excess_source_share_tc_pt",
+        "bounded_residual_share_tc_im",
+        "bounded_residual_share_tc_pt",
+        "confirmatory_bounded_residual_positive_flag_tc_im",
+        "confirmatory_bounded_residual_positive_flag_tc_pt",
     ]
+    view = view.rename(
+        columns={
+            "balanced_transport_source_share_tc_im": "closed_comparator_source_share_tc_im",
+            "balanced_transport_source_share_tc_pt": "closed_comparator_source_share_tc_pt",
+            "uot_transport_source_share_tc_im": "continuity_backbone_source_share_tc_im",
+            "uot_transport_source_share_tc_pt": "continuity_backbone_source_share_tc_pt",
+            "balanced_minus_uot_delta_transport_source_share_tc_im": "forced_closure_excess_source_share_tc_im",
+            "balanced_minus_uot_delta_transport_source_share_tc_pt": "forced_closure_excess_source_share_tc_pt",
+            "confirmatory_uot_unmatched_positive_flag_tc_im": "confirmatory_bounded_residual_positive_flag_tc_im",
+            "confirmatory_uot_unmatched_positive_flag_tc_pt": "confirmatory_bounded_residual_positive_flag_tc_pt",
+        }
+    )
     for column in output_columns:
         if column not in view.columns:
             view[column] = np.nan

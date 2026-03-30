@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "slotar"
 version = "0.1.0"
-description = "Selection-aware Longitudinal Optimal Transport for Attribution & Remapping"
+description = "STRIDE longitudinal spatial remodeling analysis for patient-level open remodeling relations"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
@@ -37,6 +37,7 @@ package-dir = { "" = "src" }
 
 [tool.setuptools.packages.find]
 where = ["src"]
+include = ["slotar", "slotar.*", "stride", "stride.*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

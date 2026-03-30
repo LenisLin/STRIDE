@@ -1,13 +1,16 @@
 # Changelog
 
+This file records short repository-history notes only. It is not a live design
+surface. For the current scientific framing use `README.md`,
+`docs/index.md`, and `docs/method_overview.md`; for live contracts use
+`docs/state.md`, `docs/decisions.md`, `docs/api_specs.md`,
+`docs/data_contracts.md`, and `docs/overall_validation_plan.md`; for Task A
+use `docs/task_A_spec.md`.
+
 ## Unreleased
-- chore: initialize repository skeleton
-- docs(architecture): upgrade SLOTAR core algorithm architecture to V1.6 and define output data contracts
-- docs(task): lock Task D (ST vignette) proposal and append ST modality adaptation contracts
-- docs(api): enforce structural zero bypass and fail-fast solver constraints (C3)
-- refactor(architecture): enforce strict physical boundary between library engine and domain-specific tasks (D004)
-- 2026-03-15 feat(uot): canonicalize `src/slotar/uot.py::batched_uot_solve(...)` as the single solver entrypoint with fixed `(metrics, details, status)` return structure
-- 2026-03-15 feat(task_A/arm3): land the exact-event Arm-3 inference path through solver `details`; proportional prototype allocation remains compatibility fallback only
-- 2026-03-15 feat(task_A/arm3): land frozen COUNT-based support-mask enforcement through solver `external_support_mask`
-- 2026-03-16 feat(task_A/arm3): refine tau calibration to a pooled Pi-weighted scaled-cost quantile with diagonal self-transport excluded from quantile support
-- 2026-03-16 chore(smoke): confirm healthy exercised-subset smoke after the tau refinement, with unchanged `lambda_dens=10.0`, strictly positive `tau_by_compartment`, and healthy exact-event Phase-6 behavior
+- docs: realign active repo docs around `src/stride/` as the target core architecture, `src/slotar/` as transitional compatibility, and `history/` as archive-only
+- docs: rename the live project/scientific framing to STRIDE while retaining the `slotar` package namespace
+- docs: keep Task A as the sole live scientific task surface and narrow Task B/C/D to bounded background notes
+- docs: resolve the four hard spec ambiguities for `A_p`, burden/composition scale, the observation layer, and the state/domain boundary
+- docs: align `src/slotar/io/longitudinal.py` wording with the canonical patient / timepoint / FOV contract
+- build: stop tracking generated `*.egg-info` package metadata in the repository

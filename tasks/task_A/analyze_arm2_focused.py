@@ -1,7 +1,7 @@
 """
 Module: tasks.task_A.analyze_arm2_focused
 
-Operative end-to-end Arm-II focused analysis workflow.
+Operative end-to-end Arm-II real-data mirror analysis workflow.
 
 This entrypoint is limited to the current Arm-II startup slice only.
 
@@ -33,8 +33,8 @@ from tasks.task_A.arm2.analysis_contract import Arm2FocusedPaths, FocusedOutputP
 from tasks.task_A.arm2.analysis_io import load_inputs
 from tasks.task_A.arm2.analysis_output import (
     assemble_output_package,
-    build_focused_results_memo,
     build_minimal_appendix_audit_table,
+    build_real_data_mirror_memo,
     write_output_package,
 )
 from tasks.task_A.arm2.analysis_recurrence import build_recurrence_tables
@@ -48,11 +48,11 @@ from tasks.task_A.arm2.analysis_views import build_focused_prototype_views
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     """
-    Parse CLI arguments for the operative Arm-II focused analysis workflow.
+    Parse CLI arguments for the operative Arm-II real-data mirror analysis workflow.
     """
 
     parser = argparse.ArgumentParser(
-        description="Run the operative Arm-II focused end-to-end analysis workflow.",
+        description="Run the operative Arm-II real-data mirror end-to-end analysis workflow.",
     )
     parser.add_argument(
         "--arm2-metrics-parquet",
@@ -72,7 +72,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--output-dir",
         required=True,
-        help="Directory where the canonical focused package will be written.",
+        help="Directory where the canonical Task-A real-data mirror package will be written.",
     )
     parser.add_argument(
         "--prototype-view-ids",
@@ -85,7 +85,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
 
 
 def build_paths_from_args(args: argparse.Namespace) -> Arm2FocusedPaths:
-    """Build the resolved path bundle for one focused Arm-II run."""
+    """Build the resolved path bundle for one Arm-II real-data mirror run."""
 
     prototype_view_ids = None
     if args.prototype_view_ids:
@@ -106,7 +106,7 @@ def build_paths_from_args(args: argparse.Namespace) -> Arm2FocusedPaths:
 
 def run_focused_analysis(paths: Arm2FocusedPaths) -> FocusedOutputPackage:
     """
-    Run the operative Arm-II focused-analysis block.
+    Run the operative Arm-II real-data mirror block.
 
     End-to-end data flow:
     1. Load frozen inputs.
@@ -116,9 +116,9 @@ def run_focused_analysis(paths: Arm2FocusedPaths) -> FocusedOutputPackage:
     5. Build all-prototype transport/unmatched tables.
     6. Build all-prototype recurrence tables.
     7. Build legacy extracted prototype views.
-    8. Build the minimal appendix audit.
-    9. Build the intermediate memo text.
-    10. Assemble the full canonical focused output package.
+    8. Build the output-contract audit.
+    9. Build the intermediate real-data mirror memo text.
+    10. Assemble the full canonical Task-A real-data mirror output package.
     """
 
     inputs = load_inputs(paths)
@@ -151,7 +151,7 @@ def run_focused_analysis(paths: Arm2FocusedPaths) -> FocusedOutputPackage:
         recurrence_tables=recurrence_tables,
         extracted_views=extracted_views,
     )
-    memo_text = build_focused_results_memo(
+    memo_text = build_real_data_mirror_memo(
         paths=paths,
         baseline_tables=baseline_tables,
         transport_tables=transport_tables,
@@ -169,7 +169,7 @@ def run_focused_analysis(paths: Arm2FocusedPaths) -> FocusedOutputPackage:
 
 
 def main(argv: Sequence[str] | None = None) -> None:
-    """CLI entrypoint for the full Arm-II focused rewrite package."""
+    """CLI entrypoint for the full Arm-II real-data mirror rewrite package."""
 
     args = parse_args(argv)
     paths = build_paths_from_args(args)

@@ -1,7 +1,7 @@
 """
 Module: tasks.task_A.arm2.analysis_output
 
-Final focused-output assembly layer for the post-hoc Arm-II rewrite.
+Final real-data-mirror output assembly layer for the post-hoc Arm-II rewrite.
 """
 
 from __future__ import annotations
@@ -62,7 +62,7 @@ def build_minimal_appendix_audit_table(
     """
     Build the minimal appendix/audit table for canonical public output `14`.
 
-    This table documents the focused package contract rather than acting as a
+    This table documents the real-data mirror package contract rather than acting as a
     broad exploratory appendix.
     """
 
@@ -109,7 +109,7 @@ def build_minimal_appendix_audit_table(
                 "item": "startup_slice_scope",
                 "status": "pass",
                 "value": ARM_NAME,
-                "detail": "Current focused package remains locked to the Arm-II startup slice only.",
+                "detail": "Current real-data mirror package remains locked to the Arm-II startup slice only.",
             },
             {
                 "section": "scope",
@@ -171,7 +171,7 @@ def build_minimal_appendix_audit_table(
                 "item": "balanced_ot_unmatched_exclusion",
                 "status": "pass" if balanced_no_unmatched_ok else "fail",
                 "value": "true",
-                "detail": "Balanced OT remains transport-only and does not carry unmatched semantics.",
+                "detail": "Balanced OT remains continuity-only and does not carry bounded-residual semantics.",
             },
             {
                 "section": "transport",
@@ -184,7 +184,7 @@ def build_minimal_appendix_audit_table(
     )
 
 
-def build_focused_results_memo(
+def build_real_data_mirror_memo(
     paths: Arm2FocusedPaths,
     baseline_tables: BaselineAnalysisTables,
     transport_tables: TransportAnalysisTables,
@@ -193,7 +193,7 @@ def build_focused_results_memo(
     appendix_audit: pd.DataFrame,
 ) -> str:
     """
-    Build an intermediate focused results memo before canonical package correction.
+    Build an intermediate Task-A real-data mirror memo before canonical package correction.
     """
 
     top_baseline = baseline_tables.baseline_prototype_confirmatory.head(5)
@@ -203,8 +203,12 @@ def build_focused_results_memo(
     confirmatory_patient_count = int(transport_tables.global_transport_summary.shape[0])
     key_proto_count = int(extracted_views.prototype_comparison_view.shape[0])
     recurrence_rows = int(recurrence_view.shape[0])
-    positive_unmatched_tc_pt = int(
-        (pd.to_numeric(top_comparison.get("uot_unmatched_recurrence_tc_pt"), errors="coerce").fillna(0.0) >= 0.5).sum()
+    positive_bounded_residual_tc_pt = int(
+        (
+            pd.to_numeric(top_comparison.get("bounded_residual_recurrence_tc_pt"), errors="coerce")
+            .fillna(0.0)
+            >= 0.5
+        ).sum()
     )
     baseline_positive = int(
         (
@@ -217,27 +221,27 @@ def build_focused_results_memo(
     )
 
     lines = [
-        "# Arm-II Focused Results Memo (Intermediate Legacy Surface)",
+        "# Task A Real-Data Mirror Memo (Intermediate Legacy Surface)",
         "",
-        "## Inputs / Startup-Slice Boundaries",
+        "## Real-Data Mirror Scope",
         "",
         f"- Arm-II parquet: `{paths.arm2_metrics_parquet}`",
         f"- Stage-0 artifact: `{paths.stage0_h5ad}`",
         f"- Task config: `{paths.task_config}`",
-        "- This focused package remains locked to the current Arm-II startup slice only.",
-        "- The canonical focused package is rebuilt downstream into outputs `06` through `14`; the extracted comparison/recurrence tables remain auxiliary only.",
+        "- This real-data mirror package remains locked to the current Arm-II startup slice only.",
+        "- The canonical package is rebuilt downstream into outputs `06` through `14`; the extracted comparator/anchor tables remain auxiliary only.",
         "- UOT is rerun once and same-pair Balanced OT is rerun once on the fixed ordered pair set.",
         "- `tau` and `R` remain unavailable in the current startup slice and are not interpreted here.",
         "",
-        "## Confirmatory Scope",
+        "## Confirmatory Surface",
         "",
-        "- Confirmatory families are restricted to `TC-IM` and `TC-PT`.",
+        "- Confirmatory continuity-backbone families are restricted to `TC-IM` and `TC-PT`.",
         "- `IM-PT` is retained internally for audit/exploratory context only and does not enter confirmatory public contrasts.",
-        f"- Public global transport row unit: patient (`n={confirmatory_patient_count}`).",
+        f"- Public patient-level continuity-backbone row unit: patient (`n={confirmatory_patient_count}`).",
         "",
         "## Baseline Findings",
         "",
-        "- Baseline tissue differences are summarized before transport and remain separate from transport claims.",
+        "- Baseline tissue differences are summarized before relation modeling and remain separate from continuity-backbone claims.",
         "- Share-scale absolute baseline magnitude is the primary prototype-level baseline anchor; count-scale quantities remain context.",
     ]
     if not top_baseline.empty:
@@ -253,43 +257,43 @@ def build_focused_results_memo(
     lines.extend(
         [
             "",
-            "## Global Transport Findings",
+            "## Continuity Backbone Findings",
             "",
-            "- Primary readouts are `U_abs`, `transport_fraction`, `unmatched_fraction`, and `M`.",
-            "- Supporting unmatched decomposition is shown via `D_pos` and `B_pos`.",
-            "- `T_abs`, `M_balanced`, and Balanced-minus-UOT quantities remain contextual rather than winner-style evidence lines.",
+            "- Primary readouts are bounded residual burden, continuity-backbone fraction, bounded residual fraction, and the open-relation match score.",
+            "- Supporting bounded-residual decomposition is shown via source-side depletion-prone and target-side emergence-prone quantities.",
+            "- Continuity-backbone burden, closed-comparator match score, and forced-closure excess remain contextual rather than winner-style evidence lines.",
         ]
     )
     if not transport_tables.global_transport_summary.empty:
         median_tc_im_u = pd.to_numeric(
-            transport_tables.global_transport_summary["tc_im_median_U_abs"],
+            transport_tables.global_transport_summary["tc_im_median_bounded_residual_abs"],
             errors="coerce",
         ).median()
         median_tc_pt_u = pd.to_numeric(
-            transport_tables.global_transport_summary["tc_pt_median_U_abs"],
+            transport_tables.global_transport_summary["tc_pt_median_bounded_residual_abs"],
             errors="coerce",
         ).median()
         median_tc_im_transport = pd.to_numeric(
-            transport_tables.global_transport_summary["tc_im_median_transport_fraction"],
+            transport_tables.global_transport_summary["tc_im_median_continuity_backbone_fraction"],
             errors="coerce",
         ).median()
         median_tc_pt_transport = pd.to_numeric(
-            transport_tables.global_transport_summary["tc_pt_median_transport_fraction"],
+            transport_tables.global_transport_summary["tc_pt_median_continuity_backbone_fraction"],
             errors="coerce",
         ).median()
         lines.extend(
             [
-                f"- Across patients, median `TC-IM` `U_abs` is `{_format_float(median_tc_im_u)}` and median `TC-PT` `U_abs` is `{_format_float(median_tc_pt_u)}`.",
-                f"- Across patients, median `TC-IM` transport fraction is `{_format_float(median_tc_im_transport)}` and median `TC-PT` transport fraction is `{_format_float(median_tc_pt_transport)}`.",
+                f"- Across patients, median `TC-IM` bounded residual burden is `{_format_float(median_tc_im_u)}` and median `TC-PT` bounded residual burden is `{_format_float(median_tc_pt_u)}`.",
+                f"- Across patients, median `TC-IM` continuity-backbone fraction is `{_format_float(median_tc_im_transport)}` and median `TC-PT` continuity-backbone fraction is `{_format_float(median_tc_pt_transport)}`.",
             ]
         )
 
     lines.extend(
         [
             "",
-            "## Prototype-Level Interpretation Summary",
+            "## Trusted Anchor And Residual Summary",
             "",
-            f"- Legacy extracted prototype comparison rows retained in auxiliary output `12`: `{key_proto_count}`.",
+            f"- Legacy extracted comparator rows retained in auxiliary output `12`: `{key_proto_count}`.",
             "- These extracted views are downstream subsets of the all-prototype internal tables only and feed the canonical outputs `06` through `11`.",
         ]
     )
@@ -299,9 +303,9 @@ def build_focused_results_memo(
             lines.append(
                 f"  - proto `{int(row['proto_id'])}` / `{row['dominant_cell_type']}` / "
                 f"`baseline recurrence patient-level proportion={_format_float(row['recurrence_patient_level_prop_tc_pt_gt_tc_im_abs_delta_share'])}` / "
-                f"`UOT transport TC-PT={_format_float(row['uot_transport_share_tc_pt'])}` / "
-                f"`UOT unmatched TC-PT={_format_float(row['uot_unmatched_share_tc_pt'])}` / "
-                f"`Balanced-UOT TC-PT={_format_float(row['balanced_minus_uot_tc_pt'])}`."
+                f"`continuity backbone TC-PT={_format_float(row['continuity_backbone_share_tc_pt'])}` / "
+                f"`bounded residual TC-PT={_format_float(row['bounded_residual_share_tc_pt'])}` / "
+                f"`forced closure excess TC-PT={_format_float(row['forced_closure_excess_tc_pt'])}`."
             )
 
     lines.extend(
@@ -309,9 +313,9 @@ def build_focused_results_memo(
             "",
             "## Recurrence Summary",
             "",
-            f"- Legacy patient-level recurrence rows retained in auxiliary output `13`: `{recurrence_rows}`.",
+            f"- Legacy patient-level anchor rows retained in auxiliary output `13`: `{recurrence_rows}`.",
             f"- Selected prototypes with recurrent `TC-PT > TC-IM` baseline signal in at least half of patients: `{baseline_positive}`.",
-            f"- Selected prototypes with recurrent positive `TC-PT` UOT unmatched signal in at least half of patients: `{positive_unmatched_tc_pt}`.",
+            f"- Selected prototypes with recurrent positive `TC-PT` bounded residual signal in at least half of patients: `{positive_bounded_residual_tc_pt}`.",
             "- Confirmatory recurrence fields remain explicit for `TC-IM` and `TC-PT`; audit-only `IM-PT` remains internal.",
             "",
             "## Supported Claims",
@@ -367,10 +371,10 @@ def assemble_output_package(
         "02_baseline_pair_audit.csv": baseline_tables.baseline_pair_audit,
         "03_baseline_prototype_confirmatory_summary.csv": baseline_tables.baseline_prototype_confirmatory,
         "04_baseline_patient_family_confirmatory_summary.csv": baseline_tables.baseline_patient_family_confirmatory,
-        "05_global_transport_summary.csv": transport_tables.global_transport_summary,
-        "06_key_prototype_comparison.csv": extracted_views.prototype_comparison_view,
-        "07_key_prototype_patient_recurrence.csv": extracted_views.prototype_recurrence_view,
-        "08_minimal_appendix_audit.csv": appendix_audit,
+        "05_patient_continuity_backbone_summary.csv": transport_tables.global_transport_summary,
+        "12_auxiliary_legacy_comparator_view.csv": extracted_views.prototype_comparison_view,
+        "13_auxiliary_legacy_anchor_view.csv": extracted_views.prototype_recurrence_view,
+        "14_output_contract_audit.csv": appendix_audit,
         },
         package_validation=pd.DataFrame(),
     )
@@ -387,29 +391,29 @@ def validate_output_package(package: FocusedOutputPackage) -> pd.DataFrame:
     observed_csv = tuple(sorted(package.tables_by_filename))
     expected_csv = tuple(sorted(_csv_output_filenames()))
     required_memo_tokens = (
-        "## Scope",
-        "## Prototype-Level Primary Surface",
-        "## Compact Audit Fact",
+        "## Real-Data Mirror Scope",
+        "## Trusted Anchor And Residual Summary",
+        "## Recurrence Summary",
     )
     memo_has_tokens = all(token in package.memo_text for token in required_memo_tokens)
     anchors_is_df = isinstance(
-        package.tables_by_filename.get("06_uot_shared_transport_anchors.csv"),
+        package.tables_by_filename.get("06_trusted_continuity_anchors.csv"),
         pd.DataFrame,
     )
     recurrence_is_df = isinstance(
-        package.tables_by_filename.get("11_prototype_patient_recurrence_summary.csv"),
+        package.tables_by_filename.get("11_trusted_anchor_patient_recurrence.csv"),
         pd.DataFrame,
     )
     auxiliary_comparison_is_df = isinstance(
-        package.tables_by_filename.get("12_auxiliary_legacy_prototype_comparison.csv"),
+        package.tables_by_filename.get("12_auxiliary_legacy_comparator_view.csv"),
         pd.DataFrame,
     )
     auxiliary_recurrence_is_df = isinstance(
-        package.tables_by_filename.get("13_auxiliary_legacy_prototype_patient_recurrence.csv"),
+        package.tables_by_filename.get("13_auxiliary_legacy_anchor_view.csv"),
         pd.DataFrame,
     )
     appendix_is_df = isinstance(
-        package.tables_by_filename.get("14_minimal_appendix_audit.csv"),
+        package.tables_by_filename.get("14_output_contract_audit.csv"),
         pd.DataFrame,
     )
     validation = pd.DataFrame.from_records(
@@ -439,11 +443,11 @@ def validate_output_package(package: FocusedOutputPackage) -> pd.DataFrame:
                     and appendix_is_df
                 ),
                 "detail": (
-                    f"anchors_type={type(package.tables_by_filename.get('06_uot_shared_transport_anchors.csv')).__name__}, "
-                    f"recurrence_type={type(package.tables_by_filename.get('11_prototype_patient_recurrence_summary.csv')).__name__}, "
-                    f"aux_comparison_type={type(package.tables_by_filename.get('12_auxiliary_legacy_prototype_comparison.csv')).__name__}, "
-                    f"aux_recurrence_type={type(package.tables_by_filename.get('13_auxiliary_legacy_prototype_patient_recurrence.csv')).__name__}, "
-                    f"appendix_type={type(package.tables_by_filename.get('14_minimal_appendix_audit.csv')).__name__}"
+                    f"anchors_type={type(package.tables_by_filename.get('06_trusted_continuity_anchors.csv')).__name__}, "
+                    f"recurrence_type={type(package.tables_by_filename.get('11_trusted_anchor_patient_recurrence.csv')).__name__}, "
+                    f"aux_comparison_type={type(package.tables_by_filename.get('12_auxiliary_legacy_comparator_view.csv')).__name__}, "
+                    f"aux_recurrence_type={type(package.tables_by_filename.get('13_auxiliary_legacy_anchor_view.csv')).__name__}, "
+                    f"appendix_type={type(package.tables_by_filename.get('14_output_contract_audit.csv')).__name__}"
                 ),
             },
             {
@@ -462,11 +466,11 @@ def validate_output_package(package: FocusedOutputPackage) -> pd.DataFrame:
 
 def write_output_package(package: FocusedOutputPackage, output_dir: Path) -> None:
     """
-    Write the focused-output package to disk.
+    Write the real-data mirror output package to disk.
     """
 
     output_dir.mkdir(parents=True, exist_ok=True)
     validate_output_package(package)
-    (output_dir / "00_arm2_focused_results_memo.md").write_text(package.memo_text, encoding="utf-8")
+    (output_dir / "00_task_a_real_data_mirror_memo.md").write_text(package.memo_text, encoding="utf-8")
     for filename, table in package.tables_by_filename.items():
         table.to_csv(output_dir / filename, index=False)
