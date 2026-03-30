@@ -1,37 +1,57 @@
+"""Transitional SLOTAR compatibility exports backed by STRIDE.
+
+The `slotar` package remains a transition and compatibility namespace while
+the future task-insensitive core is assembled under `stride`.
+"""
 from __future__ import annotations
 
-# SLOTAR library — architecture layers:
-#   uot          : solver core (stateless, thread-safe)
-#   io.bridge    : export contract (no config parsing)
-#   contracts    : input validation
-#   utils        : shared math primitives
-#
-# Concurrency contract: batched_uot_solve, calibrate_joint_lambda, and
-# precompute_logKernels are safe for concurrent invocation via
-# ThreadPoolExecutor. Each call allocates all working arrays internally.
-# Callers must not share mutable state (e.g. timing dicts) across threads.
-
-from .contracts import (
-    DataContractError,
-    validate_adata_inputs,
-    validate_events_table,
-    validate_metrics_table,
-    validate_uot_inputs,
+from .bridge import BridgeConfig, build_patient_relation
+from .errors import ContractError
+from .io import validate_longitudinal_adata, write_r_handover
+from .observation import (
+    ObservationMatchConfig,
+    ObservationMatchResult,
+    build_observation_kernels,
+    calibrate_match_penalty,
+    compute_active_state_support,
+    match_observation_clouds,
 )
-from .io.bridge import save_for_r
-from .uot import UOTSolveConfig, batched_uot_solve, precompute_logKernels
+from .patient import PatientRelation, PatientRelationAudit, PatientRelationSummary
+from .recurrence import (
+    RecurrenceConfig,
+    RecurrenceFamily,
+    RecurrenceParameters,
+    RecurrenceResult,
+    estimate_recurrence,
+)
+from .state_space import StateAxis, StateBasis, StateGeometry, build_local_state_features, learn_shared_state_axis
 
 __all__ = [
     "__version__",
-    "DataContractError",
-    "UOTSolveConfig",
-    "batched_uot_solve",
-    "precompute_logKernels",
-    "save_for_r",
-    "validate_adata_inputs",
-    "validate_events_table",
-    "validate_metrics_table",
-    "validate_uot_inputs",
+    "BridgeConfig",
+    "ContractError",
+    "ObservationMatchConfig",
+    "ObservationMatchResult",
+    "PatientRelation",
+    "PatientRelationAudit",
+    "PatientRelationSummary",
+    "RecurrenceConfig",
+    "RecurrenceFamily",
+    "RecurrenceParameters",
+    "RecurrenceResult",
+    "StateAxis",
+    "StateBasis",
+    "StateGeometry",
+    "build_local_state_features",
+    "build_observation_kernels",
+    "build_patient_relation",
+    "calibrate_match_penalty",
+    "compute_active_state_support",
+    "estimate_recurrence",
+    "learn_shared_state_axis",
+    "match_observation_clouds",
+    "validate_longitudinal_adata",
+    "write_r_handover",
 ]
 
 __version__ = "0.1.0"

@@ -50,19 +50,19 @@ ARM2_FOCUSED_FILES = {
     "baseline_pair_audit": "02_baseline_pair_audit.csv",
     "baseline_prototype_summary": "03_baseline_prototype_confirmatory_summary.csv",
     "baseline_patient_family": "04_baseline_patient_family_confirmatory_summary.csv",
-    "global_transport_summary": "05_global_transport_summary.csv",
-    "shared_transport_anchors": "06_uot_shared_transport_anchors.csv",
-    "forced_transport": "07_balanced_ot_forced_transport_prototypes.csv",
-    "unmatched_contributors": "08_uot_unmatched_contributors.csv",
-    "overlap_audit": "09_prototype_overlap_conflict_audit.csv",
-    "prototype_family_summary": "10_prototype_family_specific_summary.csv",
-    "prototype_recurrence": "11_prototype_patient_recurrence_summary.csv",
-    "memo": "00_arm2_focused_results_memo.md",
+    "patient_continuity_backbone_summary": "05_patient_continuity_backbone_summary.csv",
+    "trusted_continuity_anchors": "06_trusted_continuity_anchors.csv",
+    "closed_comparator_forced_closure": "07_closed_comparator_forced_closure.csv",
+    "bounded_residual_contributors": "08_bounded_residual_contributors.csv",
+    "anchor_residual_overlap_audit": "09_anchor_residual_overlap_audit.csv",
+    "confirmatory_family_backbone_summary": "10_confirmatory_family_backbone_summary.csv",
+    "trusted_anchor_patient_recurrence": "11_trusted_anchor_patient_recurrence.csv",
+    "memo": "00_task_a_real_data_mirror_memo.md",
 }
 ARM2_BIO_FILES = {
-    "ot_uot_contrast": "23_ot_vs_uot_prototype_contrast.csv",
-    "bd_directionality": "24_bd_unmatched_directionality.csv",
-    "memo_table": "25_arm2_biointegrated_memo_table.csv",
+    "closed_open_contrast": "23_closed_vs_open_prototype_contrast.csv",
+    "directional_residual_assignment_audit": "24_directional_residual_assignment_audit.csv",
+    "block2_biointegrated_audit_table": "25_block2_biointegrated_audit_table.csv",
 }
 ARM3_FILES = {
     "full_results": "arm3_phase6_full_coverage_results.parquet",
@@ -81,7 +81,6 @@ ARM3_FILES = {
 
 SOURCE_DOCS = (
     ("documented_spec", "specs_docs", "task_a_spec", REPO_ROOT / "docs" / "task_A_spec.md", "live TaskA arm contract"),
-    ("documented_spec", "specs_docs", "task_a_results", REPO_ROOT / "docs" / "task_A_results.md", "current TaskA results memo"),
     ("documented_spec", "specs_docs", "data_contracts", REPO_ROOT / "docs" / "data_contracts.md", "current Arm3 data contract"),
     ("documented_spec", "specs_docs", "task_a_readme", REPO_ROOT / "tasks" / "task_A" / "README.md", "task-local TaskA readme"),
 )
@@ -314,8 +313,8 @@ def build_arm2_patient_family_comparator_from_frames(
     merged.insert(0, "artifact_present", True)
     merged.insert(1, "source_dir", "focused")
     merged.insert(2, "baseline_table_name", ARM2_FOCUSED_FILES["baseline_patient_family"])
-    merged.insert(3, "transport_table_name", ARM2_FOCUSED_FILES["global_transport_summary"])
-    merged.insert(4, "table_name", "04_baseline_patient_family_confirmatory_summary.csv|05_global_transport_summary.csv")
+    merged.insert(3, "transport_table_name", ARM2_FOCUSED_FILES["patient_continuity_backbone_summary"])
+    merged.insert(4, "table_name", "04_baseline_patient_family_confirmatory_summary.csv|05_patient_continuity_backbone_summary.csv")
 
     return merged.sort_values(["patient_id", "pair_family"], kind="stable").reset_index(drop=True)
 
@@ -335,25 +334,25 @@ def build_arm2_prototype_family_evidence_from_frames(
 
     recurrence_cols = [
         "proto_id",
-        "shared_transport_anchor_score",
-        "shared_transport_positive_patient_count",
-        "shared_transport_positive_patient_count_prop",
-        "balanced_ot_forced_transport_score",
-        "forced_transport_positive_patient_count_tc_im",
-        "forced_transport_positive_patient_count_tc_im_prop",
-        "forced_transport_positive_patient_count_tc_pt",
-        "forced_transport_positive_patient_count_tc_pt_prop",
-        "forced_transport_positive_patient_count_any_confirmatory",
-        "forced_transport_positive_patient_count_any_confirmatory_prop",
-        "uot_unmatched_contributor_score",
-        "unmatched_positive_patient_count_tc_im",
-        "unmatched_positive_patient_count_tc_im_prop",
-        "unmatched_positive_patient_count_tc_pt",
-        "unmatched_positive_patient_count_tc_pt_prop",
-        "unmatched_positive_patient_count_any_confirmatory",
-        "unmatched_positive_patient_count_any_confirmatory_prop",
-        "shared_transport_and_unmatched_any_patient_count",
-        "shared_transport_and_unmatched_any_patient_count_prop",
+        "trusted_anchor_score",
+        "trusted_anchor_positive_patient_count",
+        "trusted_anchor_positive_patient_count_prop",
+        "forced_closure_score",
+        "forced_closure_positive_patient_count_tc_im",
+        "forced_closure_positive_patient_count_tc_im_prop",
+        "forced_closure_positive_patient_count_tc_pt",
+        "forced_closure_positive_patient_count_tc_pt_prop",
+        "forced_closure_positive_patient_count_any_confirmatory",
+        "forced_closure_positive_patient_count_any_confirmatory_prop",
+        "bounded_residual_score",
+        "bounded_residual_positive_patient_count_tc_im",
+        "bounded_residual_positive_patient_count_tc_im_prop",
+        "bounded_residual_positive_patient_count_tc_pt",
+        "bounded_residual_positive_patient_count_tc_pt_prop",
+        "bounded_residual_positive_patient_count_any_confirmatory",
+        "bounded_residual_positive_patient_count_any_confirmatory_prop",
+        "trusted_anchor_and_bounded_residual_any_patient_count",
+        "trusted_anchor_and_bounded_residual_any_patient_count_prop",
     ]
     available_recurrence_cols = [col for col in recurrence_cols if col in df_recurrence.columns]
     if available_recurrence_cols:
@@ -367,19 +366,19 @@ def build_arm2_prototype_family_evidence_from_frames(
             out,
             pair_family_col="pair_family",
             mapping={
-                "TC-IM": "forced_transport_positive_patient_count_tc_im",
-                "TC-PT": "forced_transport_positive_patient_count_tc_pt",
+                "TC-IM": "forced_closure_positive_patient_count_tc_im",
+                "TC-PT": "forced_closure_positive_patient_count_tc_pt",
             },
-            out_col="forced_transport_positive_patient_count_family",
+            out_col="forced_closure_positive_patient_count_family",
         )
         out = _family_specific_value(
             out,
             pair_family_col="pair_family",
             mapping={
-                "TC-IM": "unmatched_positive_patient_count_tc_im",
-                "TC-PT": "unmatched_positive_patient_count_tc_pt",
+                "TC-IM": "bounded_residual_positive_patient_count_tc_im",
+                "TC-PT": "bounded_residual_positive_patient_count_tc_pt",
             },
-            out_col="unmatched_positive_patient_count_family",
+            out_col="bounded_residual_positive_patient_count_family",
         )
 
     bd_primary = df_bd.copy()
@@ -391,15 +390,15 @@ def build_arm2_prototype_family_evidence_from_frames(
         "pair_type",
         "direction_role",
         "patient_count",
-        "destroy_share",
-        "birth_share",
-        "destroy_minus_birth_share",
-        "destroy_abs",
-        "birth_abs",
-        "destroy_gt_birth_patient_count",
-        "destroy_gt_birth_patient_prop",
-        "birth_gt_destroy_patient_count",
-        "birth_gt_destroy_patient_prop",
+        "source_depletion_prone_share",
+        "target_emergence_prone_share",
+        "depletion_minus_emergence",
+        "source_depletion_prone_abs",
+        "target_emergence_prone_abs",
+        "source_depletion_gt_emergence_patient_count",
+        "source_depletion_gt_emergence_patient_prop",
+        "emergence_gt_source_depletion_patient_count",
+        "emergence_gt_source_depletion_patient_prop",
     ]
     bd_keep = [col for col in bd_keep if col in bd_primary.columns]
     if bd_keep:
@@ -423,14 +422,14 @@ def build_arm2_prototype_family_evidence_from_frames(
             "panel_name",
             "panel_rule",
             "is_borderline_tc_like",
-            "balanced_transport_share_tc_im",
-            "uot_transport_share_tc_im",
-            "uot_unmatched_share_tc_im",
-            "balanced_minus_uot_tc_im",
-            "balanced_transport_share_tc_pt",
-            "uot_transport_share_tc_pt",
-            "uot_unmatched_share_tc_pt",
-            "balanced_minus_uot_tc_pt",
+            "closed_comparator_share_tc_im",
+            "continuity_backbone_share_tc_im",
+            "bounded_residual_share_tc_im",
+            "forced_closure_excess_tc_im",
+            "closed_comparator_share_tc_pt",
+            "continuity_backbone_share_tc_pt",
+            "bounded_residual_share_tc_pt",
+            "forced_closure_excess_tc_pt",
         ]
         contrast_keep = [col for col in contrast_keep if col in df_contrast.columns]
         out = out.merge(
@@ -443,47 +442,47 @@ def build_arm2_prototype_family_evidence_from_frames(
             out,
             pair_family_col="pair_family",
             mapping={
-                "TC-IM": "balanced_transport_share_tc_im",
-                "TC-PT": "balanced_transport_share_tc_pt",
+                "TC-IM": "closed_comparator_share_tc_im",
+                "TC-PT": "closed_comparator_share_tc_pt",
             },
-            out_col="contrast_balanced_transport_share",
+            out_col="contrast_closed_comparator_share",
         )
         out = _family_specific_value(
             out,
             pair_family_col="pair_family",
             mapping={
-                "TC-IM": "uot_transport_share_tc_im",
-                "TC-PT": "uot_transport_share_tc_pt",
+                "TC-IM": "continuity_backbone_share_tc_im",
+                "TC-PT": "continuity_backbone_share_tc_pt",
             },
-            out_col="contrast_uot_transport_share",
+            out_col="contrast_continuity_backbone_share",
         )
         out = _family_specific_value(
             out,
             pair_family_col="pair_family",
             mapping={
-                "TC-IM": "uot_unmatched_share_tc_im",
-                "TC-PT": "uot_unmatched_share_tc_pt",
+                "TC-IM": "bounded_residual_share_tc_im",
+                "TC-PT": "bounded_residual_share_tc_pt",
             },
-            out_col="contrast_uot_unmatched_share",
+            out_col="contrast_bounded_residual_share",
         )
         out = _family_specific_value(
             out,
             pair_family_col="pair_family",
             mapping={
-                "TC-IM": "balanced_minus_uot_tc_im",
-                "TC-PT": "balanced_minus_uot_tc_pt",
+                "TC-IM": "forced_closure_excess_tc_im",
+                "TC-PT": "forced_closure_excess_tc_pt",
             },
-            out_col="contrast_balanced_minus_uot",
+            out_col="contrast_forced_closure_excess",
         )
 
     out.insert(0, "artifact_present", True)
     out.insert(1, "source_dir", "focused|bioinformed")
-    out.insert(2, "table_name", ARM2_FOCUSED_FILES["prototype_family_summary"])
-    out.insert(3, "family_summary_table_name", ARM2_FOCUSED_FILES["prototype_family_summary"])
-    out.insert(4, "recurrence_table_name", ARM2_FOCUSED_FILES["prototype_recurrence"])
-    out.insert(5, "bd_table_name", ARM2_BIO_FILES["bd_directionality"])
-    out.insert(6, "contrast_table_name", ARM2_BIO_FILES["ot_uot_contrast"] if df_contrast is not None else pd.NA)
-    out.insert(7, "recurrence_artifact_present", "shared_transport_anchor_score" in out.columns)
+    out.insert(2, "table_name", ARM2_FOCUSED_FILES["confirmatory_family_backbone_summary"])
+    out.insert(3, "family_summary_table_name", ARM2_FOCUSED_FILES["confirmatory_family_backbone_summary"])
+    out.insert(4, "recurrence_table_name", ARM2_FOCUSED_FILES["trusted_anchor_patient_recurrence"])
+    out.insert(5, "bd_table_name", ARM2_BIO_FILES["directional_residual_assignment_audit"])
+    out.insert(6, "contrast_table_name", ARM2_BIO_FILES["closed_open_contrast"] if df_contrast is not None else pd.NA)
+    out.insert(7, "recurrence_artifact_present", "trusted_anchor_score" in out.columns)
     out.insert(8, "bd_artifact_present", out.get("bd_pair_type", pd.Series(pd.NA, index=out.index)).notna())
     out.insert(9, "contrast_artifact_present", out.get("panel_name", pd.Series(pd.NA, index=out.index)).notna())
 
@@ -495,7 +494,7 @@ def build_arm2_overlap_audit_from_frame(df_overlap: pd.DataFrame) -> pd.DataFram
     out = df_overlap.copy()
     out.insert(0, "artifact_present", True)
     out.insert(1, "source_dir", "focused")
-    out.insert(2, "table_name", ARM2_FOCUSED_FILES["overlap_audit"])
+    out.insert(2, "table_name", ARM2_FOCUSED_FILES["anchor_residual_overlap_audit"])
     return out
 
 
@@ -711,7 +710,7 @@ def build_source_inventory(paths: NeutralExtractionPaths) -> pd.DataFrame:
         ("artifact_fact", "results_artifacts", "task_a_manifest", paths.task_a_manifest_path, "TaskA formal run manifest") if paths.task_a_manifest_path is not None else None,
         ("artifact_fact", "results_artifacts", "arm2_metrics_parquet", paths.arm2_metrics_parquet, "TaskA formal Arm2 metrics parquet") if paths.arm2_metrics_parquet is not None else None,
         ("artifact_fact", "logs_memos_reports", "arm2_focused_memo", paths.arm2_focused_dir / ARM2_FOCUSED_FILES["memo"], "Arm2 focused memo"),
-        ("artifact_fact", "logs_memos_reports", "arm2_bio_memo_table", paths.arm2_bio_dir / ARM2_BIO_FILES["memo_table"], "Arm2 biointegrated memo table"),
+        ("artifact_fact", "logs_memos_reports", "arm2_bio_memo_table", paths.arm2_bio_dir / ARM2_BIO_FILES["block2_biointegrated_audit_table"], "Arm2 Block-2 biointegrated audit table"),
         ("artifact_fact", "logs_memos_reports", "arm3_manifest", paths.arm3_result_root / ARM3_FILES["manifest"], "Arm3 phase0 manifest"),
         ("artifact_fact", "logs_memos_reports", "arm3_runtime_timing", paths.arm3_result_root / ARM3_FILES["runtime_timing"], "Arm3 runtime timing"),
         ("artifact_fact", "logs_memos_reports", "arm3_phase8_memo", paths.arm3_result_root / ARM3_FILES["memo"], "Arm3 phase8 memo"),
@@ -721,7 +720,7 @@ def build_source_inventory(paths: NeutralExtractionPaths) -> pd.DataFrame:
             continue
         artifact_entries.append(("artifact_fact", "results_artifacts", f"arm2_{key}", paths.arm2_focused_dir / filename, f"Arm2 focused artifact {filename}"))
     for key, filename in ARM2_BIO_FILES.items():
-        if key == "memo_table":
+        if key == "block2_biointegrated_audit_table":
             continue
         artifact_entries.append(("artifact_fact", "results_artifacts", f"arm2_{key}", paths.arm2_bio_dir / filename, f"Arm2 bio artifact {filename}"))
     for key, filename in ARM3_FILES.items():
@@ -861,13 +860,13 @@ def extract_neutral_evidence(paths: NeutralExtractionPaths) -> ExtractionPackage
     source_inventory = build_source_inventory(paths)
 
     arm2_prototype_meaning = read_table(paths.arm2_focused_dir / ARM2_FOCUSED_FILES["prototype_meaning"])
-    arm2_family_summary = read_table(paths.arm2_focused_dir / ARM2_FOCUSED_FILES["prototype_family_summary"])
-    arm2_recurrence = read_table(paths.arm2_focused_dir / ARM2_FOCUSED_FILES["prototype_recurrence"])
-    arm2_bd = read_table(paths.arm2_bio_dir / ARM2_BIO_FILES["bd_directionality"])
-    arm2_contrast = read_table(paths.arm2_bio_dir / ARM2_BIO_FILES["ot_uot_contrast"])
+    arm2_family_summary = read_table(paths.arm2_focused_dir / ARM2_FOCUSED_FILES["confirmatory_family_backbone_summary"])
+    arm2_recurrence = read_table(paths.arm2_focused_dir / ARM2_FOCUSED_FILES["trusted_anchor_patient_recurrence"])
+    arm2_bd = read_table(paths.arm2_bio_dir / ARM2_BIO_FILES["directional_residual_assignment_audit"])
+    arm2_contrast = read_table(paths.arm2_bio_dir / ARM2_BIO_FILES["closed_open_contrast"])
     arm2_baseline_patient = read_table(paths.arm2_focused_dir / ARM2_FOCUSED_FILES["baseline_patient_family"])
-    arm2_transport_patient = read_table(paths.arm2_focused_dir / ARM2_FOCUSED_FILES["global_transport_summary"])
-    arm2_overlap = read_table(paths.arm2_focused_dir / ARM2_FOCUSED_FILES["overlap_audit"])
+    arm2_transport_patient = read_table(paths.arm2_focused_dir / ARM2_FOCUSED_FILES["patient_continuity_backbone_summary"])
+    arm2_overlap = read_table(paths.arm2_focused_dir / ARM2_FOCUSED_FILES["anchor_residual_overlap_audit"])
 
     arm3_stability = read_table(paths.arm3_result_root / ARM3_FILES["prototype_stability"])
     arm3_proto_contrast_prep = read_table(paths.arm3_result_root / ARM3_FILES["prototype_contrast_prep"])

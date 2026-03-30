@@ -1,29 +1,124 @@
-# Project State
+# Migration Status
 
-- Stage: Tier-1 Arm-3 Phase 0-8 is landed locally; scientific interpretation consolidation is the current follow-up step.
-- Current Repo Status:
-  - `tasks/task_A` remains the active task scaffold.
-  - Stage 0 remains closed for the current Task-A track.
-  - Arm-I remains documented and closed at the current local stage.
-  - Arm-I on the shared Task-A operator surface is now density-aligned with the current foundation.
-  - Arm-II startup remains implemented and analyzed on the frozen Stage-0 artifact.
-  - Arm-III Phase 0-8 is now implemented in the local task-layer runner.
-  - Arm-III full-coverage anchor rows are now wired into the main Task-A pipeline / evaluator surface.
-  - Arm-III engineering execution is therefore closed locally, but scientific interpretation remains open.
-- Landed Tier-1 Arm-3 facts:
-  - `src/slotar/uot.py::batched_uot_solve(...)` is now the canonical solver entrypoint and returns `(metrics, details, status)`.
-  - The frozen support-mask path is landed: full-coverage COUNT-based support masks are passed into the solver as `external_support_mask`.
-  - Arm-3 main inference now uses exact solver-derived event details rather than proportional allocation as the main path.
-  - Full-coverage calibration is frozen before bootstrap; current Arm-3 uses family-level `lambda_dens` and compartment-level `tau`.
-- Latest smoke snapshot:
-  - `lambda_dens` remained `10.0` for `TC-IM`, `IM-PT`, and `TC-PT` on the exercised subset.
-  - `tau_by_compartment` became strictly positive after the diagonal-exclusion refinement.
-  - Exact-event Phase-6 behavior and Phase-8 output finalization remained healthy on the exercised subset.
-- Current Priority:
-  - keep the live docs aligned with the landed Arm-3 Phase 0-8 implementation and current scientific boundary
-  - keep the Arm-I / Arm-II / Arm-III shared operator surface coherent before deferred smoke validation
-  - resolve the current Arm-II / Arm-III transport-side endpoint-definition mismatch before any Arm-IV transition
-- Deferred Work:
-  - downstream scientific reconciliation of the Arm-II / Arm-III transport-side density-definition mismatch
-  - Arm IV, pending stronger transport-side revalidation
-  - canonical bridge-based export compliance
+This file records the current repository state during the STRIDE documentation
+and package-structure migration.
+
+## Current Facts
+
+- STRIDE is the live project and scientific identity.
+- The Python distribution name remains `slotar` during the current transition.
+- `src/stride/` is the canonical task-insensitive core package and live
+  first-pass implementation surface.
+- `src/slotar/` remains the current implementation and compatibility namespace.
+- `tasks/` owns task-specific workflows, benchmark helpers, and operational
+  task documentation.
+- `history/docs/` preserves archived material only; historical code is no
+  longer kept in the repo working tree.
+- `src/history/` is not a live package surface and must not be presented as the
+  active location of archived code.
+- Current uncertainty means bootstrap/sampling-variance uncertainty over
+  realized bridge outputs.
+
+## Stable Design Reference Now
+
+The active STRIDE story is stable at the design level:
+
+- the primary scientific object is `(T_p, e_p)` with `T_p = [A_p | d_p]`,
+- `A_p` is row-substochastic rather than a pure conditional kernel,
+- burden and composition remain separate scales,
+- the canonical observation layer is domain-stratified bag-of-FOV comparison,
+- domain remains an observation-layer stratum rather than state identity,
+- Task A remains a bounded proxy-validation task rather than a redefinition of
+  the global STRIDE object.
+
+The core method docs remain:
+
+- `docs/decisions.md`
+- `docs/api_specs.md`
+- `docs/data_contracts.md`
+- `docs/overall_validation_plan.md`
+- `docs/constraints.md`
+
+## Structure Boundary
+
+The active structure should be read as follows:
+
+- `src/stride/` is the target reusable-core architecture.
+- `src/stride/` already hosts the live narrow first-pass fit path.
+- `src/slotar/` is a transitional layer that still hosts compatibility wrappers
+  and migration-facing entrypoints.
+- `tasks/` is the home of task-specific logic, runtime entrypoints, and
+  benchmark orchestration.
+- `tasks/_shared/benchmarks/` and task-local benchmark directories replace the
+  old top-level `benchmarks/` surface.
+- `history/docs/` preserves historical documents, and archived code now lives
+  outside the live installable source tree.
+
+## Migration-Only Surfaces Still Live
+
+Important migration-only layers are still present:
+
+- backend-only numerical implementation under `slotar.backends.ot_sinkhorn`,
+- compatibility shims under `slotar.compat` and temporary top-level shim paths
+  such as `slotar.representation`, `slotar.uot`, `slotar.contracts`,
+  `slotar.uq`, `slotar.utils`, `slotar.io.bridge`, and `slotar.drift`,
+- task/runtime labels that still use historical arm or transport-era naming,
+- task outputs that are still pair/table oriented rather than centered on final
+  patient-level `(A_p, d_p, e_p)` exports.
+
+These surfaces remain documentation-relevant as compatibility residue. They are
+not the canonical architecture target.
+
+## Explicitly Deferred
+
+The following work remains deferred to later source-migration passes:
+
+- broader standalone observation-to-patient bridge estimation behind
+  `bridge_observation_matches(...)` beyond the current narrow two-group
+  uniform-mass path,
+- implementation of a non-deferred recurrence estimator behind
+  `estimate_recurrence(...)`,
+- migration of remaining working implementations from transitional `slotar`
+  surfaces into mature `stride` surfaces,
+- task-pipeline rewrites,
+- test rewrites,
+- retirement of legacy observation metrics and compatibility shims once the
+  source migration is complete.
+
+## Non-Blocking Open Points
+
+- The narrow first-pass observation-to-patient bridge is live in
+  `stride.api.fit` and `stride.workflows.fit_stride`; broader standalone bridge
+  surfaces remain deferred.
+- Namespace direction and estimator completeness remain separate questions:
+  `stride` may be the target architecture even when some estimators are still
+  deferred.
+- Some current implementation terms still use `prototype` language where the
+  design uses the broader term "shared `K`-state basis".
+- The longitudinal validator still accepts implementation-era aliases; that
+  alias handling is compatibility behavior, not the final naming endpoint.
+
+## Source-of-Truth Order
+
+For repository framing and structure, use:
+
+1. `README.md`
+2. `docs/index.md`
+3. `docs/architecture.md`
+4. `docs/package_layout.md`
+5. `docs/method_overview.md`
+
+For method design, then use:
+
+1. `docs/decisions.md`
+2. `docs/api_specs.md`
+3. `docs/data_contracts.md`
+4. `docs/overall_validation_plan.md`
+5. `docs/constraints.md`
+
+For Task A scope and operational boundaries, use:
+
+1. `docs/task_A_spec.md`
+2. `tasks/task_A/README.md`
+
+`docs/dev_log.md` is repo-memory only and not a design reference.

@@ -70,7 +70,7 @@ def _write_task_a_config(path: Path, *, enabled_arms: list[str]) -> Path:
     config = {
         "task_name": "Task A Stage 0 smoke",
         "enabled_arms": enabled_arms,
-        "data": {"mass_mode": "count", "k_full": 25},
+        "data": {"mass_mode": "density", "k_full": 25},
         "uot_params": {
             "eps_schedule": [1.0, 0.5, 0.1],
             "max_iter": 400,

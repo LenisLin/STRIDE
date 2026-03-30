@@ -1,8 +1,8 @@
 """
 Module: tasks.task_A.arm2.analysis_contract
 
-Centralized non-compute contract surface for the post-hoc Arm-II focused
-analysis rewrite.
+Centralized non-compute contract surface for the post-hoc Arm-II real-data
+mirror and bounded-audit rewrite.
 
 This module owns:
 - Locked startup-slice constants.
@@ -94,21 +94,21 @@ PROTOTYPE_ANNOTATION_COLUMNS: tuple[str, ...] = (
 # ---------------------------------------------------------------------------
 
 FOCUSED_OUTPUT_FILENAMES: tuple[str, ...] = (
-    "00_arm2_focused_results_memo.md",
+    "00_task_a_real_data_mirror_memo.md",
     "01_prototype_biological_meaning_table.csv",
     "02_baseline_pair_audit.csv",
     "03_baseline_prototype_confirmatory_summary.csv",
     "04_baseline_patient_family_confirmatory_summary.csv",
-    "05_global_transport_summary.csv",
-    "06_uot_shared_transport_anchors.csv",
-    "07_balanced_ot_forced_transport_prototypes.csv",
-    "08_uot_unmatched_contributors.csv",
-    "09_prototype_overlap_conflict_audit.csv",
-    "10_prototype_family_specific_summary.csv",
-    "11_prototype_patient_recurrence_summary.csv",
-    "12_auxiliary_legacy_prototype_comparison.csv",
-    "13_auxiliary_legacy_prototype_patient_recurrence.csv",
-    "14_minimal_appendix_audit.csv",
+    "05_patient_continuity_backbone_summary.csv",
+    "06_trusted_continuity_anchors.csv",
+    "07_closed_comparator_forced_closure.csv",
+    "08_bounded_residual_contributors.csv",
+    "09_anchor_residual_overlap_audit.csv",
+    "10_confirmatory_family_backbone_summary.csv",
+    "11_trusted_anchor_patient_recurrence.csv",
+    "12_auxiliary_legacy_comparator_view.csv",
+    "13_auxiliary_legacy_anchor_view.csv",
+    "14_output_contract_audit.csv",
 )
 
 # ---------------------------------------------------------------------------
@@ -116,9 +116,9 @@ FOCUSED_OUTPUT_FILENAMES: tuple[str, ...] = (
 # ---------------------------------------------------------------------------
 
 MEMO_SUPPORTED_CLAIMS: tuple[str, ...] = (
-    "Arm-II is interpreted as a biologically ordered benchmark ladder on the current startup slice.",
-    "Baseline tissue differences are shown before transport and kept separate from transport claims.",
-    "Confirmatory transport claims are restricted to TC-IM and TC-PT.",
+    "Arm-II is interpreted as the real-data mirror surface for the ordered tissue-domain proxy on the current startup slice.",
+    "Baseline tissue differences are shown before relation modeling and kept separate from continuity-backbone claims.",
+    "Confirmatory continuity-backbone claims are restricted to TC-IM and TC-PT.",
     "Prototype-level interpretation is built from all active prototypes first.",
     "Focused prototype outputs are downstream views, not upstream analysis constraints.",
 )
@@ -126,7 +126,7 @@ MEMO_SUPPORTED_CLAIMS: tuple[str, ...] = (
 MEMO_NON_CLAIMS: tuple[str, ...] = (
     "No generic UOT superiority claim over Balanced OT.",
     "No claim that Arm-II is fully passed or closed.",
-    "No claim that Balanced OT has unmatched semantics.",
+    "No claim that Balanced OT has bounded-residual semantics.",
     "No confirmatory claim based on IM-PT.",
     "No mechanistic or causal proof from prototype annotations.",
 )

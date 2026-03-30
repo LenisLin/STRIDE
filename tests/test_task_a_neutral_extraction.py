@@ -46,14 +46,14 @@ def test_build_arm2_patient_family_comparator_longifies_wide_tables() -> None:
             "patient_id": ["P1"],
             "tc_im_ordered_pair_count": [3],
             "tc_pt_ordered_pair_count": [5],
-            "tc_im_valid_uot_pair_count": [3],
-            "tc_pt_valid_uot_pair_count": [5],
-            "tc_im_median_U_abs": [11.0],
-            "tc_pt_median_U_abs": [22.0],
-            "tc_im_median_M_balanced": [0.40],
-            "tc_pt_median_M_balanced": [0.60],
-            "tc_im_median_balanced_minus_uot": [0.01],
-            "tc_pt_median_balanced_minus_uot": [0.02],
+            "tc_im_valid_continuity_pair_count": [3],
+            "tc_pt_valid_continuity_pair_count": [5],
+            "tc_im_median_bounded_residual_abs": [11.0],
+            "tc_pt_median_bounded_residual_abs": [22.0],
+            "tc_im_median_closed_comparator_match_score": [0.40],
+            "tc_pt_median_closed_comparator_match_score": [0.60],
+            "tc_im_median_forced_closure_excess": [0.01],
+            "tc_pt_median_forced_closure_excess": [0.02],
         }
     )
 
@@ -64,9 +64,9 @@ def test_build_arm2_patient_family_comparator_longifies_wide_tables() -> None:
     tc_pt = result.loc[result["pair_family"] == "TC-PT"].iloc[0]
     assert tc_im["ordered_pair_count_coalesced"] == 3
     assert tc_im["baseline_median_abs_delta_share"] == 0.10
-    assert tc_im["valid_uot_pair_count"] == 3
-    assert tc_pt["median_M_balanced"] == 0.60
-    assert tc_pt["median_balanced_minus_uot"] == 0.02
+    assert tc_im["valid_continuity_pair_count"] == 3
+    assert tc_pt["median_closed_comparator_match_score"] == 0.60
+    assert tc_pt["median_forced_closure_excess"] == 0.02
 
 
 def test_build_arm2_prototype_family_evidence_merges_recurrence_bd_and_contrast() -> None:
@@ -80,10 +80,10 @@ def test_build_arm2_prototype_family_evidence_merges_recurrence_bd_and_contrast(
                 "prototype_label_top3": "p7 | TC_EpCAM",
                 "paired_confirmatory_patient_count": 4,
                 "baseline_median_abs_delta_share": 0.2,
-                "uot_transport_share_median": 0.3,
-                "balanced_transport_share_median": 0.4,
-                "balanced_minus_uot_transport_share_median": 0.1,
-                "uot_unmatched_share_median": 0.05,
+                "continuity_backbone_share_median": 0.3,
+                "closed_comparator_share_median": 0.4,
+                "forced_closure_excess_share_median": 0.1,
+                "bounded_residual_share_median": 0.05,
             },
             {
                 "baseline_priority_rank": 2,
@@ -93,34 +93,35 @@ def test_build_arm2_prototype_family_evidence_merges_recurrence_bd_and_contrast(
                 "prototype_label_top3": "p7 | TC_EpCAM",
                 "paired_confirmatory_patient_count": 4,
                 "baseline_median_abs_delta_share": 0.4,
-                "uot_transport_share_median": 0.1,
-                "balanced_transport_share_median": 0.2,
-                "balanced_minus_uot_transport_share_median": 0.1,
-                "uot_unmatched_share_median": 0.07,
+                "continuity_backbone_share_median": 0.1,
+                "closed_comparator_share_median": 0.2,
+                "forced_closure_excess_share_median": 0.1,
+                "bounded_residual_share_median": 0.07,
             },
         ]
     )
     df_recurrence = pd.DataFrame(
         {
             "proto_id": [7],
-            "shared_transport_anchor_score": [0.3],
-            "shared_transport_positive_patient_count": [4],
-            "balanced_ot_forced_transport_score": [0.1],
-            "forced_transport_positive_patient_count_tc_im": [2],
-            "forced_transport_positive_patient_count_tc_im_prop": [0.5],
-            "forced_transport_positive_patient_count_tc_pt": [3],
-            "forced_transport_positive_patient_count_tc_pt_prop": [0.75],
-            "forced_transport_positive_patient_count_any_confirmatory": [4],
-            "forced_transport_positive_patient_count_any_confirmatory_prop": [1.0],
-            "uot_unmatched_contributor_score": [0.07],
-            "unmatched_positive_patient_count_tc_im": [4],
-            "unmatched_positive_patient_count_tc_im_prop": [1.0],
-            "unmatched_positive_patient_count_tc_pt": [2],
-            "unmatched_positive_patient_count_tc_pt_prop": [0.5],
-            "unmatched_positive_patient_count_any_confirmatory": [4],
-            "unmatched_positive_patient_count_any_confirmatory_prop": [1.0],
-            "shared_transport_and_unmatched_any_patient_count": [4],
-            "shared_transport_and_unmatched_any_patient_count_prop": [1.0],
+            "trusted_anchor_score": [0.3],
+            "trusted_anchor_positive_patient_count": [4],
+            "trusted_anchor_positive_patient_count_prop": [1.0],
+            "forced_closure_score": [0.1],
+            "forced_closure_positive_patient_count_tc_im": [2],
+            "forced_closure_positive_patient_count_tc_im_prop": [0.5],
+            "forced_closure_positive_patient_count_tc_pt": [3],
+            "forced_closure_positive_patient_count_tc_pt_prop": [0.75],
+            "forced_closure_positive_patient_count_any_confirmatory": [4],
+            "forced_closure_positive_patient_count_any_confirmatory_prop": [1.0],
+            "bounded_residual_score": [0.07],
+            "bounded_residual_positive_patient_count_tc_im": [4],
+            "bounded_residual_positive_patient_count_tc_im_prop": [1.0],
+            "bounded_residual_positive_patient_count_tc_pt": [2],
+            "bounded_residual_positive_patient_count_tc_pt_prop": [0.5],
+            "bounded_residual_positive_patient_count_any_confirmatory": [4],
+            "bounded_residual_positive_patient_count_any_confirmatory_prop": [1.0],
+            "trusted_anchor_and_bounded_residual_any_patient_count": [4],
+            "trusted_anchor_and_bounded_residual_any_patient_count_prop": [1.0],
         }
     )
     df_bd = pd.DataFrame(
@@ -131,15 +132,15 @@ def test_build_arm2_prototype_family_evidence_merges_recurrence_bd_and_contrast(
                 "direction_role": "primary_anchor",
                 "proto_id": 7,
                 "patient_count": 4,
-                "destroy_share": 0.02,
-                "birth_share": 0.03,
-                "destroy_minus_birth_share": -0.01,
-                "destroy_abs": 5.0,
-                "birth_abs": 6.0,
-                "destroy_gt_birth_patient_count": 1,
-                "destroy_gt_birth_patient_prop": 0.25,
-                "birth_gt_destroy_patient_count": 3,
-                "birth_gt_destroy_patient_prop": 0.75,
+                "source_depletion_prone_share": 0.02,
+                "target_emergence_prone_share": 0.03,
+                "depletion_minus_emergence": -0.01,
+                "source_depletion_prone_abs": 5.0,
+                "target_emergence_prone_abs": 6.0,
+                "source_depletion_gt_emergence_patient_count": 1,
+                "source_depletion_gt_emergence_patient_prop": 0.25,
+                "emergence_gt_source_depletion_patient_count": 3,
+                "emergence_gt_source_depletion_patient_prop": 0.75,
             },
             {
                 "pair_type": "TC->PT",
@@ -147,15 +148,15 @@ def test_build_arm2_prototype_family_evidence_merges_recurrence_bd_and_contrast(
                 "direction_role": "primary_anchor",
                 "proto_id": 7,
                 "patient_count": 4,
-                "destroy_share": 0.05,
-                "birth_share": 0.01,
-                "destroy_minus_birth_share": 0.04,
-                "destroy_abs": 8.0,
-                "birth_abs": 2.0,
-                "destroy_gt_birth_patient_count": 4,
-                "destroy_gt_birth_patient_prop": 1.0,
-                "birth_gt_destroy_patient_count": 0,
-                "birth_gt_destroy_patient_prop": 0.0,
+                "source_depletion_prone_share": 0.05,
+                "target_emergence_prone_share": 0.01,
+                "depletion_minus_emergence": 0.04,
+                "source_depletion_prone_abs": 8.0,
+                "target_emergence_prone_abs": 2.0,
+                "source_depletion_gt_emergence_patient_count": 4,
+                "source_depletion_gt_emergence_patient_prop": 1.0,
+                "emergence_gt_source_depletion_patient_count": 0,
+                "emergence_gt_source_depletion_patient_prop": 0.0,
             },
             {
                 "pair_type": "PT->TC",
@@ -163,15 +164,15 @@ def test_build_arm2_prototype_family_evidence_merges_recurrence_bd_and_contrast(
                 "direction_role": "audit_only",
                 "proto_id": 7,
                 "patient_count": 4,
-                "destroy_share": 0.99,
-                "birth_share": 0.99,
-                "destroy_minus_birth_share": 0.0,
-                "destroy_abs": 99.0,
-                "birth_abs": 99.0,
-                "destroy_gt_birth_patient_count": 0,
-                "destroy_gt_birth_patient_prop": 0.0,
-                "birth_gt_destroy_patient_count": 0,
-                "birth_gt_destroy_patient_prop": 0.0,
+                "source_depletion_prone_share": 0.99,
+                "target_emergence_prone_share": 0.99,
+                "depletion_minus_emergence": 0.0,
+                "source_depletion_prone_abs": 99.0,
+                "target_emergence_prone_abs": 99.0,
+                "source_depletion_gt_emergence_patient_count": 0,
+                "source_depletion_gt_emergence_patient_prop": 0.0,
+                "emergence_gt_source_depletion_patient_count": 0,
+                "emergence_gt_source_depletion_patient_prop": 0.0,
             },
         ]
     )
@@ -181,14 +182,14 @@ def test_build_arm2_prototype_family_evidence_merges_recurrence_bd_and_contrast(
             "panel_name": ["tc_dominant"],
             "panel_rule": ["rule"],
             "is_borderline_tc_like": [False],
-            "balanced_transport_share_tc_im": [0.4],
-            "uot_transport_share_tc_im": [0.3],
-            "uot_unmatched_share_tc_im": [0.05],
-            "balanced_minus_uot_tc_im": [0.1],
-            "balanced_transport_share_tc_pt": [0.2],
-            "uot_transport_share_tc_pt": [0.1],
-            "uot_unmatched_share_tc_pt": [0.07],
-            "balanced_minus_uot_tc_pt": [0.1],
+            "closed_comparator_share_tc_im": [0.4],
+            "continuity_backbone_share_tc_im": [0.3],
+            "bounded_residual_share_tc_im": [0.05],
+            "forced_closure_excess_tc_im": [0.1],
+            "closed_comparator_share_tc_pt": [0.2],
+            "continuity_backbone_share_tc_pt": [0.1],
+            "bounded_residual_share_tc_pt": [0.07],
+            "forced_closure_excess_tc_pt": [0.1],
         }
     )
 
@@ -201,13 +202,13 @@ def test_build_arm2_prototype_family_evidence_merges_recurrence_bd_and_contrast(
 
     tc_im = result.loc[result["pair_family"] == "TC-IM"].iloc[0]
     tc_pt = result.loc[result["pair_family"] == "TC-PT"].iloc[0]
-    assert tc_im["forced_transport_positive_patient_count_family"] == 2
-    assert tc_pt["forced_transport_positive_patient_count_family"] == 3
+    assert tc_im["forced_closure_positive_patient_count_family"] == 2
+    assert tc_pt["forced_closure_positive_patient_count_family"] == 3
     assert tc_im["bd_pair_type"] == "TC->IM"
     assert tc_pt["bd_pair_type"] == "TC->PT"
-    assert tc_pt["destroy_abs"] == 8.0
-    assert tc_im["contrast_balanced_transport_share"] == 0.4
-    assert tc_pt["contrast_uot_unmatched_share"] == 0.07
+    assert tc_pt["source_depletion_prone_abs"] == 8.0
+    assert tc_im["contrast_closed_comparator_share"] == 0.4
+    assert tc_pt["contrast_bounded_residual_share"] == 0.07
 
 
 def test_build_arm3_pair_level_coverage_comparator_merges_balanced_costs() -> None:
@@ -326,28 +327,28 @@ def test_extract_neutral_evidence_writes_expected_output_package(tmp_path: Path)
             "patient_id": ["P1"],
             "tc_im_ordered_pair_count": [1],
             "tc_pt_ordered_pair_count": [1],
-            "tc_im_valid_uot_pair_count": [1],
-            "tc_pt_valid_uot_pair_count": [1],
-            "tc_im_median_U_abs": [11.0],
-            "tc_pt_median_U_abs": [22.0],
-            "tc_im_median_transport_fraction": [0.9],
-            "tc_pt_median_transport_fraction": [0.8],
-            "tc_im_median_unmatched_fraction": [0.1],
-            "tc_pt_median_unmatched_fraction": [0.2],
-            "tc_im_median_M": [0.3],
-            "tc_pt_median_M": [0.4],
-            "tc_im_median_D_pos": [1.0],
-            "tc_pt_median_D_pos": [2.0],
-            "tc_im_median_B_pos": [1.5],
-            "tc_pt_median_B_pos": [2.5],
-            "tc_im_median_T_abs": [5.0],
-            "tc_pt_median_T_abs": [6.0],
-            "tc_im_median_M_balanced": [0.31],
-            "tc_pt_median_M_balanced": [0.42],
-            "tc_im_median_balanced_minus_uot": [0.01],
-            "tc_pt_median_balanced_minus_uot": [0.02],
+            "tc_im_valid_continuity_pair_count": [1],
+            "tc_pt_valid_continuity_pair_count": [1],
+            "tc_im_median_bounded_residual_abs": [11.0],
+            "tc_pt_median_bounded_residual_abs": [22.0],
+            "tc_im_median_continuity_backbone_fraction": [0.9],
+            "tc_pt_median_continuity_backbone_fraction": [0.8],
+            "tc_im_median_bounded_residual_fraction": [0.1],
+            "tc_pt_median_bounded_residual_fraction": [0.2],
+            "tc_im_median_open_relation_match_score": [0.3],
+            "tc_pt_median_open_relation_match_score": [0.4],
+            "tc_im_median_source_depletion_prone_abs": [1.0],
+            "tc_pt_median_source_depletion_prone_abs": [2.0],
+            "tc_im_median_target_emergence_prone_abs": [1.5],
+            "tc_pt_median_target_emergence_prone_abs": [2.5],
+            "tc_im_median_continuity_backbone_abs": [5.0],
+            "tc_pt_median_continuity_backbone_abs": [6.0],
+            "tc_im_median_closed_comparator_match_score": [0.31],
+            "tc_pt_median_closed_comparator_match_score": [0.42],
+            "tc_im_median_forced_closure_excess": [0.01],
+            "tc_pt_median_forced_closure_excess": [0.02],
         }
-    ).to_csv(arm2_focused / "05_global_transport_summary.csv", index=False)
+    ).to_csv(arm2_focused / "05_patient_continuity_backbone_summary.csv", index=False)
     pd.DataFrame(
         {
             "baseline_priority_rank": [1, 1],
@@ -357,35 +358,36 @@ def test_extract_neutral_evidence_writes_expected_output_package(tmp_path: Path)
             "prototype_label_top3": ["p0 | TC_CAIX", "p0 | TC_CAIX"],
             "paired_confirmatory_patient_count": [1, 1],
             "baseline_median_abs_delta_share": [0.1, 0.2],
-            "uot_transport_share_median": [0.3, 0.2],
-            "balanced_transport_share_median": [0.4, 0.25],
-            "balanced_minus_uot_transport_share_median": [0.1, 0.05],
-            "uot_unmatched_share_median": [0.05, 0.07],
+            "continuity_backbone_share_median": [0.3, 0.2],
+            "closed_comparator_share_median": [0.4, 0.25],
+            "forced_closure_excess_share_median": [0.1, 0.05],
+            "bounded_residual_share_median": [0.05, 0.07],
         }
-    ).to_csv(arm2_focused / "10_prototype_family_specific_summary.csv", index=False)
+    ).to_csv(arm2_focused / "10_confirmatory_family_backbone_summary.csv", index=False)
     pd.DataFrame(
         {
             "proto_id": [0],
-            "shared_transport_anchor_score": [0.3],
-            "shared_transport_positive_patient_count": [1],
-            "balanced_ot_forced_transport_score": [0.1],
-            "forced_transport_positive_patient_count_tc_im": [1],
-            "forced_transport_positive_patient_count_tc_im_prop": [1.0],
-            "forced_transport_positive_patient_count_tc_pt": [1],
-            "forced_transport_positive_patient_count_tc_pt_prop": [1.0],
-            "forced_transport_positive_patient_count_any_confirmatory": [1],
-            "forced_transport_positive_patient_count_any_confirmatory_prop": [1.0],
-            "uot_unmatched_contributor_score": [0.07],
-            "unmatched_positive_patient_count_tc_im": [1],
-            "unmatched_positive_patient_count_tc_im_prop": [1.0],
-            "unmatched_positive_patient_count_tc_pt": [1],
-            "unmatched_positive_patient_count_tc_pt_prop": [1.0],
-            "unmatched_positive_patient_count_any_confirmatory": [1],
-            "unmatched_positive_patient_count_any_confirmatory_prop": [1.0],
-            "shared_transport_and_unmatched_any_patient_count": [1],
-            "shared_transport_and_unmatched_any_patient_count_prop": [1.0],
+            "trusted_anchor_score": [0.3],
+            "trusted_anchor_positive_patient_count": [1],
+            "trusted_anchor_positive_patient_count_prop": [1.0],
+            "forced_closure_score": [0.1],
+            "forced_closure_positive_patient_count_tc_im": [1],
+            "forced_closure_positive_patient_count_tc_im_prop": [1.0],
+            "forced_closure_positive_patient_count_tc_pt": [1],
+            "forced_closure_positive_patient_count_tc_pt_prop": [1.0],
+            "forced_closure_positive_patient_count_any_confirmatory": [1],
+            "forced_closure_positive_patient_count_any_confirmatory_prop": [1.0],
+            "bounded_residual_score": [0.07],
+            "bounded_residual_positive_patient_count_tc_im": [1],
+            "bounded_residual_positive_patient_count_tc_im_prop": [1.0],
+            "bounded_residual_positive_patient_count_tc_pt": [1],
+            "bounded_residual_positive_patient_count_tc_pt_prop": [1.0],
+            "bounded_residual_positive_patient_count_any_confirmatory": [1],
+            "bounded_residual_positive_patient_count_any_confirmatory_prop": [1.0],
+            "trusted_anchor_and_bounded_residual_any_patient_count": [1],
+            "trusted_anchor_and_bounded_residual_any_patient_count_prop": [1.0],
         }
-    ).to_csv(arm2_focused / "11_prototype_patient_recurrence_summary.csv", index=False)
+    ).to_csv(arm2_focused / "11_trusted_anchor_patient_recurrence.csv", index=False)
     pd.DataFrame(
         {
             "row_type": ["summary"],
@@ -393,24 +395,24 @@ def test_extract_neutral_evidence_writes_expected_output_package(tmp_path: Path)
             "top_n": [10],
             "intersection_size": [2],
         }
-    ).to_csv(arm2_focused / "09_prototype_overlap_conflict_audit.csv", index=False)
-    (arm2_focused / "00_arm2_focused_results_memo.md").write_text("memo\n", encoding="utf-8")
+    ).to_csv(arm2_focused / "09_anchor_residual_overlap_audit.csv", index=False)
+    (arm2_focused / "00_task_a_real_data_mirror_memo.md").write_text("memo\n", encoding="utf-8")
     pd.DataFrame(
         {
             "proto_id": [0],
             "panel_name": ["tc_dominant"],
             "panel_rule": ["rule"],
             "is_borderline_tc_like": [False],
-            "balanced_transport_share_tc_im": [0.4],
-            "uot_transport_share_tc_im": [0.3],
-            "uot_unmatched_share_tc_im": [0.05],
-            "balanced_minus_uot_tc_im": [0.1],
-            "balanced_transport_share_tc_pt": [0.25],
-            "uot_transport_share_tc_pt": [0.2],
-            "uot_unmatched_share_tc_pt": [0.07],
-            "balanced_minus_uot_tc_pt": [0.05],
+            "closed_comparator_share_tc_im": [0.4],
+            "continuity_backbone_share_tc_im": [0.3],
+            "bounded_residual_share_tc_im": [0.05],
+            "forced_closure_excess_tc_im": [0.1],
+            "closed_comparator_share_tc_pt": [0.25],
+            "continuity_backbone_share_tc_pt": [0.2],
+            "bounded_residual_share_tc_pt": [0.07],
+            "forced_closure_excess_tc_pt": [0.05],
         }
-    ).to_csv(arm2_bio / "23_ot_vs_uot_prototype_contrast.csv", index=False)
+    ).to_csv(arm2_bio / "23_closed_vs_open_prototype_contrast.csv", index=False)
     pd.DataFrame(
         {
             "pair_type": ["TC->IM", "TC->PT"],
@@ -418,19 +420,19 @@ def test_extract_neutral_evidence_writes_expected_output_package(tmp_path: Path)
             "direction_role": ["primary_anchor", "primary_anchor"],
             "proto_id": [0, 0],
             "patient_count": [1, 1],
-            "destroy_share": [0.02, 0.05],
-            "birth_share": [0.03, 0.01],
-            "destroy_minus_birth_share": [-0.01, 0.04],
-            "destroy_abs": [5.0, 8.0],
-            "birth_abs": [6.0, 2.0],
-            "destroy_gt_birth_patient_count": [0, 1],
-            "destroy_gt_birth_patient_prop": [0.0, 1.0],
-            "birth_gt_destroy_patient_count": [1, 0],
-            "birth_gt_destroy_patient_prop": [1.0, 0.0],
+            "source_depletion_prone_share": [0.02, 0.05],
+            "target_emergence_prone_share": [0.03, 0.01],
+            "depletion_minus_emergence": [-0.01, 0.04],
+            "source_depletion_prone_abs": [5.0, 8.0],
+            "target_emergence_prone_abs": [6.0, 2.0],
+            "source_depletion_gt_emergence_patient_count": [0, 1],
+            "source_depletion_gt_emergence_patient_prop": [0.0, 1.0],
+            "emergence_gt_source_depletion_patient_count": [1, 0],
+            "emergence_gt_source_depletion_patient_prop": [1.0, 0.0],
         }
-    ).to_csv(arm2_bio / "24_bd_unmatched_directionality.csv", index=False)
-    pd.DataFrame({"contrast": ["x"], "source_file": ["24_bd_unmatched_directionality.csv"]}).to_csv(
-        arm2_bio / "25_arm2_biointegrated_memo_table.csv", index=False
+    ).to_csv(arm2_bio / "24_directional_residual_assignment_audit.csv", index=False)
+    pd.DataFrame({"contrast": ["x"], "source_file": ["24_directional_residual_assignment_audit.csv"]}).to_csv(
+        arm2_bio / "25_block2_biointegrated_audit_table.csv", index=False
     )
 
     pd.DataFrame(

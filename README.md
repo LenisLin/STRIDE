@@ -1,79 +1,162 @@
-# SLOTAR
+# STRIDE
 
-**SLOTAR** = *Selection-aware Longitudinal Optimal Transport for Attribution & Remapping* A generic, mathematically rigorous framework for inferring physical transport dynamics and spatial sampling uncertainty in longitudinal or state-transition cohorts.
+<!-- AVCP:README:START -->
+Longitudinal spatial remodeling analysis framework/package for patient-level open remodeling relations in multi-ROI spatial omics.
 
-**Academic Positioning (V2.0)**: 
-SLOTAR does not treat feature engineering itself as the primary estimand. In the official route, `src/slotar` provides benchmark-agnostic representation utilities that construct a shared state/prototype space and canonical cost geometry from spatial single-cell or spot data, then aggregate each ROI/sample into nonnegative masses over that shared axis. SLOTAR then solves two critical inference challenges:
-1. **Physical Transport under Mass Imbalance**: Using a batched, parameter-calibrated Unbalanced Optimal Transport (UOT) engine on ROI-/sample-level mass distributions over the shared state/prototype space.
-2. **Reliable Inference under Sampling Bias**: Using a Hurdle + Measurement Error joint likelihood model, robust to spatial undersampling without heuristic weight truncations.
+STRIDE is the live project and scientific name for the repository. It is a
+longitudinal spatial remodeling analysis framework/package centered on
+patient-level open remodeling relations rather than a transport-first ontology.
 
-Custom representation routes are allowed, but only if they terminate in the same SLOTAR-ready contract: a shared state/prototype axis, ROI-/sample-level nonnegative masses on that axis, compatible cost geometry, required global scaling objects, and a valid path to `lambda_pl`.
-Following the official route, users should not have to invent the shared state space, official cost geometry, or the basic lambda calibration path themselves; `src/slotar` provides that closed library-supported path, while `tasks/` provide baseline/group/pair context and final batch assembly.
+## What STRIDE Represents
 
-This repository follows AVCP “repo-as-memory” conventions: decisions/specs live in versioned files under `docs/`, not chat context.
+For patient `p`, the canonical scientific object is `(T_p, e_p)` with
+`T_p = [A_p | d_p]`.
 
----
+- `A_p` is the canonical patient-level continuity/remodeling operator on the
+  shared `K`-state basis.
+- `A_p` is row-substochastic, with `sum_j A_{p,ij} + d_{p,i} = 1`.
+- If exposition needs a normalized conditional kernel, use the derived
+  auxiliary object `R_{p,ij} = A_{p,ij} / (1 - d_{p,i})` when
+  `1 - d_{p,i} > 0`.
+- `d_p` is pre-side depletion tendency.
+- `e_p` is post-side emergence.
 
-## Repository Architecture: Library vs Tasks (Hard Boundary)
+Continuity through `A_p` is the primary structural interpretation. `d_p` and
+`e_p` remain bounded open-channel summaries rather than direct proof of true
+biological disappearance or neogenesis.
 
-This repo enforces a strict separation:
+## Burden and Composition
 
-1) **`src/slotar/` (library-only)** Pure, reusable Python package implementing:
-   - method kernel modules (batched UOT solver, contracts, representation utilities, UQ, drift flagging)
-   - method-defining core inference modules when they are benchmark-agnostic parts of SLOTAR itself (e.g., Hurdle + Measurement Error as core method logic)
-   - I/O helpers (contracts-aware export)
+STRIDE keeps burden and composition distinct.
 
-   `src/slotar` knows nothing about “pCR”, “TONIC”, or any benchmark-specific orchestration.
-   The official representation route lives here and is responsible for constructing SLOTAR-ready objects before UOT.
+- `mu_p^-` and `mu_p^+` are patient-level pseudo-mass / burden vectors on the
+  shared `K`-state basis.
+- `m_p^(d)` and `m_p^(e)` live on that same pseudo-mass / burden scale.
+- Normalized compositions are derived objects only:
+  `q_p^- = mu_p^- / ||mu_p^-||_1` and `q_p^+ = mu_p^+ / ||mu_p^+||_1`.
+- Conservation is a soft burden-consistency anchor rather than literal
+  physical conservation.
 
-2) **`tasks/` (task-scoped pipelines)**  
-   End-to-end pipelines for each benchmark/case:
-   - study design + inclusion/exclusion rules
-   - data loading / preprocessing + config parsing and task-level parameter interpretation
-   - baseline subset / grouping / pairing metadata for calibration and final solver batching
-   - explicit cohort/patient/visit looping
-   - endpoint definitions, covariate construction, subgroup orchestration
-   - structural-zero bypass mapping and downstream omission rules
-   - reporting / visualization / benchmark-specific evaluation
+Composition-level structure is usually the most robust under partial coverage.
+Burden-level claims require reasonably comparable coverage or platform regimes
+and should be weakened when that comparability is poor.
 
----
+## Observation Layer
 
-## Baselines vs SLOTAR
+Each observed FOV/ROI is represented in the current first pass on the shared
+`K`-state basis by a normalized community-composition vector `v`.
 
-Simple state-abundance analyses may already detect whether states increase, decrease, disappear, or persist on the declared mass scale of a task. SLOTAR should not be presented as uniquely discovering those first-order changes.
+- `v[k]` is formed by counting the cells assigned to shared community/state `k`
+  within the ROI/FOV and dividing by the ROI/FOV total cell count.
+- Current first-pass observation mass is uniform, with `mass = 1` and
+  `mass_mode = "uniform"` for each ROI/FOV within a study.
+- The canonical observation object is a domain-stratified bag-of-FOV empirical
+  measure in community-composition space with equal ROI/FOV mass:
+  `nu_obs = sum_f w_f delta_{c(v_f)}`.
+- In the current first pass, `c(v_f) = v_f` and `w_f = 1`.
+- OT / Sinkhorn compares these empirical measures; it is an observation-layer
+  comparison tool, not the primary biological object.
+- Domain-stratified bag-of-FOV comparison is preferred over collapsing the
+  data into one raw histogram.
 
-SLOTAR adds shared transport geometry, transport cost/work, decomposition into retention / remodeling / creation / destruction, uncertainty semantics, and explicit audit / failure semantics.
+## State Basis and Domain Boundary
 
----
+STRIDE uses a shared `K`-state basis built before any tissue/domain
+stratification.
 
-## Key AVCP Contracts (must read before coding)
-Start each session by reading:
+- The current first-pass route is tissue-agnostic:
+  per-cell subtype labels -> within-ROI kNN neighborhood subtype proportion
+  vectors -> k-means shared community states.
+- The neighborhood size `k` is user-configurable; the documented first-pass
+  default is `20`.
+- Domain is not part of canonical state identity.
+- Domain or compartment labels act only as observation-layer stratification,
+  grouped comparison, bridge input grouping, covariates, or analysis surfaces.
+- Docs and analyses must not encode domain into the state basis and then
+  condition on domain again, because that double counts the same structure.
+- Domain labels do not define state geometry or the axes of `A_p`, `d_p`, and
+  `e_p`.
+- If domain labels are unavailable, analyses may fall back to one declared
+  domain class.
+
+## Task A Boundary
+
+Task A remains the current bounded validation task. It uses a single-timepoint
+ordered tissue-domain proxy, not full longitudinal proof, and it does not
+redefine the global STRIDE object.
+
+## Current Architecture Status
+
+- `src/stride/` is the canonical future task-insensitive core package
+  skeleton.
+- `src/slotar/` is the current transitional compatibility and implementation
+  namespace.
+- `tasks/` owns task-specific workflows, benchmark code, and operational
+  documentation.
+- `history/` is archival only and is not part of the live installable surface.
+
+## Documentation Map
+
+### Live entry surfaces
+
+- `README.md`
+- `docs/index.md`
+- `docs/method_overview.md`
+- `docs/architecture.md`
+- `docs/package_layout.md`
+
+### Canonical project specifications
+
 - `docs/state.md`
-- `docs/constraints.md`
 - `docs/decisions.md`
 - `docs/api_specs.md`
 - `docs/data_contracts.md`
-- `docs/avcp_guidelines.md`
+- `docs/overall_validation_plan.md`
+- `docs/constraints.md`
 
----
+### Task and archive surfaces
 
-## Recommended Commands
+- `docs/task_A_spec.md` is the sole live scientific Task A document.
+- `tasks/task_A/README.md` is the Task A operational companion.
+- `docs/task_B_spec.md`, `docs/task_C_spec.md`, and `docs/task_D_spec.md`
+  remain bounded task/background notes only.
+- `history/docs/index.md` is the in-tree archive-docs entrypoint.
+- Historical code is archived outside the repo working tree.
+
+### Repository layout
+
+```text
+docs/                    # active canonical and maintenance docs
+history/docs/            # archived documentation
+src/stride/              # canonical future core skeleton
+src/slotar/              # transitional compatibility namespace
+tasks/                   # task-specific workflows, docs, and benchmarks
+scripts/dev/             # maintenance tooling
+tests/                   # verification suite
+```
+
+## Minimal Setup
 
 ```bash
 python -m pip install -e ".[dev]"
-ruff check .
-ruff format --check .
-mypy .
 pytest -q
-````
+python scripts/dev/generate_readme.py --check
+```
 
----
+## Project At A Glance
 
-## Notes
+- **Project:** `STRIDE`
+- **Python distribution:** `slotar` (retained during migration)
+- **Core package direction:** `stride` target core + `slotar` transitional compatibility layer
+- **Domain:** Computational Biology / Longitudinal Spatial Omics
+- **Stage:** Method / Analysis Framework Development
+- **Owner:** LenisLin
+- **License:** MIT
 
-* Structural zeros are handled by **Plan B**:
+## Datasets
 
-  * `src/slotar` is **fail-fast only for programmer-level contract violations** (raises `DataContractError`, e.g. shape mismatch, negative mass, NaN/Inf, invalid lambda/kernel shape).
-  * In `batched_uot_solve`, per-item data degeneracies are **batch-isolated** via `uot_status` (`ERR_UOT_EMPTY_MASS_SOURCE`, `ERR_UOT_EMPTY_MASS_TARGET`, `ERR_UOT_EMPTY_SUPPORT`, `ERR_UOT_NUMERICAL`) and NaN-padded micro metrics.
-  * `tasks/*` pipelines map `uot_status -> bypass_reason`, bypass non-`ok` rows, and write explicit NA + audit fields.
-* Drift is **risk flagging only**. Drift vector estimation is never performed inside the library.
+- `Gastric cancer IMC longitudinal cohort (multi-ROI, pre/post)`
+## README Maintenance
+
+`README.md` is generated from `project.yaml` and `docs/readme.template.md`.
+<!-- AVCP:README:END -->

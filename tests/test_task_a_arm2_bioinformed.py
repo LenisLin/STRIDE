@@ -171,13 +171,13 @@ def test_directional_unmatched_summary_preserves_direction_roles() -> None:
         & (summary["proto_id"].astype(int) == 0)
     ].iloc[0]
     assert tc_pt_proto0["direction_role"] == "primary_anchor"
-    assert np.isclose(tc_pt_proto0["destroy_share"], 0.75)
-    assert np.isclose(tc_pt_proto0["birth_share"], 1.0 / 3.0)
-    assert np.isclose(tc_pt_proto0["destroy_minus_birth_share"], 0.75 - (1.0 / 3.0))
+    assert np.isclose(tc_pt_proto0["source_depletion_prone_share"], 0.75)
+    assert np.isclose(tc_pt_proto0["target_emergence_prone_share"], 1.0 / 3.0)
+    assert np.isclose(tc_pt_proto0["depletion_minus_emergence"], 0.75 - (1.0 / 3.0))
 
     pt_tc_proto1 = summary.loc[
         (summary["pair_type"].astype(str) == "PT->TC")
         & (summary["proto_id"].astype(int) == 1)
     ].iloc[0]
     assert pt_tc_proto1["direction_role"] == "audit_only"
-    assert np.isclose(pt_tc_proto1["destroy_gt_birth_patient_prop"], 1.0)
+    assert np.isclose(pt_tc_proto1["source_depletion_gt_emergence_patient_prop"], 1.0)
