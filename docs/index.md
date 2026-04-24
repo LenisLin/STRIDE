@@ -1,8 +1,8 @@
 # Documentation Index
 
 STRIDE is the live project and scientific name for the repository. This docs
-root separates the canonical live docs from task-specific notes, maintenance
-memory, and archival history.
+root separates canonical method docs, task-specific notes, and maintenance
+memory.
 
 `src/stride/` now hosts the live first-pass reusable-core implementation
 surface. Broader standalone bridge and recurrence estimators remain explicitly
@@ -11,6 +11,7 @@ deferred.
 ## Canonical/Core Docs
 
 - [Repository README](../README.md)
+- [STRIDE Design Freeze](stride_design_freeze.md)
 - [Method Overview](method_overview.md)
 - [Architecture](architecture.md)
 - [Package Layout](package_layout.md)
@@ -29,33 +30,54 @@ Use these files for the active repository story and normative STRIDE contracts:
 - the domain-stratified bag-of-FOV observation layer and OT/Sinkhorn boundary,
 - the rule that domain is an observation-layer surface rather than state
   identity,
-- the boundary between `src/stride/`, `src/slotar/`, `tasks/`, and `history/`.
+- the boundary between reusable `src/stride/` code and task-owned `tasks/` workflows.
+
+For ambiguities, use this source-of-truth order:
+
+1. [STRIDE Design Freeze](stride_design_freeze.md)
+2. [Decisions](decisions.md), [API Specifications](api_specs.md),
+   [Data Contracts](data_contracts.md), [Overall Validation Plan](overall_validation_plan.md),
+   and [Constraints](constraints.md)
+3. [Migration Status](state.md)
+4. [Task A Rewiring Plan](task_A_rewiring_plan.md)
+5. [Task A Spec](task_A_spec.md) for the live Task A specification
+6. [Task A Block 3 Redesign Alignment](task_A_block3_redesign_v1_1.md) for the
+   adopted Block 3 alignment within Task A
+7. [Task A Results Memo](task_A_result.md) and
+   [Task A Operations README](../tasks/task_A/README.md) as derived Task A
+   result/operational docs, including the Block 0-2 results memo and the
+   current rerun runbook
+8. Task-local operational docs under `tasks/` as execution companions
 
 ## Task Docs
 
-- [Task A Spec](task_A_spec.md) is the sole live scientific Task A document.
+- [Task A Rewiring Plan](task_A_rewiring_plan.md) freezes how Task A should be
+  rewired onto full STRIDE.
+- [Task A Spec](task_A_spec.md) is the live Task A specification.
+- [Task A Block 3 Redesign Alignment](task_A_block3_redesign_v1_1.md) records
+  the adopted Block 3 redesign and contract repairs.
+- [Task A Results Memo](task_A_result.md) records the Task A result layer
+  through Block 2.
 - [Task A Operations README](../tasks/task_A/README.md) is the operational
-  companion for Task A.
+  companion for Block 0-2 workflows and the internal Block 3 rebuild surface.
 - [Task B Background Note](task_B_spec.md) and
   [Task B TONIC Audit](task_B_tonic_data_ecosystem_audit.md) remain
   task-specific background only.
 - [Task C Background Note](task_C_spec.md) and
-  [Task D Background Note](task_D_spec.md) remain bounded historical/task
-  context only.
+  [Task D Background Note](task_D_spec.md) are bounded task notes.
 
-Task docs narrow or operationalize the method for one task. They are not the
-canonical core-package specification.
+Task docs narrow or operationalize the method for one task. They do not
+override the canonical full-STRIDE design freeze.
 
-## Archive/History
+## Agent Collaboration
 
-- [History Index](../history/docs/index.md)
-- `history/docs/` preserves archived legacy specs, pre-refactor proposals, and
-  task-history notes.
-- Historical code has been moved out of the working tree and is no longer part
-  of the in-tree archive.
+- [Repository Agent Protocol](../AGENTS.md)
+- [Agent Playbooks](agent/README.md)
+- [Task A Agent Protocol](../tasks/task_A/AGENTS.md)
 
-Archived material is retained for interpretation of earlier repository states.
-It is not part of the live installable surface.
+These files define how coding agents should navigate the repository, verify
+changes, and route Task A work without changing the scientific source-of-truth
+order.
 
 ## Maintenance Docs
 

@@ -4,6 +4,11 @@ STRIDE is the live project and scientific name for the repository. It is a
 longitudinal spatial remodeling analysis framework/package centered on
 patient-level open remodeling relations rather than a transport-first ontology.
 
+The canonical full-method definition is frozen in
+`docs/stride_design_freeze.md`. The live implementation exposes the canonical
+`stride` first-pass fit path and Task A operational workflows for Block 0-2 and
+the internal Block 3 rebuild surface.
+
 ## What STRIDE Represents
 
 For patient `p`, the canonical scientific object is `(T_p, e_p)` with
@@ -66,31 +71,31 @@ stratification.
   vectors -> k-means shared community states.
 - The neighborhood size `k` is user-configurable; the documented first-pass
   default is `20`.
-- Domain is not part of canonical state identity.
-- Domain or compartment labels act only as observation-layer stratification,
-  grouped comparison, bridge input grouping, covariates, or analysis surfaces.
-- Docs and analyses must not encode domain into the state basis and then
-  condition on domain again, because that double counts the same structure.
-- Domain labels do not define state geometry or the axes of `A_p`, `d_p`, and
-  `e_p`.
+- Canonical state identity is defined by the shared `K`-state basis.
+- Domain or compartment labels act as observation-layer stratification, grouped
+  comparison, bridge input grouping, covariates, or analysis surfaces.
+- Docs and analyses keep state construction and domain stratification as
+  separate modeling layers.
+- State geometry and the axes of `A_p`, `d_p`, and `e_p` are defined on the
+  shared `K`-state basis.
 - If domain labels are unavailable, analyses may fall back to one declared
   domain class.
 
 ## Task A Boundary
 
-Task A remains the current bounded validation task. It uses a single-timepoint
-ordered tissue-domain proxy, not full longitudinal proof, and it does not
-redefine the global STRIDE object.
+Task A is the current bounded validation task. It uses a single-timepoint
+ordered tissue-domain surface for Task A validation. The Task A rewiring freeze
+lives in `docs/task_A_rewiring_plan.md`; Block 0-2 and the internal Block 3
+rebuild are documented in the Task A operational surfaces.
 
 ## Current Architecture Status
 
-- `src/stride/` is the canonical future task-insensitive core package
-  skeleton.
-- `src/slotar/` is the current transitional compatibility and implementation
-  namespace.
+- `src/stride/` is the task-insensitive core package and live first-pass
+  implementation surface.
 - `tasks/` owns task-specific workflows, benchmark code, and operational
   documentation.
-- `history/` is archival only and is not part of the live installable surface.
+- `tasks/task_A/` owns Task A Block 0-2 workflows and the internal Block 3
+  rebuild package.
 
 ## Documentation Map
 
@@ -104,6 +109,7 @@ redefine the global STRIDE object.
 
 ### Canonical project specifications
 
+- `docs/stride_design_freeze.md`
 - `docs/state.md`
 - `docs/decisions.md`
 - `docs/api_specs.md`
@@ -111,26 +117,49 @@ redefine the global STRIDE object.
 - `docs/overall_validation_plan.md`
 - `docs/constraints.md`
 
-### Task and archive surfaces
+### Task surfaces
 
-- `docs/task_A_spec.md` is the sole live scientific Task A document.
-- `tasks/task_A/README.md` is the Task A operational companion.
+- `docs/task_A_rewiring_plan.md` freezes how Task A maps onto full STRIDE.
+- `docs/task_A_spec.md` is the live Task A specification.
+- `docs/task_A_block3_redesign_v1_1.md` records the adopted Block 3 redesign
+  alignment and is subordinate to `docs/task_A_spec.md`.
+- `docs/task_A_result.md` is the Task A results memo through Block 2.
+- `tasks/task_A/README.md` is the Task A operational companion for Block 0-2
+  workflows and the internal Block 3 rebuild surface.
 - `docs/task_B_spec.md`, `docs/task_C_spec.md`, and `docs/task_D_spec.md`
-  remain bounded task/background notes only.
-- `history/docs/index.md` is the in-tree archive-docs entrypoint.
-- Historical code is archived outside the repo working tree.
+  are bounded task/background notes.
+
+### Source-of-truth order
+
+1. `docs/stride_design_freeze.md`
+2. `docs/decisions.md`, `docs/api_specs.md`, `docs/data_contracts.md`,
+   `docs/overall_validation_plan.md`, `docs/constraints.md`
+3. `docs/state.md`
+4. `docs/task_A_rewiring_plan.md`
+5. `docs/task_A_spec.md`
+6. `docs/task_A_block3_redesign_v1_1.md` for live Task A Block 3 alignment
+7. `docs/task_A_result.md` and `tasks/task_A/README.md` as derived Task A
+   result/operational docs
+8. Task-local operational docs under `tasks/` as execution companions
 
 ### Repository layout
 
 ```text
 docs/                    # active canonical and maintenance docs
-history/docs/            # archived documentation
 src/stride/              # canonical future core skeleton
-src/slotar/              # transitional compatibility namespace
 tasks/                   # task-specific workflows, docs, and benchmarks
 scripts/dev/             # maintenance tooling
 tests/                   # verification suite
 ```
+
+## Agent Collaboration
+
+- `AGENTS.md` is the repository-level collaboration protocol for coding agents.
+- `docs/agent/README.md` indexes repo-local playbooks for doc sync,
+  verification, and Task A Block 3 work.
+- `tasks/task_A/AGENTS.md` is the first detailed task-level trial surface.
+- These files route work to the existing scientific authority chain; they do
+  not replace `docs/*.md`.
 
 ## Minimal Setup
 
@@ -143,8 +172,6 @@ python scripts/dev/generate_readme.py --check
 ## Project At A Glance
 
 - **Project:** `{{ title }}`
-- **Python distribution:** `{{ name }}` (retained during migration)
-- **Core package direction:** `stride` target core + `slotar` transitional compatibility layer
 - **Domain:** {{ domain }}
 - **Stage:** {{ stage }}
 - **Owner:** {{ owner }}

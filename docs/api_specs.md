@@ -1,11 +1,8 @@
 # API Specifications
 
 This file defines the current first-pass method-facing specification for
-STRIDE. The contract is architecture-first: `src/stride/` is the canonical
-reusable-core direction, while `slotar.*` references below denote transitional
-implementation surfaces during migration. The narrow first-pass `stride` API
-already realizes the stable surfaces described here; broader estimator
-completeness remains a separate question.
+STRIDE. The contract is architecture-first: `src/stride/` is the reusable core
+package surface, and broader estimator completeness remains a separate question.
 
 ## 1. Canonical Method Objects
 
@@ -165,13 +162,13 @@ task-local, but they must still declare the ordering used for analysis.
 
 The state/domain boundary is part of the API contract:
 
-- the shared `K`-state basis excludes domain identity,
+- the shared `K`-state basis defines state identity,
 - domain labels may stratify observation comparison, grouped discrepancies, and
   bridge input grouping,
-- callers must not encode domain in the basis and then condition on domain
-  again,
-- domain labels do not define state geometry or the axes of `A_p`, `d_p`, and
-  `e_p`.
+- callers keep state construction and domain stratification as separate
+  modeling layers,
+- state geometry and the axes of `A_p`, `d_p`, and `e_p` are defined on the
+  shared `K`-state basis.
 
 ### 2.2 Required quantitative inputs
 
@@ -296,13 +293,11 @@ The current implementation locations for the official route are mainly:
 - `stride.data.longitudinal` and `stride.api.dataset` for longitudinal input
   validation and canonical-field normalization,
 - `stride.observation` for observation-layer cloud comparison,
-- `stride.api.fit` and `stride.outputs.fit_result` for the current narrow
-  observation-to-patient bridge path,
+- `stride.api.fit`, `stride.workflows.fit_stride`, and
+  `stride.outputs.fit_result` for the canonical full STRIDE fit surface,
 - `stride.outputs.uncertainty` for bootstrap uncertainty over realized bridge
   outputs.
 
-`slotar.*` remains available as a transitional wrapper/compatibility layer
-around parts of that live first-pass route.
 
 ### 5.2 Custom route
 
@@ -315,24 +310,11 @@ A custom route is allowed only if it ends in the same contracts:
 - domain handling that does not redefine state identity,
 - a compatible path to patient-level `(A_p, d_p, e_p)`.
 
-## 6. Target Architecture Areas Versus Current Implementation Surfaces
+## 6. Live API Surface
 
-The canonical architecture direction is `src/stride/`. Much of the current
-working implementation still lives under `slotar.*`. Treat the table below as a
-migration map, not as a promise that every `stride.*` area is already a stable
-public API.
+The live reusable API surface is organized under `stride.*`.
 
-| Design area | Current implementation surface | Target architecture area | Status |
-|---|---|---|
-| top-level export story | `slotar` | `stride` | transition in progress |
-| shared basis construction | `slotar.state_space` | `stride.basis`, `stride.api.basis` | live first-pass implementation present |
-| observation-layer comparison | `slotar.observation` | `stride.observation` | live first-pass implementation present |
-| patient-level relation assembly | `stride.api.fit`, `slotar.bridge`, `slotar.patient` | `stride.latent`, `stride.api.fit`, `stride.outputs` | live first-pass implementation present; broader standalone estimator still deferred |
-| cohort recurrence | `slotar.recurrence` | `stride.latent.recurrence`, `stride.outputs` | deferred estimator namespace present |
-| validation and longitudinal input checking | `slotar.validation`, `slotar.io.longitudinal` | `stride.data`, `stride.types` | live first-pass implementation present |
-| compatibility/adapters | `slotar.compat.*` and shim modules | `stride.adapters` | transition only |
-
-The conservative stable first-pass public tier is:
+Stable first-pass public surfaces are:
 
 - package root `stride`,
 - `stride.api.dataset.DatasetHandle`,
@@ -340,125 +322,36 @@ The conservative stable first-pass public tier is:
 - `stride.api.fit.fit_stride(...)`,
 - `stride.api.fit.build_patient_relation(...)`,
 - result contracts in `stride.outputs.fit_result`,
-- uncertainty contracts in `stride.outputs.uncertainty`.
+- uncertainty contracts in `stride.outputs.uncertainty`,
+- observation-layer helpers in `stride.observation` including
+  `match_observation_clouds(...)`, `build_observation_kernels(...)`,
+  `calibrate_match_penalty(...)`, and `compute_active_state_support(...)`.
 
-The current implementation entrypoints that realize parts of this contract
-include:
+Implementation namespaces that realize the current first-pass contract include:
 
-- `BasisSpec` in `stride.api.basis`,
-- `DatasetHandle` in `stride.api.dataset`,
-- `fit_stride(...)` and `build_patient_relation(...)` in `stride.api.fit`,
-- `PatientBridgeResult` and `STRIDEFitResult` in `stride.outputs.fit_result`,
-- `PatientBootstrapConfig` and `STRIDEBootstrapUncertaintyResult` in
-  `stride.outputs.uncertainty`,
-- `build_local_state_features(...)` and `learn_shared_state_axis(...)` in
-  `stride.basis`,
-- `match_observation_clouds(...)`, `build_observation_kernels(...)`,
-  `calibrate_match_penalty(...)`, and `compute_active_state_support(...)` in
-  `stride.observation`,
-- `validate_longitudinal_adata(...)` in `stride.data.longitudinal`,
-- `slotar.*` wrappers only where migration compatibility still requires them.
+- `stride.basis` for shared state-basis construction,
+- `stride.data.longitudinal` for longitudinal input validation and
+  canonical-field normalization,
+- `stride.observation` for observation-layer cloud comparison,
+- `stride.workflows.fit_stride` for the canonical fit workflow,
+- `stride.latent.recurrence` for the conservative first-pass recurrence
+  estimator.
 
-Important current boundary:
+Current fit boundary:
 
-- the implementation locations above do not redefine the canonical
-  architecture story,
-- `fit_stride(...)` is the current implemented narrow observation-to-patient
-  bridge path,
-- `build_patient_relation(...)` is a canonical assembly surface for already
-  constructed patient-level arrays,
-- `bridge_observation_matches(...)` is a reserved canonical bridge estimator,
-  not yet the implemented patient-level estimation algorithm,
-- `estimate_recurrence(...)` in `stride.latent.recurrence` is the canonical
-  recurrence estimator namespace, but it currently returns an explicit deferred
-  result rather than a finalized family estimator.
+- `fit_stride(...)` returns patient-level relations together with an explicit
+  cohort recurrence layer.
+- `build_patient_relation(...)` assembles already constructed patient-level
+  arrays into the canonical patient relation object.
+- `bridge_observation_matches(...)` is the reserved canonical bridge-estimator
+  namespace.
+- `estimate_recurrence(...)` currently implements a conservative family-template
+  estimator with explicit deferred status when support is insufficient.
 
-## 7. Backend, Compatibility, And Legacy Surfaces
+## 7. Backend Numerical Surfaces
 
-The following surfaces remain importable, but they are not the canonical public
-method interface.
-
-### 7.1 Backend-only surface
-
-- `slotar.backends.ot_sinkhorn` contains the numerical OT / Sinkhorn backend
-  used by the canonical observation layer and by compatibility shims.
-
-Backend-only functions may remain important implementation surfaces, including:
-
-- `batched_uot_solve(...)`,
-- `build_observation_kernels(...)`,
-- `calibrate_match_penalty(...)`,
-- `compute_active_state_support(...)`.
-
-These are backend or compatibility solver surfaces, not primary biological
-interfaces.
-
-### 7.2 Compatibility wrappers and shim paths
-
-| Surface | Current role | Status |
-|---|---|---|
-| `slotar.compat.*` | migration-only compatibility implementations | compatibility |
-| `slotar.representation` | top-level shim forwarding to `slotar.compat.representation` | compatibility shim |
-| `slotar.uot` | top-level shim forwarding to `slotar.compat.uot` | compatibility shim |
-| `slotar.contracts` | top-level shim forwarding to `slotar.compat.contracts` | compatibility shim |
-| `slotar.uq` | top-level shim forwarding to `slotar.compat.uq` | compatibility shim |
-| `slotar.utils` | top-level shim forwarding to `slotar.compat.utils` | compatibility shim |
-| `slotar.io.bridge` | top-level shim forwarding to `slotar.compat.io.bridge` | compatibility shim |
-| `slotar.drift` | top-level shim forwarding to `slotar.compat.drift` | compatibility shim |
-| `slotar.exceptions` | top-level shim forwarding to `slotar.compat.exceptions` | compatibility shim |
-
-The current compatibility entrypoints that may still appear in code or older
-docs include:
-
-- `build_community_features(...)`,
-- `learn_global_prototypes(...)`,
-- `batched_uot_solve(...)`,
-- `precompute_logKernels(...)`,
-- `calibrate_joint_lambda(...)`,
-- `bootstrap_single_roi(...)`,
-- `compute_active_mask(...)`,
-- `flag_drift(...)`.
-
-The most important compatibility rule is:
-
-- these compatibility entrypoints are not re-exported from the target
-  architecture story and should be treated as transitional implementation
-  surfaces,
-- `batched_uot_solve(...)` emits observation-layer details and diagnostics,
-  not the final patient-level `(A_p, d_p, e_p)` contract.
-
-## 8. Observation-Layer Detail Boundary
-
-The current implementation container for the observation-layer result surface is
-`slotar.observation.ObservationMatchResult`.
-
-Important output boundary:
-
-- it is an observation-layer container, not a patient-level biological object,
-- it may expose observation-layer compatibility diagnostics internally during
-  migration,
-- when dense observation plans are returned, `matching_plan` is the preferred
-  canonical label on the observation result surface,
-- dense-plan aliases may still appear in backend or compatibility payloads
-  during migration.
-
-These details may inform the bridge, but they do not replace the patient-level
-contract.
-
-## 9. Legacy Output Boundary
-
-The current code still emits observation-layer compatibility diagnostics,
-regularization or control fields, and explicit fit-status metadata.
-
-These remain useful implementation diagnostics and migration surfaces, but they
-are not the target public method contract.
-
-## 10. Explicit Non-Claim Boundary
-
-These APIs define modeling interfaces and method objects. They do not, by
-themselves, imply:
-
-- lineage tracing,
-- exact physical transport truth,
-- exact one-to-one FOV matching,
-- unbiased whole-lesion reconstruction.
+Observation-layer OT/Sinkhorn helpers live behind `stride.observation` and
+`stride.adapters`. These functions provide numerical comparison support for the
+domain-stratified bag-of-FOV observation layer. Dense transport plans and solver
+diagnostics remain backend payloads unless a task contract explicitly uses them,
+as in the Task A Block 3B baseline-comparison surface.

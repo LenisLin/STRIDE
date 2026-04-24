@@ -1,11 +1,8 @@
 # Data Contracts
 
-This file defines the target data contracts for STRIDE. The contracts are
-package-neutral at the design level. Where `slotar.*` is named below, it refers
-to the current implementation surface during migration rather than the
-canonical future architecture. The live first-pass canonical implementation now
-also exists under `stride.*`. Current task outputs and transport-era fields may
-lag these contracts; their migration status is documented explicitly below.
+This file defines the live data and artifact contracts for STRIDE. The
+contracts are package-neutral at the design level and use canonical STRIDE
+object semantics.
 
 ## 1. Scope and Notation
 
@@ -28,9 +25,9 @@ The canonical hierarchy is:
 
 ## 2. Canonical Names Versus Accepted Aliases
 
-Canonical STRIDE names should be preferred in docs, new code, and new exports.
-The current longitudinal validator still accepts several implementation-era
-aliases during migration.
+Canonical STRIDE names are used in docs, new code, and new exports. The
+current longitudinal validator accepts the aliases listed below and normalizes
+them before canonical fitting.
 
 ### 2.1 Canonical names
 
@@ -51,15 +48,13 @@ Current domain-label note:
 - the design-level observation-layer metadata concept is `domain_label`,
 - the official AnnData route currently realizes that metadata through the
   concrete field `compartment`,
-- labels such as `TC`, `IM`, and `PT` are observation-layer strata, not part of
-  state identity.
+- labels such as `TC`, `IM`, and `PT` are observation-layer strata.
 
 ### 2.2 Accepted aliases in the current longitudinal validator
 
-The current implementation validator, `slotar.io.longitudinal`, accepts the
-following alias sets:
+The current implementation validator accepts the following alias sets:
 
-| Contract item | Canonical name | Accepted alias set during migration |
+| Contract item | Canonical name | Accepted alias set |
 |---|---|---|
 | timepoint identifier | `timepoint` | `timepoint`, `timepoint_id` |
 | FOV/ROI identifier | `fov_id` | `fov_id`, `roi_id` |
@@ -68,11 +63,10 @@ following alias sets:
 | shared-basis centroids | `state_centroids` | `state_centroids`, `prototype_centroids` |
 | cost scaling object | `cost_scale` | `cost_scale`, `s_C`, `global_cost_scale` |
 
-Migration rule:
+Normalization rule:
 
-- accepted aliases are compatibility behavior, not equal-status canonical names,
-- canonical builders should write canonical names first; alias fields are added
-  only by compatibility wrappers when older task code still needs them.
+- validators normalize accepted aliases into canonical names before fitting,
+- canonical builders write canonical names first.
 
 ## 3. Identifier And Official-Route Input Contract
 
@@ -104,11 +98,11 @@ The state/domain split is also part of the input contract:
 
 - domain labels stratify the observation layer,
 - domain labels organize grouped discrepancies and bridge input grouping,
-- the shared `K`-state basis excludes domain identity,
-- callers must not encode domain into the basis and then condition on domain
-  again,
-- domain labels do not define state geometry or the patient-level axes of
-  `A_p`, `d_p`, and `e_p`.
+- the shared `K`-state basis defines state identity,
+- callers keep state construction and domain stratification as separate
+  modeling layers,
+- state geometry and the patient-level axes of `A_p`, `d_p`, and `e_p` are
+  defined on the shared `K`-state basis.
 
 ### 3.1 Official longitudinal AnnData route
 
@@ -148,13 +142,11 @@ Current first-pass canonical route:
   neighborhood subtype composition used during shared community-state
   construction.
 
-Current migration note:
+Implementation note:
 
-- current `slotar.state_space` and `slotar.io.longitudinal` implementation
-  surfaces write canonical keys first,
-- compatibility wrappers may still materialize `community_features`,
-  `proto_id`, `prototype_centroids`, or `s_C` when older task code requires
-  them.
+- implementation surfaces write canonical keys first,
+- task wrappers may materialize accepted aliases when a task-level input route
+  declares them.
 
 ## 4. Observation-Layer Contract
 
@@ -226,10 +218,8 @@ The current canonical first-pass declaration is:
 - no ROI/FOV weighting by tissue amount is applied in the current first pass,
 - `mass` remains part of the contract as a future-extensible field.
 
-Current transitional implementations may still expose legacy `count`,
-`density`, or `proportion` semantics. Those remain implementation or
-compatibility surfaces during migration and do not redefine the current
-canonical first-pass contract.
+Task-specific `count`, `density`, or `proportion` fields must be mapped into
+the canonical first-pass observation contract before reusable fitting.
 
 ### 4.5 Optional observation-layer priors
 
@@ -294,9 +284,22 @@ Additional scale rules:
 
 ### 5.3 Patient relation container and audit payload
 
-The current implementation container surface is
-`slotar.patient.PatientRelation`, optionally accompanied by
-`slotar.patient.PatientRelationAudit`.
+The current canonical implementation container surface is
+`stride.latent.operators.PatientRelation`, optionally accompanied by
+`stride.latent.operators.PatientRelationAudit`.
+
+The current fit-result containers that carry these patient objects through the
+workflow/API surface are:
+
+- `stride.outputs.fit_result.PatientBridgeResult`,
+- `stride.outputs.fit_result.STRIDEFitResult`.
+
+Implementation-tier rule:
+
+- canonical full-method workflow results report
+  `implementation_tier="canonical_full"`,
+- assembled explicit array payloads may report
+  `implementation_tier="assembled_relation"` where appropriate.
 
 The minimum patient-audit surface should be able to report:
 
@@ -371,15 +374,21 @@ The minimal cohort-level record should also be able to represent:
 | Field | Meaning |
 |---|---|
 | `patient_ids` | patients included in the recurrence pass |
+| `used_patient_ids` | patients with realized relations actually used by the current estimator |
+| `recurrence_unit` | recurrence unit, currently `patient` |
 | `families` | family summaries returned, possibly empty |
+| `parameters` | recurrence-space parameters such as basis dimension and loadings |
+| `embeddings` | optional patient-level recurrence coordinates with explicit fit status |
 | `fit_status` | overall recurrence-layer status |
 | `metadata` | cohort-level recurrence metadata |
 
-Current deferred-status rule:
+Current first-pass recurrence rule:
 
-- a canonical recurrence surface may return `fit_status="deferred"` with no
-  families rather than fabricating family assignments before the final estimator
-  exists.
+- the canonical recurrence surface now supports a conservative first-pass
+  family-template estimator,
+- it may still return `fit_status="deferred"` with no families when patient
+  support is insufficient rather than fabricating assignments beyond the
+  supported evidence.
 
 ## 7. Audit And Failure Contract
 
@@ -390,45 +399,20 @@ The data contract requires explicit auditability:
 - explicit distinction between missing biological support and engineering
   failure,
 - explicit declaration of uncertainty mode and bridge mode,
-- explicit deferred status where a canonical namespace exists but its final
-  estimator is not yet implemented.
+- explicit deferred status where patient or cohort support remains
+  insufficient,
+- explicit distinction between canonical full-method and approximate/proxy
+  workflow tiers.
 
-Current observation-layer implementations may continue to expose explicit
-fit-status fields. Those remain compatibility diagnostics until a future cleanup
-retires them.
+Observation-layer implementations expose explicit fit-status fields as audit
+payloads.
 
-## 8. Legacy Compatibility And Migration Notes
+## 8. Explicit Claim Boundary
 
-Current code and task outputs still expose observation-layer compatibility
-surfaces from earlier transport-centered implementations. They are not the
-target patient-level contract. Their relationship to the current canonical
-contract is only partial:
+These data contracts support longitudinal remodeling analysis with explicit
+claim boundaries for:
 
-| Compatibility surface class | Current meaning | Relation to canonical contract | Migration note |
-|---|---|---|---|
-| observation-layer transport and unmatched summaries | solver-level comparison diagnostics | not patient-level remodeling objects | may remain bridge diagnostics only |
-| thresholding, labeling, or regularization controls | observation-layer configuration or prior state | not biological outputs | keep as internal controls during migration |
-| observation-layer fit-status fields | compatibility failure or audit metadata | audit only | remains useful until code refactor |
-| dense observation-layer plan payloads and aliases | observation-layer matching detail | not a patient-level or cohort-level contract object | do not export as canonical method objects |
-
-Migration rule:
-
-- do not claim a one-to-one mapping from compatibility surfaces to
-  `(A_p, d_p, e_p)` unless a future implementation adds that mapping
-  explicitly,
-- treat `slotar.compat.*` and the temporary top-level shim modules
-  (`slotar.uot`, `slotar.representation`, `slotar.contracts`, `slotar.uq`,
-  `slotar.utils`, `slotar.io.bridge`, `slotar.drift`, and
-  `slotar.exceptions`) as migration residue rather than canonical interfaces,
-- treat `stride` as the target architecture direction even when the current
-  working implementation still lives under `slotar.*`.
-
-## 9. Explicit Non-Claim Boundary
-
-These data contracts support longitudinal remodeling analysis. They do not
-support automatic claims of:
-
-- lineage tracing,
-- exact physical transport truth,
-- exact one-to-one FOV matching,
-- unbiased whole-lesion dynamics.
+- lineage-tracing interpretation,
+- physical transport interpretation,
+- FOV matching interpretation,
+- whole-lesion dynamics interpretation.
