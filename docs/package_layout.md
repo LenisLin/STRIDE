@@ -1,17 +1,14 @@
 # Package Layout
 
-This file records the current repository structure and the intended placement of
-active versus archival documentation.
+This file records the live repository structure for STRIDE.
 
 | Path | Status | Role |
 |---|---|---|
 | `docs/` | active | canonical project docs plus maintenance docs |
 | `src/stride/` | active core package | canonical task-insensitive core package and live first-pass implementation surface |
-| `src/slotar/` | transitional | compatibility namespace and migration bridge |
 | `tasks/` | active | task-specific workflows, operational docs, and benchmark code |
 | `tasks/_shared/benchmarks/` | active | shared benchmark helpers |
-| `history/docs/` | archive | historical documents and legacy task notes |
-| `src/history/` | not live | do not present as an active package surface |
+| `tasks/task_A/` | active task surface | Task A Block 0-2 workflows and internal Block 3 rebuild package |
 
 ## Placement Rules
 
@@ -20,16 +17,15 @@ active versus archival documentation.
   are task-owned.
 - Keep task-scoped background notes in `docs/` only when they are explicitly
   labeled as task-specific and are not presented as the core package spec.
-- Put historical documentation under `history/docs/`; keep historical code in a
-  repo-external archive.
-- Do not describe archived material as part of the current installable source
-  tree.
+- Keep generated or run-specific outputs under the relevant task output
+  directory with explicit manifests.
 
-## Current Repository Truth
+## Current Repository Reading
 
-- The live project identity is STRIDE.
-- The package/distribution name remains `slotar` during the current transition.
-- `stride` is the target reusable-core architecture and the live first-pass
-  core-package surface.
-- `slotar` remains the compatibility bridge to that target.
-- Historical code is no longer kept in-tree.
+- `src/stride/` is the reusable core package surface.
+- `tasks/task_A/` owns the current Task A runtime, contracts, and internal
+  Block 3 rebuild package.
+- `tasks/_shared/benchmarks/` contains shared benchmark helpers used by task
+  code.
+- `docs/` contains the canonical method contract, task specs, and maintenance
+  docs used by agents and developers.

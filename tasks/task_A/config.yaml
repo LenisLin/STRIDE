@@ -1,20 +1,47 @@
-# Canonical shared Task-A operator surface:
-# - supported enabled_arms: A1_baseline, A1_broken_reference, A2_cross_compartment, A3_uq_stress
-# - mixed count/density runs should declare data.mass_mode_by_arm explicitly
-# - legacy data.mass_mode remains a single-mode fallback for older one-surface runs
-task_name: "Task A: aligned operator surface"
+# Task A config surface for the rewritten mainline:
+# - prepare/stride_adapter consumes the Stage 0 and ordered-proxy settings below
+# - enabled_blocks is the block-local selection surface; it does not imply a shared runtime contract
+# - block-local outputs are written under the selected block run root
+task_name: "Task A: Stage 0 mapping and block-local bundles"
 
-enabled_arms:
-  - "A2_cross_compartment"
+enabled_blocks:
+  - "block1_continuity_backbone"
+
+ordered_proxy:
+  domains: ["TC", "IM", "PT"]
+  pair_families:
+    - name: "TC-IM"
+      source_domain: "TC"
+      target_domain: "IM"
+      claim_role: "confirmatory"
+      pair_types: ["TC->IM", "IM->TC"]
+    - name: "TC-PT"
+      source_domain: "TC"
+      target_domain: "PT"
+      claim_role: "confirmatory"
+      pair_types: ["TC->PT", "PT->TC"]
+    - name: "IM-PT"
+      source_domain: "IM"
+      target_domain: "PT"
+      claim_role: "audit_only"
+      pair_types: ["IM->PT", "PT->IM"]
+
+stage0:
+  stage0_h5ad: null
+  build_missing_basis: false
+  default_basis_neighbors: 20
+  default_geometry_neighbors: 5
+
+exports:
+  mapping_manifest_filename: "task_a_stride_mapping.json"
+  prepare_manifest_filename: "task_a_prepare_manifest.json"
+  core_fit_dry_run_filename: "task_a_core_fit_dry_run.csv"
+
+benchmarks:
+  default_n_patients: 6
+  default_seed: 0
 
 data:
-  mass_mode_by_arm:
-    A1_baseline: "density"
-    A1_broken_reference: "density"
-    A2_cross_compartment: "density"
-    A3_uq_stress: "density"
-  # Legacy single-mode fallback. Kept for older configs where every enabled arm
-  # shares the same locked mass semantics.
   mass_mode: "density"
   k_full: 25
 
@@ -26,16 +53,18 @@ uot_params:
   n_min_proto: 0.0
   tau_mode: "external_fixed_by_task"
 
-arm2:
+block0:
+  n_draws: 2
+  random_seed: 7
+  fixed_lambda_by_compartment:
+    TC: 1.0
+    IM: 1.5
+    PT: 2.0
+  fixed_tau_by_compartment:
+    TC: 0.5
+    IM: 0.75
+    PT: 1.0
+
+block1:
   target_alpha: 0.05
   lambda_grid: [0.05, 0.1, 0.5, 1.0, 2.0, 5.0, 10.0]
-
-# Optional Arm-3 overrides when A3_uq_stress is enabled.
-# pipeline.main(..., output_dir=...) uses output_dir as the Arm-3 result root.
-# arm3:
-#   block_size_units: 100.0
-#   lambda_grid: [0.05, 0.1, 0.5, 1.0, 2.0, 5.0, 10.0]
-#   target_alpha: 0.05
-#   tau_q: 0.5
-#   n_reps: 100
-#   rng_seed: 42

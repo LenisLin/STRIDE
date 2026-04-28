@@ -1,11 +1,8 @@
 # Data Contracts
 
-This file defines the target data contracts for STRIDE. The contracts are
-package-neutral at the design level. Where `slotar.*` is named below, it refers
-to the current implementation surface during migration rather than the
-canonical future architecture. The live first-pass canonical implementation now
-also exists under `stride.*`. Current task outputs and transport-era fields may
-lag these contracts; their migration status is documented explicitly below.
+This file defines the live data and artifact contracts for STRIDE. The
+contracts are package-neutral at the design level and use canonical STRIDE
+object semantics.
 
 ## 1. Scope and Notation
 
@@ -28,9 +25,9 @@ The canonical hierarchy is:
 
 ## 2. Canonical Names Versus Accepted Aliases
 
-Canonical STRIDE names should be preferred in docs, new code, and new exports.
-The current longitudinal validator still accepts several implementation-era
-aliases during migration.
+Canonical STRIDE names are used in docs, new code, and new exports. The
+current longitudinal validator accepts the aliases listed below and normalizes
+them before canonical fitting.
 
 ### 2.1 Canonical names
 
@@ -51,15 +48,13 @@ Current domain-label note:
 - the design-level observation-layer metadata concept is `domain_label`,
 - the official AnnData route currently realizes that metadata through the
   concrete field `compartment`,
-- labels such as `TC`, `IM`, and `PT` are observation-layer strata, not part of
-  state identity.
+- labels such as `TC`, `IM`, and `PT` are observation-layer strata.
 
 ### 2.2 Accepted aliases in the current longitudinal validator
 
-The current implementation validator, `slotar.io.longitudinal`, accepts the
-following alias sets:
+The current implementation validator accepts the following alias sets:
 
-| Contract item | Canonical name | Accepted alias set during migration |
+| Contract item | Canonical name | Accepted alias set |
 |---|---|---|
 | timepoint identifier | `timepoint` | `timepoint`, `timepoint_id` |
 | FOV/ROI identifier | `fov_id` | `fov_id`, `roi_id` |
@@ -68,11 +63,10 @@ following alias sets:
 | shared-basis centroids | `state_centroids` | `state_centroids`, `prototype_centroids` |
 | cost scaling object | `cost_scale` | `cost_scale`, `s_C`, `global_cost_scale` |
 
-Migration rule:
+Normalization rule:
 
-- accepted aliases are compatibility behavior, not equal-status canonical names,
-- canonical builders should write canonical names first; alias fields are added
-  only by compatibility wrappers when older task code still needs them.
+- validators normalize accepted aliases into canonical names before fitting,
+- canonical builders write canonical names first.
 
 ## 3. Identifier And Official-Route Input Contract
 
@@ -86,7 +80,7 @@ explicitly:
 | `timepoint_order` | timepoint | required logically | ordered relation used for analysis direction |
 | `fov_id` | FOV/ROI | required canonically | observation-layer unit key |
 | `roi_id` | FOV/ROI | accepted alias | modality-specific synonym when the observation unit is called an ROI |
-| `domain_label` | observation stratum | required at the design level for the domain-aware route | observation-layer tissue/domain metadata used for stratification, grouped discrepancy organization, and bridge input grouping |
+| `domain_label` | observation stratum | required at the design level for the domain-aware route | observation-layer tissue/domain metadata used for stratification, grouped discrepancy organization, and patient-relation input grouping |
 | `compartment` | observation stratum | required for the current AnnData official route | concrete AnnData field realizing design-level `domain_label` metadata |
 | `state_id` | shared basis | required | index on the shared `K`-state basis |
 | `mass_mode` | analysis | required | declared semantics for observation mass; current first-pass canonical value is `uniform` |
@@ -103,14 +97,41 @@ kind of task-local instantiation.
 The state/domain split is also part of the input contract:
 
 - domain labels stratify the observation layer,
-- domain labels organize grouped discrepancies and bridge input grouping,
-- the shared `K`-state basis excludes domain identity,
-- callers must not encode domain into the basis and then condition on domain
-  again,
-- domain labels do not define state geometry or the patient-level axes of
-  `A_p`, `d_p`, and `e_p`.
+- domain labels organize grouped discrepancies and patient-relation input
+  grouping,
+- the shared `K`-state basis defines state identity,
+- callers keep state construction and domain stratification as separate
+  modeling layers,
+- state geometry and the patient-level axes of `A_p`, `d_p`, and `e_p` are
+  defined on the shared `K`-state basis,
+- after task-layer source/target/domain resolution, the reusable core receives
+  resolved source/target observation evidence blocks and does not use domain as
+  a loss axis, state axis, relation axis, or recurrence axis.
 
-### 3.1 Official longitudinal AnnData route
+### 3.1 Source/target observation comparison plan
+
+The task layer must provide resolved ordered comparison metadata before calling
+the reusable estimator. The core receives this plan and the resolved
+source/target observation evidence blocks explicitly, then applies the same
+task-insensitive `fit_stride(...)` estimator to the resolved inputs.
+
+Each comparison record must be able to represent:
+
+| Field | Requirement | Meaning |
+|---|---|---|
+| `comparison_id` | required | stable key for the declared observation comparison |
+| `source_group` | required | ordered source-side observation group |
+| `target_group` | required | ordered target-side observation group |
+| `valid_domain_strata` | required when domain-stratified comparison is used | permitted source/target domain strata or domain mapping |
+| `mass_mode` | required | declared observation mass semantics for this comparison |
+| `patient_fov_linkage` | required | patient, source-side FOV, and target-side FOV membership used to build the empirical measures |
+
+The comparison plan declares which observation groups and domain strata are
+eligible for comparison. It does not redefine the shared `K`-state basis, the
+fitted patient-level object, or any core recurrence axis. The resolved plan is
+still recorded in provenance.
+
+### 3.2 Official longitudinal AnnData route
 
 For the current AnnData implementation route, the longitudinal validator
 requires or resolves:
@@ -148,13 +169,11 @@ Current first-pass canonical route:
   neighborhood subtype composition used during shared community-state
   construction.
 
-Current migration note:
+Implementation note:
 
-- current `slotar.state_space` and `slotar.io.longitudinal` implementation
-  surfaces write canonical keys first,
-- compatibility wrappers may still materialize `community_features`,
-  `proto_id`, `prototype_centroids`, or `s_C` when older task code requires
-  them.
+- implementation surfaces write canonical keys first,
+- task wrappers may materialize accepted aliases when a task-level input route
+  declares them.
 
 ## 4. Observation-Layer Contract
 
@@ -212,7 +231,16 @@ where:
 Contract boundary:
 
 - domain-stratified bag-of-FOV comparison is the canonical observation layer,
-- OT / Sinkhorn may compare these empirical measures,
+- UOT / Sinkhorn is the canonical v1 backend for the fixed, versioned,
+  auditable `D_obs^UOT-v1` operator comparing these empirical measures under
+  partial and uneven FOV coverage,
+- `L_obs_pair_raw = D_obs^UOT-v1(predicted target-side bag-of-FOV, observed target-side bag-of-FOV; C_norm)`,
+- `C_norm = C_raw / s_C`,
+- cost normalization, backend version, Sinkhorn/UOT status handling, and
+  observation diagnostics such as `D_pos/B_pos` belong to the observation-layer
+  provenance,
+- `D_pos/B_pos` are not biological `d/e` and are not independently weighted
+  loss components,
 - docs should not promote raw histogram collapse as the default canonical
   observation object,
 - docs should not leave the observation layer as an abstract placeholder `P`.
@@ -226,10 +254,8 @@ The current canonical first-pass declaration is:
 - no ROI/FOV weighting by tissue amount is applied in the current first pass,
 - `mass` remains part of the contract as a future-extensible field.
 
-Current transitional implementations may still expose legacy `count`,
-`density`, or `proportion` semantics. Those remain implementation or
-compatibility surfaces during migration and do not redefine the current
-canonical first-pass contract.
+Task-specific `count`, `density`, or `proportion` fields must be mapped into
+the canonical first-pass observation contract before reusable fitting.
 
 ### 4.5 Optional observation-layer priors
 
@@ -253,19 +279,33 @@ For each patient `p`, the canonical primary output is `(T_p, e_p)` where
 | Object | Shape | Contract semantics |
 |---|---|---|
 | `A_p` | `[K, K]` | patient-level continuity/remodeling operator on the shared `K`-state basis |
-| `d_p` | `[K]` | depletion tendency on the pre side |
-| `e_p` | `[K]` | post-side emergence |
+| `d_p` | `[K]` | source-side outgoing open tendency |
+| `e_p` | `[K]` | target-side incoming open-entry tendency |
 | `T_p` | conceptual block object | may be stored as `A_p` plus `d_p`; the contract is the same |
 
 Required properties:
 
 - `A_p`, `d_p`, and `e_p` are finite when the patient fit is valid,
-- all three are nonnegative,
-- `A_p` is row-substochastic, with `sum_j A_{p,ij} + d_{p,i} = 1`,
+- `A_p` and `d_p` satisfy source-side row accounting: each source row
+  `[A_{p,i,*}, d_{p,i}]` lies on a simplex, equivalently
+  `sum_j A_{p,ij} + d_{p,i} = 1`,
+- valid `e_p` is bounded in `[0,1]`,
 - `A_p` is not required to be diagonal,
 - `d_p` and `e_p` are not optional leftovers,
 - if a conditional kernel is documented, it must be a derived auxiliary object
   from `A_p` and `d_p`, not the canonical patient contract itself.
+
+Fitted-output reconstruction semantics:
+
+- `raw_post = q_minus @ A + e`,
+- `predicted_q_plus = normalize(raw_post)`,
+- for source-side FOV vectors,
+  `predicted_v_target = normalize(v_source @ A_p + e_p)`,
+- predicted target-side FOV vectors induce the predicted target-side
+  bag-of-FOV empirical measure used by `L_obs`,
+- `D_pos/B_pos` and other unmatched residual diagnostics are
+  observation-layer diagnostics, not fitted biological `d/e` and not
+  independently weighted fitted-output components.
 
 ### 5.2 Burden-scale auxiliary objects
 
@@ -283,8 +323,13 @@ Additional scale rules:
 - `q_p^- = mu_p^- / ||mu_p^-||_1`,
 - `q_p^+ = mu_p^+ / ||mu_p^+||_1`,
 - `mu_p^-` and `mu_p^+` are not canonical compositions,
+- `L_open = mean(d)+mean(e)` is a tendency-level open-channel objective cost
+  on bounded fitted `d_p` and `e_p`,
 - any documented `m_p^(d)` or `m_p^(e)` summaries live on the same
   pseudo-mass / burden scale as `mu_p^-` and `mu_p^+`,
+- burden-scale summaries such as `m_p^(d)` and `m_p^(e)` are derived
+  auxiliaries and should be interpreted on the declared pseudo-mass / burden
+  scale,
 - conservation is a soft burden-consistency anchor rather than literal
   physical conservation,
 - composition-level structure may remain interpretable when burden-level
@@ -294,9 +339,22 @@ Additional scale rules:
 
 ### 5.3 Patient relation container and audit payload
 
-The current implementation container surface is
-`slotar.patient.PatientRelation`, optionally accompanied by
-`slotar.patient.PatientRelationAudit`.
+The current canonical implementation container surface is
+`stride.latent.operators.PatientRelation`, optionally accompanied by
+`stride.latent.operators.PatientRelationAudit`.
+
+The current fit-result containers that carry these patient objects through the
+workflow/API surface are:
+
+- `stride.outputs.fit_result.PatientBridgeResult`,
+- `stride.outputs.fit_result.STRIDEFitResult`.
+
+Implementation-tier rule:
+
+- canonical full-method workflow results report
+  `implementation_tier="canonical_full"`,
+- assembled explicit array payloads may report
+  `implementation_tier="assembled_relation"` where appropriate.
 
 The minimum patient-audit surface should be able to report:
 
@@ -308,12 +366,12 @@ The minimum patient-audit surface should be able to report:
 | `n_pre_observations` | count of pre-side FOVs/ROIs used |
 | `n_post_observations` | count of post-side FOVs/ROIs used |
 | `observation_fit_status` | observation-layer status summary |
-| `bridge_status` | patient-assembly or bridge-estimation status |
+| `relation_fit_status` | patient-relation fit or assembly status |
 | `uncertainty_mode` | uncertainty route used, if any |
 | `metadata` | additional audit metadata |
 
 In the current first pass, uncertainty means bootstrap/sampling-variance
-uncertainty over realized bridge outputs rather than a hurdle or
+uncertainty over fitted patient relation outputs rather than a hurdle or
 measurement-error estimator.
 
 These audits do not replace the primary patient-level object. They remain
@@ -325,8 +383,10 @@ Derived summaries may include:
 
 - diagonal retention summaries from `diag(A_p)`,
 - off-diagonal remodeling summaries from `offdiag(A_p)`,
-- total depletion or state-specific depletion from `d_p`,
-- total emergence or state-specific emergence from `e_p`,
+- total or state-specific source-side outgoing open-tendency summaries from
+  `d_p`,
+- total or state-specific target-side incoming open-entry summaries from
+  `e_p`,
 - burden-scale summaries from `mu_p^-`, `mu_p^+`, `m_p^(d)`, or `m_p^(e)`,
 - derived composition summaries from `q_p^-` or `q_p^+`.
 
@@ -335,15 +395,17 @@ These summaries do not replace the primary object.
 ## 6. Cohort-Level Output Contract
 
 Cohort-level recurrence acts on patient-level objects. It does not act on
-pooled FOV vectors as the primary contract.
+pooled FOV vectors as the primary contract. Full-estimator v1 recurrence uses a
+single cohort consensus relation `R_bar = (A_bar, d_bar, e_bar)` and reports
+dispersion around that consensus.
 
 Any cohort-level recurrence output must report:
 
 - which patient-level objects were used,
 - the recurrence unit (`patient`),
-- support size per recurrence family or summary,
-- a family- or cohort-level summary defined on the same shared `K`-state basis,
-- dispersion or stability diagnostics,
+- patient support count for the consensus summary,
+- cohort consensus `A/d/e` defined on the same shared `K`-state basis,
+- dispersion around the consensus,
 - recurrence-layer fit status.
 
 ### 6.1 Current recurrence implementation containers
@@ -354,16 +416,16 @@ The current implementation recurrence container surface is:
 - `RecurrenceResult` for cohort-level recurrence output.
 
 If the recurrence layer produces family summaries, the minimal record should be
-able to represent:
+able to represent the v1 consensus summary through the compatibility container:
 
 | Field | Meaning |
 |---|---|
-| `family_id` | recurrence family key |
-| `template_A` | family-level relation template on `[K, K]` |
-| `template_d` | family-level depletion template on `[K]` |
-| `template_e` | family-level emergence template on `[K]` |
-| `support_n_patients` | number of patients supporting the family |
-| `within_family_dispersion` | recurrence compactness / stability summary |
+| `family_id` | compatibility key; v1 uses a single consensus summary |
+| `template_A` | cohort consensus relation template on `[K, K]` |
+| `template_d` | cohort consensus source-side outgoing open-tendency template on `[K]` |
+| `template_e` | cohort consensus target-side incoming open-entry template on `[K]` |
+| `support_n_patients` | number of patients supporting the consensus |
+| `within_family_dispersion` | dispersion around the consensus |
 | `fit_status` | explicit recurrence-layer status |
 
 The minimal cohort-level record should also be able to represent:
@@ -371,15 +433,24 @@ The minimal cohort-level record should also be able to represent:
 | Field | Meaning |
 |---|---|
 | `patient_ids` | patients included in the recurrence pass |
-| `families` | family summaries returned, possibly empty |
+| `used_patient_ids` | patients with realized relations actually used by the current estimator |
+| `recurrence_unit` | recurrence unit, currently `patient` |
+| `families` | compatibility container; v1 semantics are empty/deferred or one consensus summary |
+| `parameters` | recurrence-space parameters such as basis dimension and loadings |
+| `embeddings` | optional patient-level recurrence coordinates with explicit fit status |
 | `fit_status` | overall recurrence-layer status |
 | `metadata` | cohort-level recurrence metadata |
 
-Current deferred-status rule:
+Current first-pass recurrence rule:
 
-- a canonical recurrence surface may return `fit_status="deferred"` with no
-  families rather than fabricating family assignments before the final estimator
-  exists.
+- the canonical recurrence surface supports a conservative first-pass
+  consensus-template estimator,
+- the `families` field may remain for container compatibility, but live v1
+  semantics are a single consensus family/summary rather than automatic
+  discovery of multiple remodeling families,
+- it may still return `fit_status="deferred"` with no consensus summary when
+  patient support is insufficient rather than fabricating assignments beyond
+  the supported evidence.
 
 ## 7. Audit And Failure Contract
 
@@ -389,46 +460,22 @@ The data contract requires explicit auditability:
 - no silent removal of patients or FOVs from outputs without an audit trail,
 - explicit distinction between missing biological support and engineering
   failure,
-- explicit declaration of uncertainty mode and bridge mode,
-- explicit deferred status where a canonical namespace exists but its final
-  estimator is not yet implemented.
+- explicit declaration of uncertainty mode and patient-relation fit or
+  assembly mode,
+- explicit deferred status where patient or cohort support remains
+  insufficient,
+- explicit distinction between canonical full-method and approximate/proxy
+  workflow tiers.
 
-Current observation-layer implementations may continue to expose explicit
-fit-status fields. Those remain compatibility diagnostics until a future cleanup
-retires them.
+Observation-layer implementations expose explicit fit-status fields as audit
+payloads.
 
-## 8. Legacy Compatibility And Migration Notes
+## 8. Explicit Claim Boundary
 
-Current code and task outputs still expose observation-layer compatibility
-surfaces from earlier transport-centered implementations. They are not the
-target patient-level contract. Their relationship to the current canonical
-contract is only partial:
+These data contracts support longitudinal remodeling analysis with explicit
+claim boundaries for:
 
-| Compatibility surface class | Current meaning | Relation to canonical contract | Migration note |
-|---|---|---|---|
-| observation-layer transport and unmatched summaries | solver-level comparison diagnostics | not patient-level remodeling objects | may remain bridge diagnostics only |
-| thresholding, labeling, or regularization controls | observation-layer configuration or prior state | not biological outputs | keep as internal controls during migration |
-| observation-layer fit-status fields | compatibility failure or audit metadata | audit only | remains useful until code refactor |
-| dense observation-layer plan payloads and aliases | observation-layer matching detail | not a patient-level or cohort-level contract object | do not export as canonical method objects |
-
-Migration rule:
-
-- do not claim a one-to-one mapping from compatibility surfaces to
-  `(A_p, d_p, e_p)` unless a future implementation adds that mapping
-  explicitly,
-- treat `slotar.compat.*` and the temporary top-level shim modules
-  (`slotar.uot`, `slotar.representation`, `slotar.contracts`, `slotar.uq`,
-  `slotar.utils`, `slotar.io.bridge`, `slotar.drift`, and
-  `slotar.exceptions`) as migration residue rather than canonical interfaces,
-- treat `stride` as the target architecture direction even when the current
-  working implementation still lives under `slotar.*`.
-
-## 9. Explicit Non-Claim Boundary
-
-These data contracts support longitudinal remodeling analysis. They do not
-support automatic claims of:
-
-- lineage tracing,
-- exact physical transport truth,
-- exact one-to-one FOV matching,
-- unbiased whole-lesion dynamics.
+- lineage-tracing interpretation,
+- physical transport interpretation,
+- FOV matching interpretation,
+- whole-lesion dynamics interpretation.
