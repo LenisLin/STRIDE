@@ -52,6 +52,14 @@ community-composition space:
 
 where `w_f = 1` for each ROI/FOV in the current first pass.
 
+The source/target comparison plan is caller- or task-declared and resolved by
+the task layer before core estimation. Domain labels stratify observation
+comparison during that resolution step and do not define state identity. The
+core estimator receives resolved source/target observation evidence blocks
+explicitly rather than inferring source-target biological semantics from
+labels. After evidence blocks enter the core, domain is not a loss axis, state
+axis, relation axis, or recurrence axis.
+
 Important observation-layer boundary:
 
 - canonical fitting at this layer is discrepancy or measure comparison over
@@ -85,13 +93,26 @@ The canonical patient-level method object is `(T_p, e_p)` with
 | Object | Shape | Meaning |
 |---|---|---|
 | `A_p` | `[K, K]` | patient-level continuity/remodeling operator |
-| `d_p` | `[K]` | depletion tendency on the pre side |
-| `e_p` | `[K]` | post-side emergence |
-| `T_p` | conceptual block object | `A_p` plus depletion column `d_p`; storage may keep `A_p` and `d_p` separately |
+| `d_p` | `[K]` | source-side outgoing open tendency |
+| `e_p` | `[K]` | target-side incoming open-entry tendency |
+| `T_p` | conceptual block object | `A_p` plus source-side open column `d_p`; storage may keep `A_p` and `d_p` separately |
 
 Contract semantics:
 
-- `A_p` is row-substochastic, with `sum_j A_{p,ij} + d_{p,i} = 1`,
+- `A_p`, `d_p`, and `e_p` are fitted variables of the full STRIDE objective,
+  not proxy post-processing results,
+- each source row `[A_{p,i,*}, d_{p,i}]` lies on a simplex, with
+  `sum_j A_{p,ij} + d_{p,i} = 1`,
+- `e_p` is bounded as `0 <= e_{p,j} <= 1`,
+- `d_p` and `e_p` share a bounded open-tendency scale while entering
+  source-side outgoing accounting and target-side incoming reconstruction,
+- composition-scale v1 post-side reconstruction uses
+  `raw_post_p = q_p^- @ A_p + e_p` and
+  `predicted_q_p^+ = normalize(raw_post_p)`,
+- FOV-level observation fit uses
+  `predicted_v_target = normalize(v_source @ A_p + e_p)` to form the predicted
+  target-side bag-of-FOV empirical measure for comparison with the observed
+  target-side bag-of-FOV empirical measure,
 - `diag(A_p)` is retention-like structure,
 - `offdiag(A_p)` is remodeling-like structure,
 - `A_p` is not the same thing as a normalized conditional kernel,
@@ -133,13 +154,17 @@ Scale boundary:
 ### 1.4 Cohort-level output layer
 
 Cohort-level outputs are derived from patient-level objects. They are not a new
-primary biological object. At minimum, a cohort recurrence interface must be
-able to represent:
+primary biological object, but full STRIDE v1 uses recurrence as a modeled
+regularization layer that feeds back into patient-level estimation rather than
+as post-hoc clustering alone. The v1 cohort recurrence interface must be able
+to represent:
 
 - which patients were included,
 - which patient-level relations were compared,
-- which recurrence families or summaries were found,
-- how much patient support and dispersion each family carries.
+- the single cohort consensus relation `R_bar = (A_bar, d_bar, e_bar)`,
+- patient support count,
+- dispersion around the consensus,
+- recurrence fit status.
 
 ## 2. Required Inputs
 
@@ -152,6 +177,8 @@ Any valid analysis must provide:
 - FOV/ROI identifiers,
 - a shared `K`-state basis or an official route to derive one,
 - declared `mass_mode`, which is `uniform` in the current first pass,
+- declared ordered source/target observation comparison plan, including valid
+  domain strata when domain-stratified comparison is used,
 - design-level `domain_label` metadata when domain-stratified observation
   comparison is used; the current AnnData route uses `compartment`,
 - area or equivalent support metadata only for non-uniform future/custom
@@ -164,7 +191,7 @@ The state/domain boundary is part of the API contract:
 
 - the shared `K`-state basis defines state identity,
 - domain labels may stratify observation comparison, grouped discrepancies, and
-  bridge input grouping,
+  patient-relation input grouping,
 - callers keep state construction and domain stratification as separate
   modeling layers,
 - state geometry and the axes of `A_p`, `d_p`, and `e_p` are defined on the
@@ -184,15 +211,21 @@ A valid method entry surface must provide one of the following:
 
 Optional method inputs may include:
 
+- `alpha`, the primary full-estimator hyperparameter controlling local fit
+  versus regularization strength; the default is `0.5`,
+- optional `alpha` sensitivity diagnostics,
 - observation-layer cost geometry,
+- geometry/locality prior configuration,
 - grouping priors,
 - drift vectors or drift-risk priors,
 - uncertainty configuration,
-- recurrence hyperparameters,
-- bridge hyperparameters.
+- recurrence consensus configuration,
+- patient-relation fitting hyperparameters,
+- compact provenance configuration,
+- additional diagnostics requested by the task or study design.
 
-These are optional priors. They do not replace the required patient/time/FOV
-and shared-basis contracts.
+These optional priors supplement the required patient/time/FOV and shared-basis
+contracts.
 
 ## 3. Minimal Computational Pipeline
 
@@ -209,19 +242,75 @@ The minimal method pipeline is:
    normalized community-composition vectors `v_{p,t,f}`,
 5. attach observation-layer `domain_label` metadata and uniform observation
    mass (`mass = 1`, `mass_mode = "uniform"`),
-6. fit observation-layer comparisons on ordered, domain-stratified empirical
-   measures,
-7. apply the FOV bridge to produce patient-level `(A_p, d_p, e_p)`,
-8. derive patient summaries from those objects,
-9. estimate cohort recurrence from patient-level objects,
-10. emit audits, uncertainty summaries, and failure states explicitly.
+6. accept the task-resolved source/target observation evidence blocks and the
+   resolved comparison plan, including the provenance of valid domain strata,
+   as explicit estimator input,
+7. construct constrained patient-level fitted variables `A_p`, `d_p`, and
+   `e_p` with a feasible parameterization in which each source row
+   `[A_i,* , d_i]` lies on a simplex and `e` is bounded in `[0,1]`,
+8. use deterministic identity-plus-small-open initialization
+   `delta_init = min(0.05, 1 / (K + 1))`,
+   `A_init = (1 - delta_init) * I_K`,
+   `d_init = delta_init * 1_K`, and
+   `e_init = (delta_init / K) * 1_K`; compute component baseline scales from
+   that feasible numerical starting point on the same input, with epsilon
+   floors for near-zero scales,
+9. optimize the full objective with default `alpha=0.5`:
+   `L_total = (1 - alpha) * L_local + alpha * L_regularization`, where
+   `L_local` is the fixed normalized combination of observation data fit,
+   open-channel sparsity/complexity regularization, and geometry/locality
+   prior, and `L_regularization` is the fixed normalized combination of patient
+   consistency and cohort recurrence. For each resolved evidence block, the
+   observation fit uses source-side FOV vectors
+   `predicted_v_target = normalize(v_source @ A_p + e_p)` to induce the
+   predicted target-side bag-of-FOV empirical measure and evaluates
+   `L_obs_pair_raw = D_obs^UOT-v1(predicted target-side bag-of-FOV, observed target-side bag-of-FOV; C_norm)`,
+   where `C_norm = C_raw / s_C`. The same full estimator and canonical
+   observation discrepancy operator are used across tasks. The v1 open-channel
+   complexity form is `L_open_raw = mean(d_p) + mean(e_p)` with fixed
+   `scale_open = 1`, so `normalized_L_open = L_open_raw`. STRIDE v1 uses
+   simple continuous differentiable component losses where feasible, but the
+   assembled full objective is treated as a constrained non-convex numerical
+   objective rather than as a globally convex program; the contract does not
+   claim a global optimum,
+10. estimate single cohort consensus recurrence with feedback into the fitted
+   patient relations using `R_bar = (A_bar, d_bar, e_bar)` and
+   `L_recurrence_raw = mean_p dist(R_p, R_bar)`,
+11. refit or iterate patient and cohort components as specified by the frozen
+   objective implementation,
+12. derive patient and cohort summaries from those fitted objects,
+13. emit compact provenance, audits, uncertainty summaries, and failure states
+    explicitly.
 
 Important boundary:
 
-- OT / Sinkhorn belongs to step 6 only,
-- it informs the bridge but does not replace steps 7 through 9,
-- direct pooling to a patient-level vector before the observation-layer
-  comparison step is not the target design.
+- task layers declare source/target comparisons, while the core applies the
+  same full estimator and canonical observation discrepancy backend,
+- the core receives resolved evidence blocks and does not treat domain as a
+  core loss/state/relation/recurrence axis,
+- OT / Sinkhorn and observation matching are backend or observation-layer
+  comparison tools,
+- they contribute to the observation data-fit term within the full objective,
+- task-local observation solver substitution is outside the `fit_stride(...)`
+  full-estimator contract,
+- canonical patient-level `A/d/e` outputs are emitted by the objective-driven
+  patient-relation fit,
+- `patient_consistency` is support for one patient-level relation across
+  resolved observation evidence blocks; if fewer than two blocks are available
+  for a patient, `L_consistency_raw(p) = 0` and
+  `consistency_status = "insufficient_blocks"`,
+- geometry/locality is a soft prior over the full `A` operator using
+  state-geometry cost,
+- full STRIDE v1 uses PyTorch as the canonical optimization framework, with
+  AdamW as the outer optimizer and `weight_decay = 0.0`; optimizer mechanics
+  are not biological regularization,
+- implementations must expose optimizer availability and runtime status as an
+  explicit provenance/failure surface when the canonical PyTorch/AdamW path is
+  unavailable or cannot complete,
+- any scheduler must be fixed, predeclared, and recorded in provenance; the
+  canonical v1 recommendation is `ReduceLROnPlateau` on the total objective,
+- the target pipeline preserves FOV-aware observation-layer comparison before
+  patient-level summary derivation.
 
 ## 4. Primary Outputs
 
@@ -241,13 +330,13 @@ Derived patient summaries may include:
 
 - diagonal retention summaries from `A_p`,
 - off-diagonal remodeling summaries from `A_p`,
-- depletion summaries from `d_p`,
-- emergence summaries from `e_p`,
+- source-side outgoing open-tendency summaries from `d_p`,
+- target-side incoming open-entry summaries from `e_p`,
 - burden-scale summaries derived from `mu_p^-`, `mu_p^+`, `m_p^(d)`, or
   `m_p^(e)`,
 - derived composition summaries from `q_p^-` or `q_p^+`,
 - uncertainty summaries,
-- bridge diagnostics.
+- observation/objective diagnostics.
 
 These derived summaries are secondary to the patient-level object itself.
 
@@ -256,10 +345,52 @@ These derived summaries are secondary to the patient-level object itself.
 Any recurrence layer must be able to emit:
 
 - patient membership/support,
-- family or summary identifiers,
-- family-level summaries on the same shared `K`-state basis,
-- dispersion or stability diagnostics,
+- cohort consensus summary identifiers,
+- cohort consensus `A/d/e` on the same shared `K`-state basis,
+- patient support count,
+- dispersion around the consensus,
 - recurrence-layer fit status.
+
+### 4.4 Required compact provenance
+
+Default manuscript-level STRIDE results must include a compact provenance
+payload alongside biological outputs. The minimum required fields are:
+
+- `alpha`,
+- `alpha_default`,
+- optional `alpha_sensitivity`,
+- loss decomposition and normalization,
+- `loss_normalization_scales`,
+- `normalization_floor_flags`,
+- `initialization_policy`,
+- `e_bounds`,
+- `post_reconstruction_form`,
+- `observation_comparison_plan`,
+- `observation_discrepancy_backend`,
+- `observation_discrepancy_operator_version`,
+- `cost_normalization`, including `C_norm = C_raw / s_C`,
+- Sinkhorn/UOT backend version and status handling,
+- `D_pos/B_pos` or other observation-layer diagnostics, if emitted,
+- claim boundary stating that observation-layer residual diagnostics are not
+  biological `d/e`,
+- `open_channel_complexity_form`,
+- `open_channel_normalization_scale`,
+- `geometry_cost_normalization`,
+- optional `augmented_display_object_emitted`,
+- `optimizer_framework`,
+- `optimizer_algorithm`,
+- `optimizer_weight_decay`,
+- optimizer status,
+- scheduler policy/status when used,
+- recurrence consensus support,
+- recurrence dispersion around consensus,
+- recurrence fit status,
+- ablation mode, including `none` for the full reference fit,
+- random seed,
+- optimizer convergence or failure reason.
+
+Detailed optimizer traces may be emitted as optional diagnostics, but they are
+not required in the default result payload.
 
 ## 5. Official Route Versus Custom Route
 
@@ -272,7 +403,7 @@ spot observations to:
 - valid observation-layer vectors `v_{p,t,f}`,
 - the priors needed for observation-layer comparison,
 - the audits needed for FOV-aware fitting and bootstrap uncertainty over
-  realized bridge outputs.
+  fitted patient relation outputs.
 
 In the current first-pass official route:
 
@@ -295,8 +426,8 @@ The current implementation locations for the official route are mainly:
 - `stride.observation` for observation-layer cloud comparison,
 - `stride.api.fit`, `stride.workflows.fit_stride`, and
   `stride.outputs.fit_result` for the canonical full STRIDE fit surface,
-- `stride.outputs.uncertainty` for bootstrap uncertainty over realized bridge
-  outputs.
+- `stride.outputs.uncertainty` for bootstrap uncertainty over fitted patient
+  relation outputs.
 
 
 ### 5.2 Custom route
@@ -337,21 +468,52 @@ Implementation namespaces that realize the current first-pass contract include:
 - `stride.latent.recurrence` for the conservative first-pass recurrence
   estimator.
 
-Current fit boundary:
+Formal Full-Estimator Contract And Current Implementation Boundary:
 
-- `fit_stride(...)` returns patient-level relations together with an explicit
-  cohort recurrence layer.
+- `fit_stride(...)` is the formal manuscript-level full STRIDE estimator
+  surface.
+- The full contract requires `fit_stride(...)` to fit objective-driven
+  patient-level `A_p`, `d_p`, and `e_p` under source-row simplex accounting for
+  `[A_p | d_p]` and bounded `e_p` constraints.
+- The full contract requires `fit_stride(...)` to use the frozen objective
+  grouping with default `alpha=0.5` as the primary
+  local-versus-regularization hyperparameter, fixed normalized component
+  combination, and baseline-scale normalization from the
+  identity-plus-small-open initialization.
+- The full contract requires `fit_stride(...)` to include single cohort
+  consensus recurrence as a feedback term in estimation.
+- The full contract requires `fit_stride(...)` to emit biological outputs plus
+  compact provenance.
+- Current implementation completion is described by `docs/state.md`; this API
+  specification records the formal contract and the implementation target for
+  full objective fitting, consensus recurrence feedback, and compact
+  provenance.
 - `build_patient_relation(...)` assembles already constructed patient-level
   arrays into the canonical patient relation object.
-- `bridge_observation_matches(...)` is the reserved canonical bridge-estimator
-  namespace.
-- `estimate_recurrence(...)` currently implements a conservative family-template
-  estimator with explicit deferred status when support is insufficient.
+- Observation matching contributes as an internal objective term, diagnostic,
+  or backend comparison within the full-estimator contract.
+- `estimate_recurrence(...)` currently implements a conservative
+  consensus-template estimator with explicit deferred status when support is
+  insufficient.
 
 ## 7. Backend Numerical Surfaces
 
 Observation-layer OT/Sinkhorn helpers live behind `stride.observation` and
 `stride.adapters`. These functions provide numerical comparison support for the
-domain-stratified bag-of-FOV observation layer. Dense transport plans and solver
-diagnostics remain backend payloads unless a task contract explicitly uses them,
-as in the Task A Block 3B baseline-comparison surface.
+domain-stratified bag-of-FOV observation layer. UOT/Sinkhorn is the canonical
+v1 observation comparison backend for `L_obs` under partial and uneven FOV
+coverage through the fixed, versioned, auditable `D_obs^UOT-v1` operator with
+`C_norm = C_raw / s_C`. Dense transport plans and solver diagnostics remain
+backend payloads unless a task contract explicitly uses them, as in the Task A
+Block 3B baseline-comparison surface.
+
+OT, Sinkhorn, and observation matching are backend or observation-comparison
+surfaces. They are not canonical biology objects, do not define the public full
+estimator, and do not emit canonical patient-level `A_p`, `d_p`, or `e_p`
+except through the full STRIDE objective fit or explicit assembly of already
+valid relation objects. `D_pos/B_pos` and related status fields are
+observation-layer diagnostics; they are not biological open-channel estimands
+and are not independent loss components. The observation term uses a
+torch-native differentiable canonical Sinkhorn/UOT-v1 operator. Sinkhorn/UOT
+solves the observation discrepancy, while AdamW optimizes `A_p`, `d_p`, `e_p`,
+and any necessary objective variables.

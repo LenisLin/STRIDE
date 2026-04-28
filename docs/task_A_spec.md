@@ -17,9 +17,10 @@ closure items are listed explicitly in `Freeze Status and Remaining Deferred
 Decisions` below.
 
 Task A remains intentionally narrower than the ideal full STRIDE target
-because it still depends on the narrow first-pass bridge and ordered
-tissue-domain family slicing, even though the canonical Step 3 rerun now emits
-first-pass cohort recurrence on the full STRIDE path.
+because it still depends on the narrow first-pass patient-relation
+implementation and ordered tissue-domain family slicing, even though the
+canonical Step 3 rerun now emits first-pass cohort consensus recurrence on the full
+STRIDE path.
 
 ## 1. Task A in STRIDE
 
@@ -256,7 +257,7 @@ canonical Step 3 rerun:
   basis
 - explicit open relation through depletion and emergence rather than forced
   closure
-- an observation-to-patient bridge that keeps FOV/ROI structure in the model
+- a patient-relation fitting path that keeps FOV/ROI structure in the model
 - cohort-level common/recurrent structure defined on patient relations rather
   than on pooled observations
 
@@ -273,27 +274,24 @@ The user-approved scientific framing is binding for rebuilt Block 3.
 
 Block 3 tests two method-level hypotheses:
 
-- `H1`: relation-aware modeling with explicit open relation is biologically and
-  methodologically valuable. The main Block 1 / Block 2 finding pattern should
-  weaken when STRIDE is compared against endpoint-only baselines or when
-  open-channel control terms are weakened inside STRIDE itself. The frozen
-  evidence route is `3B baseline comparison` plus
-  `3C-1 open-module ablation`.
-- `H2`: cohort/common-structure fitting should materially support native
+- `H1`: relation-aware modeling with explicit fitted open relation is
+  biologically and methodologically valuable. The main Block 1 / Block 2
+  finding pattern should weaken when STRIDE is compared against endpoint-only,
+  no-`d/e`, no-open-channel, closed, balanced, or transport-style comparator
+  arms. The frozen evidence route is `3B baseline comparison`.
+- `H2`: core full-STRIDE objective terms should materially support native
   patient-level recovery under matched rerun-specific patient-level
-  semi-synthetic realizations rather than collapsing into isolated
-  patient-specific noise. When cohort/common-structure regularization is
-  weakened, the recovered patient-level `A_p` relation, patient-level
-  open-support, and `d/e` outputs should degrade with observation discrepancy,
-  patient bridge, and explicit open modeling otherwise retained. The frozen
-  evidence route is
-  `3C-2 cohort-module ablation`.
+  semi-synthetic realizations. When recurrence, geometry, or consistency terms
+  are removed or zeroed and the estimator is refit, recovered patient-level
+  `A_p`, `d_p`, and `e_p` should degrade relative to the full reference fit.
+  The frozen evidence route is `3C ablation study`.
 
 Block 3 therefore validates all of the following and no broader claim:
 
 - why relation-aware modeling matters
-- why explicit open relation matters
-- why cohort-level common/recurrent structure matters
+- why explicit open relation matters under external comparator pressure
+- why recurrence, geometry, and consistency objective terms matter after
+  refitting the full patient relation
 - why the established Block 0-2 evidence stack should be read as full-STRIDE
   method evidence rather than as a proxy-era artifact
 
@@ -308,8 +306,10 @@ Block 3 does not:
 
 Rebuilt Block 3 is frozen as three Task A Block 3 sections:
 `3A generator validation`, `3B baseline comparison`, and
-`3C ablation study`. `3C` contains two fixed subexperiments:
-`3C-1 open-module ablation` and `3C-2 cohort-module ablation`.
+`3C ablation study`. `3B` carries no-`d/e`, no-open-channel, closed,
+balanced, and transport-style comparator semantics. `3C` contains the core
+STRIDE refit ablations: `3C-1 recurrence ablation`,
+`3C-2 geometry ablation`, and `3C-3 consistency ablation`.
 This section structure is exhaustive for the rebuilt Block 3 public surface.
 
 The rebuilt benchmark now uses one shared hidden-program design:
@@ -319,6 +319,14 @@ The rebuilt benchmark now uses one shared hidden-program design:
 - a method-facing target composition `y_p` derived from `(x_p, A_p, d_p, e_p)`
 - method inputs restricted to paired endpoint fractions `x_p` and `y_p` on the
   same shared `K`-state axis
+- Task A resolves source/target endpoint comparisons and valid domain strata,
+  then passes the resolved comparison plan and source/target observation
+  evidence blocks to the formal `fit_stride(...)` surface for
+  `stride_reference`
+- Task A adapters may perform input conversion and comparison-plan
+  instantiation; they must not substitute a task-local observation solver or
+  task-local STRIDE estimator. Domain resolution remains task-layer
+  provenance and does not become a core loss/state/relation/recurrence axis.
 
 No ranked benchmark method, including `stride_reference`, may read hidden
 `(A_p, d_p, e_p)` or any additional non-public truth companion. `x_p` and
@@ -373,15 +381,17 @@ section-specific public controls plus one internal generator layer:
 
 All other generator quantities, including the empirical turnover distribution,
 depletion/emergence propensities, and the shared train-derived cohort-level
-generation quantities reused within a `3C-2` rerun, are estimated from the
-`train` split and are not treated as free public benchmark hyperparameters.
+generation quantities reused within the recurrence-ablation realization set,
+are estimated from the `train` split and are not treated as free public
+benchmark hyperparameters.
 `train` therefore continues to estimate only `P(m)`, `pi_d`, `pi_e`,
 `kappa_d`, and `kappa_e`. The
-compatibility label `shared hidden cohort effect` used in `3C-2` therefore
-means only that all held-out `test` patients in the same rerun are generated
-under the same train-derived cohort-level generator quantities. It is recorded
-for reproducibility only, is not a public benchmark axis, and does not define
-a separate scientific open question. These train-derived quantities are
+compatibility label `shared hidden cohort effect` used in the
+recurrence-ablation arm therefore means only that all held-out `test` patients
+in the same rerun are generated under the same train-derived cohort-level
+generator quantities. It is recorded for reproducibility only, is not a public
+benchmark axis, and does not define a separate scientific open question. These
+train-derived quantities are
 generator calibration / diagnostics-side quantities only, not formal Block 3
 headline benchmark metrics.
 
@@ -636,7 +646,7 @@ Metric rules:
   burden-scale depletion/emergence carriers
 - `d_MAE`, `e_MAE`, `d_MSE`, and `e_MSE` are the quantitative profile-recovery
   metrics on the same derived open surfaces
-- `3B-2` reuses the full shared `3C-1` `open_support_F1` contract, including
+- `3B-2` reuses the full shared `3C` `open_support_F1` contract, including
   the burden-scale support definition and the channel-level / patient-level
   status semantics
 - because `open_mass_scale = 0.0` implies zero truth depletion and zero truth
@@ -668,40 +678,101 @@ Interpretive role:
 
 - `3C` carries ablation claims only and does not act as an external baseline
   section
-- all `3C` method arms are loss/regularization-level STRIDE reruns rather than
-  post hoc output rewrites or substitute baseline methods
+- all `3C` method arms are loss/regularization-level STRIDE reruns that
+  remove or zero one core objective term and then refit `A_p`, `d_p`, and
+  `e_p`
+- the core `3C` ablation set is recurrence, geometry, and consistency
+- no-`d/e`, open-channel-removal, closed, balanced, and transport-style
+  comparisons belong to `3B` baseline/comparator semantics rather than to
+  core STRIDE ablations
 - the current repository proxy Block 3 ablation implementation is preserved as
   historical/proxy execution context only and is not the normative `3C`
   scientific contract
 
-###### 3C-1. Open-module ablation
+###### 3C-1. Recurrence ablation
 
 Scientific question:
 
-- Is explicit open modeling necessary inside STRIDE for patient-level open
-  recovery once the rest of the STRIDE stack is kept in place?
+- What is lost when cohort consensus recurrence/common-structure feedback is removed
+  from the STRIDE objective and the patient relation is refit?
 
 Reference versus ablation:
 
 - reference: `stride_reference`
-- ablation: `open_channel_ablation`
+- ablation: `recurrence_ablation`
 
 Ablation semantics:
 
 - `3C-1` is a within-STRIDE module-necessity test, not an external baseline
   comparison, not an open-gradient benchmark, and not a comparison of `P(m)`
-- `open_channel_ablation` weakens or removes only the open-channel control
-  terms
+- `recurrence_ablation` removes or zeroes only the cohort consensus
+  recurrence/common-structure term in the objective
 - observation discrepancy terms are retained
-- patient bridge / patient consistency terms are retained
-- cohort/common-structure terms are retained
+- explicit open-channel terms are retained
+- geometry/locality terms are retained
+- patient consistency terms are retained
 - audit / plausibility handling is retained
+- `A_p`, `d_p`, and `e_p` are refit under the ablated objective
+- the comparison reuses the same rerun-specific patient-level semi-synthetic
+  realizations generated for Block 3 and does not introduce a separate public
+  fixed-`m` axis
+
+###### 3C-2. Geometry ablation
+
+Scientific question:
+
+- What is lost when the geometry/locality prior is removed from the STRIDE
+  objective and the patient relation is refit?
+
+Reference versus ablation:
+
+- reference: `stride_reference`
+- ablation: `geometry_ablation`
+
+Ablation semantics:
+
+- `geometry_ablation` removes or zeroes only the geometry/locality term in the
+  objective
+- observation discrepancy terms are retained
+- explicit open-channel terms are retained
+- patient consistency terms are retained
+- cohort consensus recurrence/common-structure terms are retained
+- audit / plausibility handling is retained
+- `A_p`, `d_p`, and `e_p` are refit under the ablated objective
+- the comparison reuses the same rerun-specific patient-level semi-synthetic
+  realizations generated for Block 3 and does not introduce a separate public
+  fixed-`m` axis
+
+###### 3C-3. Consistency ablation
+
+Scientific question:
+
+- What is lost when the patient-consistency term is removed from the STRIDE
+  objective and the patient relation is refit?
+
+Reference versus ablation:
+
+- reference: `stride_reference`
+- ablation: `consistency_ablation`
+
+Ablation semantics:
+
+- `consistency_ablation` removes or zeroes only the patient-consistency term in
+  the objective
+- observation discrepancy terms are retained
+- explicit open-channel terms are retained
+- geometry/locality terms are retained
+- cohort consensus recurrence/common-structure terms are retained
+- audit / plausibility handling is retained
+- `A_p`, `d_p`, and `e_p` are refit under the ablated objective
 - the comparison reuses the same rerun-specific patient-level semi-synthetic
   realizations generated for Block 3 and does not introduce a separate public
   fixed-`m` axis
 
 Formal metrics:
 
+- `A_MAE_active`
+- `A_MSE_active`
 - `open_support_F1`
 - `d_MAE`
 - `e_MAE`
@@ -727,61 +798,13 @@ Metric rules:
   depletion/emergence carriers; it should not be read on its own as full
   open-profile fidelity
 - `d_MAE`, `e_MAE`, `d_MSE`, and `e_MSE` remain reported throughout the
-  `3C-1` evaluation surface as
+  `3C` evaluation surface as
   quantitative profile-recovery metrics for the depletion/emergence magnitude
   profiles
-- `3C-1` does not add `A_MAE_active` or `A_MSE_active`; those remain
-  outside the open-module headline set and belong only to the relation-recovery
-  sections `3B` and `3C-2`
-
-Interpretive role:
-
-- `open_channel_ablation` is a loss/regularization ablation inside STRIDE, not
-  an external comparator and not a substitute closed-model baseline
-- `3C-1` isolates explicit open modeling because only open-channel control
-  terms are weakened while the observation discrepancy, patient bridge,
-  cohort/common-structure, and audit layers remain in place
-- its evidence target is patient-level open recovery under matched rerun-specific
-  realizations rather than performance across fixed public open strata
-- `3C-1` contributes to `H1` by testing whether explicit open relation matters
-  after the external baseline comparison is fixed
-
-###### 3C-2. Cohort-module ablation
-
-Scientific question:
-
-- What is lost when cohort/common-structure regularization is weakened while
-  the rest of the STRIDE stack is retained?
-
-Reference versus ablation:
-
-- reference: `stride_reference`
-- ablation: `cohort_ablation`
-
-Ablation condition:
-
-- the comparison reuses the same rerun-specific patient-level semi-synthetic
-  realizations already generated for Block 3; `3C-2` does not introduce a
-  separate public fixed-`m` condition axis
-
-Formal metrics:
-
-- `A_MAE_active`
-- `A_MSE_active`
-- `open_support_F1`
-- `d_MAE`
-- `e_MAE`
-- `d_MSE`
-- `e_MSE`
-
-Metric rules:
-
-- `cohort_ablation` weakens or removes only cohort recurrence/shared-structure
-  regularization
-- observation discrepancy is retained
-- patient-level fitting is retained
-- explicit open modeling is retained
-- audit / plausibility handling is retained
+- `A_MAE_active` and `A_MSE_active` are the minimum patient-level relation
+  recovery metrics in `3C` and reuse the truth-anchored active-row conditional
+  target-pattern definition; here `A` always means the patient-level relation
+  operator `A_p` on the shared `K`-state axis
 - any shared cohort/common-structure generator quantity remains a train-derived
   internal generator detail recorded for reproducibility only, not a public
   benchmark axis
@@ -790,38 +813,25 @@ Metric rules:
   (`P(m)`, `pi_d`, `pi_e`, `kappa_d`, `kappa_e`), while each patient's
   realized hidden truth still depends on that patient's own `x_p` plus
   patient-level sampling
-- `stride_reference` and `cohort_ablation` are compared on the same held-out
-  patients and the same native truth outputs under matched rerun-specific
-  realizations
-- `A_MAE_active` and `A_MSE_active` are the minimum patient-level relation
-  recovery metrics in this section and reuse the truth-anchored active-row
-  conditional target-pattern definition; here `A` always means the patient-level
-  relation operator `A_p` on the shared `K`-state axis
+- `stride_reference` and each `3C` ablation arm are compared on the same
+  held-out patients and the same native truth outputs under matched
+  rerun-specific realizations
 - `open_support_F1` remains a native patient-level support-recovery metric and
   does not by itself imply full profile fidelity
-- `d_MAE`, `e_MAE`, `d_MSE`, and `e_MSE` remain reported on all `3C-2` rows as
-  quantitative profile-recovery metrics
 - metric reporting must distinguish `reported`, `not_applicable`, and
   `not_estimable`
 
 Interpretive role:
 
-- `cohort_ablation` is a loss/regularization ablation that weakens or removes
-  cohort-layer common-structure fitting rather than serving as a separate
-  external control family or a patient-model removal arm
-- `3C-2` is the direct test of `H2`
-- `3C-2` is a cohort/common-structure ablation benchmark centered on
-  patient-level `A_p`, open-support, and `d/e` recovery under matched
-  rerun-specific semi-synthetic realizations
-- the headline evidence is the loss of patient-level `A_p` recovery plus native
-  patient-level open-support and `d/e` recovery after cohort/common-structure
-  weakening under matched rerun-specific semi-synthetic realizations
-- `3C-2` does not create a separate public sensitivity axis over shared
+- `3C` is centered on loss of native patient-level `A_p`, `d_p`, and `e_p`
+  recovery after recurrence, geometry, or consistency terms are removed and the
+  estimator is refit
+- `3C` does not create a separate public sensitivity axis over shared
   train-derived cohort-level generation and therefore does not by itself
   establish robustness across multiple cohort/common-structure generation
   settings
-- only the native patient-level metrics listed above belong to the live
-  `3C-2` metric contract
+- only the native patient-level metrics listed above belong to the live `3C`
+  metric contract
 - patient-level helper quantities may still be exported as diagnostics, but
   they are not part of the formal Block 3 metric contract
 
@@ -832,7 +842,12 @@ The rebuilt Block 3 method registry is frozen as follows.
 `stride_reference`
 
 - Uses the canonical full STRIDE method with patient relation, explicit open
-  relation, bridge, and cohort recurrence/common structure.
+  relation, patient-relation fitting, and cohort consensus recurrence/common
+  structure.
+- Calls the formal `fit_stride(...)` frozen reference configuration on
+  Task A-resolved source/target endpoint comparison evidence blocks and the
+  resolved comparison plan; Task A adapters only convert inputs and instantiate
+  the comparison plan.
 - This is the only reference method for Block 3.
 
 `balanced_ot_baseline`
@@ -874,6 +889,10 @@ The rebuilt Block 3 method registry is frozen as follows.
 - The native method output is the identity-only diagonal matched plan `P`,
   with `P[i,i] = min(x[i], y[i])`, which is later converted by the shared `3B`
   analysis layer into `A/d/e`.
+
+No-`d/e`, no-open-channel, closed, balanced, and transport-style comparison
+semantics belong to this `3B` comparator layer. They do not define core STRIDE
+ablation arms.
 
 Comparator implementation minimums:
 
@@ -983,24 +1002,31 @@ def calibrate_partial_ot_budget(train_patients):
     )
 ```
 
-`open_channel_ablation`
+`recurrence_ablation`
 
-- Preserves observation discrepancy, patient bridge / consistency,
-  cohort/common-structure, and audit/plausibility handling while weakening or
-  removing only the open-channel control terms during rerun.
-- In `3C-1`, it is evaluated on the same rerun-specific patient-level
-  semi-synthetic realizations used by the reference method; it does not define
-  a separate public fixed-`m` axis.
-- This is the fixed `3C-1 open-module ablation` arm.
+- Removes or zeroes only the cohort consensus recurrence/common-structure term and
+  refits `A_p`, `d_p`, and `e_p`.
+- Preserves observation discrepancy, explicit open-channel terms,
+  geometry/locality, patient consistency, and audit/plausibility handling.
+- This is the fixed `3C-1 recurrence ablation` arm.
 
-`cohort_ablation`
+`geometry_ablation`
 
-- Preserves patient-level relation-aware fitting, explicit open modeling,
-  observation discrepancy, and audit/plausibility handling.
-- Weakens or removes only cohort-layer common/recurrent structure
-  regularization and reruns the frozen STRIDE stack without changing the rest
-  of the patient-level model.
-- This is the fixed `3C-2 cohort-module ablation` arm.
+- Removes or zeroes only the geometry/locality term and refits `A_p`, `d_p`,
+  and `e_p`.
+- Preserves observation discrepancy, explicit open-channel terms, patient
+  consistency, cohort consensus recurrence/common structure, and
+  audit/plausibility handling.
+- This is the fixed `3C-2 geometry ablation` arm.
+
+`consistency_ablation`
+
+- Removes or zeroes only the patient-consistency term and refits `A_p`, `d_p`,
+  and `e_p`.
+- Preserves observation discrepancy, explicit open-channel terms,
+  geometry/locality, cohort consensus recurrence/common structure, and
+  audit/plausibility handling.
+- This is the fixed `3C-3 consistency ablation` arm.
 
 #### 4.5.4 Embedded semi-synthetic companion design
 
@@ -1117,9 +1143,11 @@ The frozen companion condition families are:
   `open_mass_scale = 1.0`
 - `3B-2`: `open_mass_scale_grid = [0.0, 0.1, ..., 1.0]` at fixed
   `relation_strength = 0.15`
-- rerun-specific patient-level semi-synthetic realizations reused for `3C-1`
+- rerun-specific patient-level semi-synthetic realizations reused for all
+  `3C` refit ablations
 - rerun-specific patient-level semi-synthetic realizations with
-  cohort/common-structure present in the generator reused for `3C-2`
+  cohort/common-structure present in the generator reused for the recurrence
+  ablation arm
 
 Compatibility-era sanity exports may still be emitted for packet continuity,
 but `3A` has no dedicated formal null/random baseline contract. Any such
@@ -1203,36 +1231,43 @@ fixed section-wise metric set below.
 
 `3C-1`
 
-- formal metrics: `open_support_F1`, `d_MAE`, `e_MAE`, `d_MSE`,
-  and `e_MSE`
+- ablation: recurrence
+- formal metrics: `A_MAE_active`, `A_MSE_active`, `open_support_F1`,
+  `d_MAE`, `e_MAE`, `d_MSE`, and `e_MSE`
 - evaluation-surface summary table: mean, 95% bootstrap CI, and paired
   difference versus `stride_reference` over the shared realization set
-- `open_support_F1` is the support-level recovery metric, whereas `d_MAE`,
-  `e_MAE`, `d_MSE`, and `e_MSE` carry the quantitative profile-fidelity role;
-  `open_support_F1` alone is not full open-profile recovery
-- `3C-1` does not add `A_MAE_active` or `A_MSE_active`; those remain
-  `3B`/`3C-2` relation-recovery metrics rather than open-module headline
-  metrics
-- the live `3C-1` readout surface is fully determined by
-  `open_support_F1`, `d_MAE`, `e_MAE`, `d_MSE`, and `e_MSE`
+- the ablation removes or zeroes the cohort consensus recurrence term and
+  refits `A_p`, `d_p`, and `e_p`
 
 `3C-2`
 
-- patient-level raw table: native patient-level recovery outputs under the
-  matched rerun-specific patient-level semi-synthetic realizations
+- ablation: geometry
 - formal metrics: `A_MAE_active`, `A_MSE_active`, `open_support_F1`, `d_MAE`,
   `e_MAE`, `d_MSE`, and `e_MSE`
 - evaluation surface: the same rerun-specific realizations are reused for
-  reference and ablation scoring, and within each rerun the held-out patients
-  share one train-derived cohort-level generation context
-- in `3C-2`, `A_MAE_active` and `A_MSE_active` refer to patient-level
-  relation-operator `A_p` recovery on the shared `K`-state axis
-- `3C-2` is a cohort/common-structure ablation benchmark centered on
-  patient-level `A_p`, open-support, and `d/e` recovery
-- the live `3C-2` evidence path is fully determined by those native
-  patient-level `A_p`, open-support, and `d/e` recovery metrics
+  reference and ablation scoring
+- the ablation removes or zeroes the geometry/locality term and refits
+  `A_p`, `d_p`, and `e_p`
 - evaluation-surface summary table: mean, 95% bootstrap CI, and paired
   difference versus `stride_reference`
+
+`3C-3`
+
+- ablation: consistency
+- formal metrics: `A_MAE_active`, `A_MSE_active`, `open_support_F1`, `d_MAE`,
+  `e_MAE`, `d_MSE`, and `e_MSE`
+- evaluation surface: the same rerun-specific realizations are reused for
+  reference and ablation scoring
+- the ablation removes or zeroes the patient-consistency term and refits
+  `A_p`, `d_p`, and `e_p`
+- evaluation-surface summary table: mean, 95% bootstrap CI, and paired
+  difference versus `stride_reference`
+
+For all `3C` arms, `A_MAE_active` and `A_MSE_active` refer to patient-level
+relation-operator `A_p` recovery on the shared `K`-state axis.
+`open_support_F1` is the support-level recovery metric, whereas `d_MAE`,
+`e_MAE`, `d_MSE`, and `e_MSE` carry the quantitative profile-fidelity role;
+`open_support_F1` alone is not full open-profile recovery.
 
 Metric-level hierarchy is frozen:
 
@@ -1272,9 +1307,9 @@ scientific contract.
 The canonical result-facing organization is now the three frozen sections
 `3A generator validation`, `3B baseline comparison`, and
 `3C ablation study`, with `3B-1 A benchmark`, `3B-2 d/e benchmark`,
-`3C-1 open-module ablation`, and `3C-2 cohort-module ablation` nested inside
-the umbrella sections. Supporting sidecars may be exported, but they are not a
-separate scientific section.
+`3C-1 recurrence ablation`, `3C-2 geometry ablation`, and
+`3C-3 consistency ablation` nested inside the umbrella sections. Supporting
+sidecars may be exported, but they are not a separate scientific section.
 
 Presentation discipline is frozen:
 
@@ -1286,10 +1321,13 @@ Presentation discipline is frozen:
   shared `A` surface
 - `3B-2` answers how STRIDE compares to open-comparator baselines on the
   shared analysis-layer `d/e` surface
-- `3C-1` and `3C-2` answer what happens when frozen STRIDE modules are removed
+- `3C-1`, `3C-2`, and `3C-3` answer what happens when recurrence, geometry,
+  or consistency objective terms are removed and `A/d/e` is refit
 - `balanced_ot_baseline`, `uot_baseline`, `partial_ot_baseline`, and
   `diagonal_transport_baseline` belong only to `3B`
-- `open_channel_ablation` and `cohort_ablation` belong only to `3C`
+- no-`d/e`, no-open-channel, closed, balanced, and transport-style comparisons
+  belong only to `3B`
+- recurrence, geometry, and consistency refit ablations belong only to `3C`
 
 The canonical reporting order for section-level comparison summaries is:
 
@@ -1300,10 +1338,10 @@ The canonical reporting order for section-level comparison summaries is:
 Median and rank-based tests may still be exported as supportive diagnostics,
 but they are not the primary contract.
 
-Evidence for `H1` should therefore be argued from the executed `3B` and
-`3C-1` raw metric tables, while evidence for `H2` should be argued from the
-executed `3C-2` raw metric tables rather than from an aggregate pass/fail
-label.
+Evidence for `H1` should therefore be argued from the executed `3B` raw metric
+tables, while evidence for `H2` should be argued from the executed `3C`
+recurrence, geometry, and consistency refit-ablation tables rather than from an
+aggregate pass/fail label.
 
 #### 4.5.7 Relation to the canonical Step 3 outputs
 
@@ -1316,7 +1354,7 @@ stack through Block 2:
   `depletion`
 - the carried source-community and target-community patterns already scoped by
   Block 1 and sharpened by Block 2
-- the canonical cohort recurrence/common-structure outputs present in the
+- the canonical cohort consensus recurrence/common-structure outputs present in the
   Block 1 bundle
 - the Block 2 robustness calls over those same carried findings
 
@@ -1609,11 +1647,16 @@ Frozen items:
   suppress full output generation
 - the reference method is `stride_reference`, meaning the canonical full
   patient-plus-cohort STRIDE path with explicit open relation and cohort
-  recurrence/common structure, inferred from paired endpoint fractions rather
-  than from hidden truth
+  consensus recurrence/common structure, inferred from paired endpoint
+  fractions rather than from hidden truth through the formal `fit_stride(...)`
+  estimator
+- Task A resolves source/target endpoint comparisons and valid domain strata;
+  its adapters only convert inputs and instantiate the comparison plan and
+  source/target evidence blocks for `stride_reference`
 - `balanced_ot_baseline`, `uot_baseline`, `partial_ot_baseline`,
-  `diagonal_transport_baseline`, `open_channel_ablation`, and
-  `cohort_ablation` are the frozen public Block 3 method names and roles
+  `diagonal_transport_baseline`, `recurrence_ablation`,
+  `geometry_ablation`, and `consistency_ablation` are the frozen public Block
+  3 method names and roles
 - the shared-axis geometry/cost freeze is now resolved: `g_k`, `C_raw`,
   `s_C`, and `C` are fixed once from the upstream community-identity surface
   with `UNKNOWN` retained, and that same `C` serves both relation-support
@@ -1623,11 +1666,14 @@ Frozen items:
   only
 - `3B` is the only external baseline section; `3B-1` carries the `A`
   benchmark and `3B-2` carries the `d/e` benchmark
-- `3C` is the only ablation section; `open_channel_ablation` and
-  `cohort_ablation` stay there as loss/regularization-level STRIDE ablations
-- the reviewer-facing relation gradient belongs only to `3B`; `3C-1` and
-  `3C-2` do not introduce a separate public open-gradient axis and instead
-  reuse the same rerun-specific patient-level semi-synthetic realizations
+- `3B` also carries no-`d/e`, no-open-channel, closed, balanced, and
+  transport-style comparator semantics
+- `3C` is the only core STRIDE ablation section; recurrence, geometry, and
+  consistency refit ablations stay there as loss/regularization-level STRIDE
+  ablations
+- the reviewer-facing relation gradient belongs only to `3B`; `3C` does not
+  introduce a separate public open-gradient axis and instead reuses the same
+  rerun-specific patient-level semi-synthetic realizations
 - `3A` is generator validation only and remains continuous/descriptive rather
   than a separate gate; its public objects are held-out cohort
   `community-space` realism, `g_k`-projected identity-aware biological
@@ -1641,10 +1687,9 @@ Frozen items:
   `3B-1` uses `A_MAE_active`, `A_MSE_active`, and
   `target_recall_at_k`;
   `3B-2` uses `open_support_F1`, `d_MAE`, `e_MAE`, `d_MSE`, and `e_MSE`;
-  `3C-1` uses `open_support_F1`, `d_MAE`, `e_MAE`, `d_MSE`, and `e_MSE`;
-  `3C-2` uses `A_MAE_active`, `A_MSE_active`, `open_support_F1`, `d_MAE`,
-  `e_MAE`, `d_MSE`, and `e_MSE` under matched rerun-specific semi-synthetic
-  realizations
+  `3C-1`, `3C-2`, and `3C-3` use `A_MAE_active`, `A_MSE_active`,
+  `open_support_F1`, `d_MAE`, `e_MAE`, `d_MSE`, and `e_MSE` under matched
+  rerun-specific semi-synthetic realizations after refitting `A/d/e`
 - any compatibility-era `pair_family` / `evaluation_family` labels are
   reporting-only containers rather than formal truth/scoring-layer objects
 - Block 3 must still export the broader real-data and semi-synthetic summary
@@ -1652,9 +1697,10 @@ Frozen items:
   benchmark contract
 - metric reporting must carry explicit `reported`, `not_applicable`, and
   `not_estimable` status semantics with null numeric values when not reported
-- section-level comparison summaries for `3B`, `3C-1`, and `3C-2` must default
-  to mean, 95% bootstrap CI, and paired difference versus `stride_reference`, with
-  generator reruns treated as the outer statistical unit
+- section-level comparison summaries for `3B` and all `3C` refit-ablation
+  arms must default to mean, 95% bootstrap CI, and paired difference versus
+  `stride_reference`, with generator reruns treated as the outer statistical
+  unit
 
 Still deferred:
 
@@ -1674,12 +1720,12 @@ Why this is now frozen at the design level:
 
 Frozen items:
 
-- `H1` is argued from the executed `3B` and `3C-1` primary metrics rather
-  than from review-policy labels
-- `H2` is argued from the executed `3C-2` native patient-level recovery
-  metrics `A_MAE_active`, `A_MSE_active`, `open_support_F1`, `d_MAE`, `e_MAE`,
-  `d_MSE`, and `e_MSE` under matched rerun-specific semi-synthetic
-  realizations
+- `H1` is argued from the executed `3B` primary metrics rather than from
+  review-policy labels
+- `H2` is argued from the executed `3C` recurrence, geometry, and consistency
+  refit-ablation native patient-level recovery metrics `A_MAE_active`,
+  `A_MSE_active`, `open_support_F1`, `d_MAE`, `e_MAE`, `d_MSE`, and `e_MSE`
+  under matched rerun-specific semi-synthetic realizations
 - that `H2` evidence remains tied to rerun-specific realizations whose
   generator uses one shared train-derived cohort-level generation context
   across held-out patients; it is not by itself a robustness-gradient claim
@@ -1740,20 +1786,22 @@ Task A pass does not require:
   primary real-data biological discovery layer.
 - Endpoint-transport summaries and assignment surfaces are not themselves the
   primary STRIDE scientific object.
-- Task A does not by itself close the bridge from endpoint-fraction fitting to
-  full patient-level `(T_p, e_p)` validation.
+- Task A does not by itself close the evidence gap from endpoint-fraction
+  fitting to full patient-level `(T_p, e_p)` validation.
 
 ## 9. Block 3 Parameter Freeze Notes
 
-The shared-axis geometry/cost freeze, the `3C-2` shared train-derived
-cohort-level generation role (compatibility label: `shared hidden cohort
-effect`), the `3B-1/3B-2` split, the dense `open_mass_scale` sweep, and the
-transport-comparator definitions are now all resolved in the live contract.
+The shared-axis geometry/cost freeze, the recurrence-ablation shared
+train-derived cohort-level generation role (compatibility label:
+`shared hidden cohort effect`), the `3B-1/3B-2` split, the dense
+`open_mass_scale` sweep, and the transport-comparator definitions are now all
+resolved in the live contract.
 The remaining items from the earlier Block 3 open-question list are therefore
 treated as frozen parameter notes rather than as reasons to reopen the adopted
 scientific design.
 
-- The compatibility label `shared hidden cohort effect` used in `3C-2`
+- The compatibility label `shared hidden cohort effect` used in the
+  recurrence-ablation arm
   describes one rerun-specific shared train-derived cohort-level generation
   context across held-out patients. It is recorded for reproducibility only,
   is not a public benchmark axis, and does not constitute a separate

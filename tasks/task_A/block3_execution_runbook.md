@@ -37,13 +37,33 @@ Block3b internal implementation decisions:
   `open_mass_scale = 1.0`. `3B-2` uses
   `open_mass_scale_grid = [0.0, 0.1, ..., 1.0]` at fixed
   `relation_strength = 0.15`.
-- `stride_reference` must use the canonical full STRIDE path and emit native
-  `A/d/e`. `balanced_ot_baseline`, `uot_baseline`, `partial_ot_baseline`, and
+- The primary `3B-1` contract remains fixed at `open_mass_scale = 1.0`.
+  Internal `3B-1` A-recovery sensitivity may evaluate
+  `open_mass_scale = [0.1, 0.25, 0.5]` as a diagnostic sidecar only. The
+  `0.25` value is diagnostic-only and is not part of the frozen public `3B-2`
+  dense open-mass grid.
+- `stride_reference` must call the formal `fit_stride(...)` frozen reference
+  configuration and emit native fitted `A/d/e`. The Task A adapter may only
+  convert Block 3 inputs, resolve source/target endpoint comparison evidence
+  blocks, and instantiate the comparison plan, including valid domain strata,
+  for the formal estimator input contract. Domain resolution remains
+  task-layer provenance and does not become a core loss/state/relation/
+  recurrence axis. The adapter must not implement a task-local semi-STRIDE,
+  proxy initializer, STRIDE-like substitute estimator, or observation backend
+  replacement.
+- `balanced_ot_baseline`, `uot_baseline`, `partial_ot_baseline`, and
   `diagonal_transport_baseline` emit native matched plan `P`.
   The live Block3b method routes are `stride_reference`,
   `balanced_ot_baseline`, `uot_baseline`, `partial_ot_baseline`, and
   `diagonal_transport_baseline` for `3B-1`; `3B-2` uses `stride_reference`,
   `uot_baseline`, `partial_ot_baseline`, and `diagonal_transport_baseline`.
+- Balanced, closed, transport-style, and no-open-channel or no-`d/e`
+  comparisons belong in Block 3B as baselines/comparators. They are not core
+  STRIDE internal ablations.
+- Block 3B baselines may use comparator-specific solvers under their own
+  baseline contracts. Block 3C STRIDE ablations use core estimator
+  configurations, retain the canonical observation discrepancy backend, and
+  refit `A/d/e` under the ablated objective.
 - `uot_baseline` must reuse the existing STRIDE Sinkhorn/UOT adapter,
   `src/stride/adapters/ot_sinkhorn.py::batched_uot_solve(..., return_plan=True)`.
   `lambda_match` uses rerun-shared train calibration over the fixed internal
@@ -69,6 +89,18 @@ Block3b internal implementation decisions:
   using one `3b_*` file that mixes `3B-1` and `3B-2`. Shared truth/native
   stores may remain shared during implementation if `subexperiment_id` is
   explicit; otherwise split them into `3b1_*` and `3b2_*` stores.
+
+Block3c internal implementation decisions:
+
+- The core STRIDE internal ablation set is restricted to `recurrence`,
+  `geometry`, and `consistency`.
+- Each Block 3C ablation must remove or zero the corresponding objective term
+  and rerun/refit the estimator so that `A_p`, `d_p`, and `e_p` are newly fitted
+  under the ablated objective.
+- Block 3C must not implement ablations by masking fitted outputs or rewriting
+  scores after the reference fit.
+- Open-channel removal, no-`d/e`, balanced, closed, or transport-style
+  comparisons remain Block 3B comparators, not Block 3C ablations.
 
 Operational rule:
 
