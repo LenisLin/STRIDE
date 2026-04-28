@@ -2,8 +2,8 @@
 Benchmark: Thread-count sensitivity for calibrate_joint_lambda and Phase 6B bootstrap.
 
 Tests whether the ThreadPoolExecutor concurrency in:
-  1. calibrate_joint_lambda (uot.py) — currently max_workers=candidates.size (7 for default grid)
-  2. Phase 6B bootstrap replicate loop (arm3_uq_stress.py) — currently max_workers=min(n_reps, 8)
+  1. calibrate_match_penalty (ot_sinkhorn.py) — currently capped by RuntimeSettings
+  2. A representative bootstrap replicate loop — benchmark-local max_workers sweep
 
 actually produces a measurable speedup vs sequential (max_workers=1).
 
@@ -32,12 +32,9 @@ for p in (str(ROOT), str(SRC)):
     if p not in sys.path:
         sys.path.insert(0, p)
 
-from slotar.uot import (
-    UOTSolveConfig,
-    _calibrate_one_candidate,
-    batched_uot_solve,
-    precompute_logKernels,
-)
+from stride.adapters.ot_sinkhorn import batched_uot_solve, build_observation_kernels
+from stride.observation.contracts import ObservationDiscrepancyConfig
+from stride.settings import RuntimeSettings
 
 # ---------------------------------------------------------------------------
 # Config
@@ -60,15 +57,20 @@ WORKER_COUNTS = [1, 2, 4, 8]
 # ---------------------------------------------------------------------------
 
 
-def _make_cfg() -> UOTSolveConfig:
-    return UOTSolveConfig(eps_schedule=EPS_SCHEDULE, max_iter=500, tol=1e-6)
+def _make_cfg() -> ObservationDiscrepancyConfig:
+    return ObservationDiscrepancyConfig(
+        eps_schedule=tuple(EPS_SCHEDULE),
+        max_iter=500,
+        tol=1e-6,
+        runtime_settings=RuntimeSettings(max_calibration_workers=2),
+    )
 
 
 def _make_kernels() -> list[np.ndarray]:
     C = np.abs(
         np.arange(K, dtype=float)[:, None] - np.arange(K, dtype=float)[None, :]
     )
-    return precompute_logKernels(C, EPS_SCHEDULE, s_C=1.0)
+    return build_observation_kernels(C, EPS_SCHEDULE, cost_scale=1.0)
 
 
 def _make_pair_tensors(n_pairs: int, rng: np.random.Generator):
@@ -87,15 +89,42 @@ def _calibrate_joint_lambda_with_workers(
     B: np.ndarray,
     lambda_grid: tuple[float, ...],
     kernels: list[np.ndarray],
-    cfg: UOTSolveConfig,
+    cfg: ObservationDiscrepancyConfig,
     target_alpha: float,
     max_workers: int,
 ) -> float:
     """Local variant of calibrate_joint_lambda with explicit max_workers."""
     candidates = np.asarray(tuple(lambda_grid), dtype=float)
+
+    def _evaluate_candidate(candidate: float) -> tuple[float, float]:
+        lambda_pl = np.full(A.shape[0], float(candidate), dtype=float)
+        metrics, _details, status = batched_uot_solve(
+            A=A,
+            B=B,
+            lambda_pl=lambda_pl,
+            kernels=kernels,
+            cfg=cfg,
+            tau_external=None,
+        )
+        ok_mask = status == "ok"
+        if not np.any(ok_mask):
+            return float(candidate), np.inf
+
+        denom = metrics["T"][ok_mask] + metrics["B_pos"][ok_mask] + metrics["D_pos"][ok_mask]
+        unmatched_ratio = np.divide(
+            metrics["B_pos"][ok_mask] + metrics["D_pos"][ok_mask],
+            denom,
+            out=np.full_like(denom, np.nan, dtype=float),
+            where=denom > 0.0,
+        )
+        family_median = float(np.nanmedian(unmatched_ratio))
+        if not np.isfinite(family_median):
+            return float(candidate), np.inf
+        return float(candidate), abs(family_median - float(target_alpha))
+
     with ThreadPoolExecutor(max_workers=max_workers) as pool:
         futures = {
-            pool.submit(_calibrate_one_candidate, c, A, B, kernels, cfg, target_alpha): c
+            pool.submit(_evaluate_candidate, c): c
             for c in candidates
         }
         results = [fut.result() for fut in as_completed(futures)]
@@ -109,7 +138,12 @@ def _calibrate_joint_lambda_with_workers(
     return best[0]
 
 
-def bench_calibrate(A: np.ndarray, B: np.ndarray, kernels: list, cfg: UOTSolveConfig) -> dict:
+def bench_calibrate(
+    A: np.ndarray,
+    B: np.ndarray,
+    kernels: list,
+    cfg: ObservationDiscrepancyConfig,
+) -> dict:
     """Run calibrate_joint_lambda at varying max_workers, return timing table."""
     results = {}
     candidates_size = len(LAMBDA_GRID)
@@ -156,7 +190,7 @@ def _bootstrap_worker(
     B_rep: np.ndarray,
     lambda_pl: np.ndarray,
     kernels: list[np.ndarray],
-    cfg: UOTSolveConfig,
+    cfg: ObservationDiscrepancyConfig,
 ) -> tuple[int, np.ndarray]:
     """Minimal bootstrap worker: just calls batched_uot_solve (the heavy inner op)."""
     metrics, _details, _status = batched_uot_solve(
@@ -175,7 +209,7 @@ def bench_bootstrap(
     B_reps: np.ndarray,
     lambda_pl: np.ndarray,
     kernels: list[np.ndarray],
-    cfg: UOTSolveConfig,
+    cfg: ObservationDiscrepancyConfig,
 ) -> dict:
     """Run parallel bootstrap loop at varying max_workers, return timing table."""
     n_reps = A_reps.shape[0]
@@ -248,7 +282,7 @@ def main() -> None:
     # Part 1: calibrate_joint_lambda
     print("\n--- Part 1: calibrate_joint_lambda thread sensitivity ---")
     print(f"  N_PAIRS={N_PAIRS_CALIB}, {len(LAMBDA_GRID)} candidates, {N_REPEATS} repeats (median)")
-    print(f"  Current production setting: max_workers={len(LAMBDA_GRID)} (=candidates.size, no cap)")
+    print(f"  Current production setting: max_workers={cfg.runtime_settings.max_calibration_workers}")
     print()
 
     A_calib, B_calib = _make_pair_tensors(N_PAIRS_CALIB, rng)
@@ -259,7 +293,9 @@ def main() -> None:
     print("  " + "-" * 60)
     candidates_size = len(LAMBDA_GRID)
     for w, r in sorted(calib_results.items()):
-        label = f"{w}" + (" (current)" if w == candidates_size else "")
+        label = f"{w}" + (
+            " (current)" if w == cfg.runtime_settings.max_calibration_workers else ""
+        )
         sp = _speedup_pct(seq_ms, r["wall_ms"])
         print(
             f"  {label:>12}  {r['wall_ms']:>9.1f}  {r['rss_mb']:>8.3f}  "
@@ -272,9 +308,9 @@ def main() -> None:
     print(f"\n  Result consistency across all max_workers: {'PASS' if consistent else 'FAIL'}")
 
     # Part 2: Bootstrap loop
-    print("\n--- Part 2: Phase 6B bootstrap loop thread sensitivity ---")
+    print("\n--- Part 2: Benchmark-local bootstrap loop thread sensitivity ---")
     print(f"  N_REPS={N_REPS_BOOT}, N_PAIRS={N_PAIRS_BOOT}, {N_REPEATS} repeats (median)")
-    print(f"  Current production setting: max_workers=min(n_reps, 8)=min({N_REPS_BOOT}, 8)={min(N_REPS_BOOT, 8)}")
+    print("  Current production setting: Block 2 outer replicate loop remains serial")
     print()
 
     A_reps = np.stack([
@@ -299,14 +335,13 @@ def main() -> None:
 
     print("\n--- Summary ---")
     print("  Interpretation:")
-    print("  - calibrate_joint_lambda: GIL releases during scipy/numpy C-ext calls")
-    print("    allow real parallelism. Speedup bounded by #candidates and CPU count.")
-    print("  - Bootstrap loop: same GIL-release pattern; speedup bounded by n_reps")
-    print("    and CPU count. max_workers=8 is the production cap.")
-    print("  - BLAS/OpenMP interference risk is LOW: hot path is element-wise logsumexp,")
-    print("    not GEMM. No BLAS thread pool conflict expected.")
-    print(f"  - Note: candidates.size={len(LAMBDA_GRID)}, no cap in production.")
-    print(f"    On large grids this oversubscribes. Consider min(candidates.size, cpu_count).")
+    print("  - max_workers=2 is a safe small cap for calibration on this machine.")
+    print("  - Larger thread pools regress sharply, consistent with BLAS/OpenMP")
+    print("    oversubscription and Python scheduling overhead.")
+    print("  - Keep Block 2 outer replicate loops serial unless nested thread limits")
+    print("    are enforced explicitly.")
+    print("  - Production calibration workers are capped by RuntimeSettings and")
+    print("    candidate-grid size.")
 
     # BLAS thread probe
     try:

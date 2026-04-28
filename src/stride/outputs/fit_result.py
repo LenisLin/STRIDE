@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any, Mapping
 import numpy as np
 
 from ..errors import ContractError
+from ..objectives import LossBreakdown
 from ..latent.operators import (
     PatientRelation,
     PatientRelationAudit,
@@ -21,6 +22,11 @@ if TYPE_CHECKING:
 
 
 _ALLOWED_FIT_STATUSES: tuple[str, ...] = ("ok", "deferred", "failed")
+_ALLOWED_IMPLEMENTATION_TIERS: tuple[str, ...] = (
+    "canonical_full",
+    "approximate_proxy",
+    "assembled_relation",
+)
 _KNOWN_BRIDGE_AUXILIARY_ARRAY_FIELDS: tuple[str, ...] = (
     "matched_transition_burden",
     "raw_matched_transition_burden",
@@ -180,7 +186,7 @@ def _validate_patient_bridge_status_metadata(result: PatientBridgeResult) -> Non
 
 @dataclass(frozen=True)
 class PatientBridgeResult:
-    """Canonical per-patient bridge output contract centered on ``A``, ``d``, and ``e``."""
+    """Per-patient relation output contract centered on ``A``, ``d``, and ``e``."""
 
     patient_id: str
     fit_status: str
@@ -193,6 +199,8 @@ class PatientBridgeResult:
     audit: PatientRelationAudit | None = None
     diagnostics: Mapping[str, Any] = field(default_factory=dict)
     auxiliary: Mapping[str, Any] = field(default_factory=dict)
+    implementation_tier: str = "approximate_proxy"
+    objective: LossBreakdown | None = None
 
     def __post_init__(self) -> None:
         validate_patient_bridge_result(self)
@@ -211,6 +219,16 @@ class PatientBridgeResult:
     def is_failed(self) -> bool:
         """Return whether bridge fitting failed without emitting model arrays."""
         return self.fit_status == "failed"
+
+    @property
+    def is_canonical_full(self) -> bool:
+        """Return whether the result comes from the canonical full-method path."""
+        return self.implementation_tier == "canonical_full"
+
+    @property
+    def is_proxy_path(self) -> bool:
+        """Return whether the result comes from the explicit approximate proxy path."""
+        return self.implementation_tier == "approximate_proxy"
 
     @property
     def relation(self) -> PatientRelation | None:
@@ -240,6 +258,11 @@ def validate_patient_bridge_result(result: PatientBridgeResult) -> None:
             "PatientBridgeResult.fit_status must be one of "
             f"{_ALLOWED_FIT_STATUSES}, got {result.fit_status!r}"
         )
+    if result.implementation_tier not in _ALLOWED_IMPLEMENTATION_TIERS:
+        raise ContractError(
+            "PatientBridgeResult.implementation_tier must be one of "
+            f"{_ALLOWED_IMPLEMENTATION_TIERS}, got {result.implementation_tier!r}"
+        )
 
     has_core_array = any(array is not None for array in (result.A, result.d, result.e))
     has_all_core_arrays = all(array is not None for array in (result.A, result.d, result.e))
@@ -261,6 +284,8 @@ def validate_patient_bridge_result(result: PatientBridgeResult) -> None:
     else:
         if has_all_core_arrays or has_optional_arrays:
             raise ContractError("Non-ok PatientBridgeResult objects must not carry bridge arrays")
+    if result.objective is not None and result.fit_status != "ok":
+        raise ContractError("Only fit_status='ok' PatientBridgeResult objects may carry an objective")
     _validate_known_bridge_auxiliary_arrays(result)
     _validate_patient_bridge_status_metadata(result)
 
@@ -273,6 +298,8 @@ class STRIDEFitResult:
     patient_results: tuple[PatientBridgeResult, ...]
     recurrence: RecurrenceResult
     fit_status: str
+    implementation_tier: str = "canonical_full"
+    objective: LossBreakdown | None = None
     summaries: Mapping[str, Any] = field(default_factory=dict)
     diagnostics: Mapping[str, Any] = field(default_factory=dict)
     uncertainty: STRIDEBootstrapUncertaintyResult | None = None
@@ -294,6 +321,11 @@ def validate_stride_fit_result(result: STRIDEFitResult) -> None:
             "STRIDEFitResult.fit_status must be one of "
             f"{_ALLOWED_FIT_STATUSES}, got {result.fit_status!r}"
         )
+    if result.implementation_tier not in _ALLOWED_IMPLEMENTATION_TIERS:
+        raise ContractError(
+            "STRIDEFitResult.implementation_tier must be one of "
+            f"{_ALLOWED_IMPLEMENTATION_TIERS}, got {result.implementation_tier!r}"
+        )
 
     input_patient_ids = tuple(patient_input.patient_id for patient_input in result.patient_inputs)
     output_patient_ids = tuple(patient_result.patient_id for patient_result in result.patient_results)
@@ -310,6 +342,16 @@ def validate_stride_fit_result(result: STRIDEFitResult) -> None:
         raise ContractError(
             "STRIDEFitResult.recurrence.patient_ids must align with patient_results"
         )
+    if result.recurrence.used_patient_ids:
+        invalid_used_patient_ids = tuple(
+            patient_id
+            for patient_id in result.recurrence.used_patient_ids
+            if patient_id not in output_patient_ids
+        )
+        if invalid_used_patient_ids:
+            raise ContractError(
+                "STRIDEFitResult.recurrence.used_patient_ids must be a subset of patient_results"
+            )
 
     for patient_result in result.patient_results:
         validate_patient_bridge_result(patient_result)
@@ -329,6 +371,8 @@ def validate_stride_fit_result(result: STRIDEFitResult) -> None:
         patient_result.fit_status == "ok" for patient_result in result.patient_results
     ):
         raise ContractError("fit_status='failed' must not contain ok patient_results")
+    if result.objective is not None and result.fit_status == "failed":
+        raise ContractError("fit_status='failed' STRIDEFitResult objects must not carry an objective")
 
     if "patient_status_counts" in result.summaries:
         normalized_summary_counts = {

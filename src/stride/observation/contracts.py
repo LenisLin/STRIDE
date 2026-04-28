@@ -7,6 +7,7 @@ from typing import Any, Mapping
 import numpy as np
 
 from ..errors import ContractError
+from ..settings.runtime import RuntimeSettings
 
 
 @dataclass(frozen=True)
@@ -71,6 +72,13 @@ class ObservationDiscrepancyConfig:
     n_min_proto: float = 0.0
     tau_q: float = 0.25
     tau_mode: str = "pi_weighted_q25"
+    runtime_settings: RuntimeSettings = field(default_factory=RuntimeSettings)
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.runtime_settings, RuntimeSettings):
+            raise ContractError(
+                "ObservationDiscrepancyConfig.runtime_settings must be a RuntimeSettings object"
+            )
 
 
 @dataclass(frozen=True)

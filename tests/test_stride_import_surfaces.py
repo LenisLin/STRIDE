@@ -20,13 +20,19 @@ def test_stride_adapter_imports_succeed_in_clean_interpreter() -> None:
             "importlib.import_module('stride.adapters.ot_sinkhorn'); "
             "observation = importlib.import_module('stride.observation'); "
             "fit_module = importlib.import_module('stride.api.fit'); "
+            "proxy_module = importlib.import_module('stride.api.proxy'); "
             "workflow_module = importlib.import_module('stride.workflows.fit_stride'); "
+            "proxy_workflow_module = importlib.import_module('stride.workflows.fit_proxy'); "
             "fit_result_module = importlib.import_module('stride.outputs.fit_result'); "
             "uncertainty_module = importlib.import_module('stride.outputs.uncertainty'); "
             "assert hasattr(observation, 'build_observation_kernels'); "
             "assert hasattr(observation, 'match_observation_clouds'); "
             "assert hasattr(fit_module, 'fit_stride'); "
+            "assert hasattr(fit_module, 'fit_stride_proxy'); "
+            "assert hasattr(proxy_module, 'fit_stride_proxy'); "
             "assert hasattr(workflow_module, 'build_patient_bridge_inputs'); "
+            "assert hasattr(workflow_module, 'run_stride_proxy_fit'); "
+            "assert hasattr(proxy_workflow_module, 'run_stride_proxy_fit'); "
             "assert hasattr(fit_result_module, 'PatientBridgeResult'); "
             "assert hasattr(fit_result_module, 'STRIDEFitResult'); "
             "assert hasattr(uncertainty_module, 'PatientBootstrapConfig'); "
@@ -42,6 +48,7 @@ def test_stride_package_roots_expose_only_stable_first_pass_surfaces() -> None:
     api_module = importlib.import_module("stride.api")
     outputs_module = importlib.import_module("stride.outputs")
     fit_module = importlib.import_module("stride.api.fit")
+    proxy_module = importlib.import_module("stride.api.proxy")
     uncertainty_module = importlib.import_module("stride.outputs.uncertainty")
 
     assert set(stride_module.__all__) == {
@@ -74,6 +81,9 @@ def test_stride_package_roots_expose_only_stable_first_pass_surfaces() -> None:
     assert not hasattr(api_module, "PatientBridgeResult")
     assert not hasattr(api_module, "STRIDEModel")
     assert hasattr(fit_module, "bridge_observation_matches")
+    assert hasattr(fit_module, "fit_stride_proxy")
+    assert set(proxy_module.__all__) == {"ProxySTRIDEFitConfig", "fit_stride_proxy"}
+    assert hasattr(proxy_module, "fit_stride_proxy")
 
     assert set(outputs_module.__all__) == {
         "BootstrapArraySummary",

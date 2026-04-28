@@ -16,10 +16,12 @@ from .recurrence import (
     RecurrenceFamily,
     RecurrenceParameters,
     RecurrenceResult,
+    build_deferred_recurrence_result,
     build_recurrence_result,
     estimate_recurrence,
     summarize_recurrence_support,
     validate_recurrence_inputs,
+    vectorize_patient_relation,
 )
 
 __all__ = [
@@ -33,10 +35,12 @@ __all__ = [
     "RecurrenceFamily",
     "RecurrenceParameters",
     "RecurrenceResult",
+    "build_deferred_recurrence_result",
     "build_recurrence_result",
     "estimate_recurrence",
     "initialize_patient_relation",
     "summarize_recurrence_support",
     "validate_patient_relation",
     "validate_recurrence_inputs",
+    "vectorize_patient_relation",
 ]
