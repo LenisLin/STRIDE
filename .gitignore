@@ -8,3 +8,7 @@ build/
 dist/
 docs/history/
 .omx/
+.codex
+tasks/task_A/result_packets/
+.cache/
+.ipynb_checkpoints/
