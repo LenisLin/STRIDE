@@ -107,9 +107,12 @@ def summarize_stride_fit_result(result: STRIDEFitResult) -> dict[str, object]:
 
     return {
         "fit_status": result.fit_status,
+        "implementation_tier": result.implementation_tier,
         "n_patients": len(result.patient_results),
         "patient_status_counts": patient_status_counts,
         "recurrence_fit_status": result.recurrence.fit_status,
+        "n_recurrence_used_patients": len(result.recurrence.used_patient_ids),
+        "objective_total": (result.objective.total if result.objective is not None else None),
     }
 
 

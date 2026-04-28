@@ -1,11 +1,13 @@
-# Task A config surface for the rewritten mainline:
-# - prepare/stride_adapter consumes the Stage 0 and ordered-proxy settings below
-# - enabled_blocks is the block-local selection surface; it does not imply a shared runtime contract
+# Task A config surface for the rewritten layout:
+# - prepare and block-local workflows consume the Stage 0 and ordered-proxy settings below
+# - enabled_blocks is the block-local selection surface
 # - block-local outputs are written under the selected block run root
 task_name: "Task A: Stage 0 mapping and block-local bundles"
 
 enabled_blocks:
+  - "block0_locality_gate"
   - "block1_continuity_backbone"
+  - "block2_bounded_audit"
 
 ordered_proxy:
   domains: ["TC", "IM", "PT"]
@@ -42,29 +44,47 @@ benchmarks:
   default_seed: 0
 
 data:
-  mass_mode: "density"
+  mass_mode: "uniform"
   k_full: 25
 
-uot_params:
-  eps_schedule: [1.0, 0.5, 0.1]
-  max_iter: 4000
-  tol: 1.0e-8
-  eta_floor: 1.0e-12
-  n_min_proto: 0.0
-  tau_mode: "external_fixed_by_task"
-
 block0:
-  n_draws: 2
+  # Block 0 reuses the stable STRIDE fit path on the task-local `TC-IM` family
+  # and builds a seeded exact-count null by reassigning IM targets across
+  # different patients in the same `(n_TC, n_IM)` stratum.
   random_seed: 7
-  fixed_lambda_by_compartment:
-    TC: 1.0
-    IM: 1.5
-    PT: 2.0
-  fixed_tau_by_compartment:
-    TC: 0.5
-    IM: 0.75
-    PT: 1.0
 
 block1:
   target_alpha: 0.05
   lambda_grid: [0.05, 0.1, 0.5, 1.0, 2.0, 5.0, 10.0]
+
+block2:
+  master_seed: 17
+  primary_routes: ["patient_subsample", "leave_some_out"]
+  robust_direction_consistency_threshold: 0.6666666666666666
+  partial_direction_consistency_threshold: 0.5
+  family_estimable_fraction_threshold: 0.9
+  family_patient_support_threshold: 0.6666666666666666
+  community_estimable_fraction_threshold: 0.7
+  community_patient_support_threshold: 0.6
+  patient_subsample_fraction: 0.75
+  patient_subsample_replicates: 200
+  patient_subsample_min_patients: 24
+  leave_some_out_fraction: 0.125
+  leave_some_out_replicates: 64
+  leave_some_out_min_patients: 4
+  seed_rerun_replicates: 4
+  roi_drop_replicates: 16
+  roi_drop_min_rois_per_domain: 3
+  roi_drop_n_drop_per_domain: 1
+  primary_source_communities: [1, 10, 11, 12]
+  secondary_source_communities: [0, 3, 6, 16, 17]
+  primary_target_communities: [23, 20, 2, 22]
+  secondary_target_communities: [14, 13, 21]
+
+block3:
+  # Round 2 freezes the v2 Block 3 architecture registry-first.
+  # Live CSV/result columns stay compatibility-stable for now; Round 3 owns
+  # any public renames or deeper benchmark-math refreshes.
+  # Retired assessment-policy thresholds are no longer part of the active
+  # Block 3 config surface, and no new Block 3 knobs are added here.
+  enabled_subexperiments: ["3A", "3B", "3C"]

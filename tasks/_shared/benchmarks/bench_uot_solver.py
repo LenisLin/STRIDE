@@ -29,8 +29,9 @@ if str(SRC) not in sys.path:
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-import slotar.uot as uot_mod
-from slotar.uot import UOTSolveConfig, batched_uot_solve, precompute_logKernels
+from stride.adapters import ot_sinkhorn as uot_mod
+from stride.observation.contracts import ObservationDiscrepancyConfig
+from stride.settings import RuntimeSettings
 
 # ---------------------------------------------------------------------------
 # Benchmark configuration
@@ -54,12 +55,26 @@ def _make_tensors(n: int, k: int, rng: np.random.Generator) -> tuple[np.ndarray,
     B = rng.random((n, k)) + 0.1
     lambda_pl = np.full(n, LAMBDA_VAL, dtype=float)
     C = np.abs(np.arange(k, dtype=float)[:, None] - np.arange(k, dtype=float)[None, :])
-    kernels = precompute_logKernels(C, EPS_SCHEDULE, s_C=1.0)
+    kernels = uot_mod.build_observation_kernels(C, EPS_SCHEDULE, cost_scale=1.0)
     return A, B, lambda_pl, kernels
 
 
-def _make_cfg() -> UOTSolveConfig:
-    return UOTSolveConfig(eps_schedule=EPS_SCHEDULE, max_iter=500, tol=1e-6)
+def _make_cfg(
+    chunk_limit: int,
+    *,
+    uot_backend: str = "numpy",
+    device: str = "cpu",
+) -> ObservationDiscrepancyConfig:
+    return ObservationDiscrepancyConfig(
+        eps_schedule=tuple(EPS_SCHEDULE),
+        max_iter=500,
+        tol=1e-6,
+        runtime_settings=RuntimeSettings(
+            uot_backend=uot_backend,
+            device=device,
+            plan_chunk_elements=int(chunk_limit),
+        ),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -83,13 +98,12 @@ def _run_benchmark_single(n: int, chunk_limit: int) -> dict[str, float]:
     """Run one (N, chunk_limit) benchmark, return timing + RSS metrics."""
     rng = np.random.default_rng(RNG_SEED)
     A, B, lambda_pl, kernels = _make_tensors(n, K, rng)
-    cfg = _make_cfg()
-
-    # Patch the module-level constant to control chunking
-    orig = uot_mod._EXTRACTION_TARGET_PLAN_ELEMENTS
-    uot_mod._EXTRACTION_TARGET_PLAN_ELEMENTS = chunk_limit
+    cfg = _make_cfg(chunk_limit)
 
     results: list[dict[str, float]] = []
+    orig_solve = getattr(uot_mod, "_batched_log_sinkhorn_eps_scaling", None)
+    orig_extract = getattr(uot_mod, "_extract_batched_metrics", None)
+    can_patch_internal_phases = callable(orig_solve) and callable(orig_extract)
     for _ in range(N_REPEATS):
         # Patch the two internal functions to get separate phase timings.
         # We do this by wrapping with a lightweight timer that records the
@@ -97,45 +111,45 @@ def _run_benchmark_single(n: int, chunk_limit: int) -> dict[str, float]:
         solve_timer = _PhaseTimer()
         extract_timer = _PhaseTimer()
 
-        orig_solve = uot_mod._batched_log_sinkhorn_eps_scaling
-        orig_extract = uot_mod._extract_batched_metrics
-
         def _timed_solve(*args, **kwargs):
+            assert orig_solve is not None
             with solve_timer:
                 return orig_solve(*args, **kwargs)
 
         def _timed_extract(*args, **kwargs):
+            assert orig_extract is not None
             with extract_timer:
                 return orig_extract(*args, **kwargs)
 
-        uot_mod._batched_log_sinkhorn_eps_scaling = _timed_solve
-        uot_mod._extract_batched_metrics = _timed_extract
+        if can_patch_internal_phases:
+            uot_mod._batched_log_sinkhorn_eps_scaling = _timed_solve
+            uot_mod._extract_batched_metrics = _timed_extract
 
-        tracemalloc.start()
-        t0 = time.perf_counter()
-        batched_uot_solve(
-            A=A,
-            B=B,
-            lambda_pl=lambda_pl,
-            kernels=kernels,
-            cfg=cfg,
-            return_plan=True,
-        )
-        total_ms = (time.perf_counter() - t0) * 1000.0
-        _, peak = tracemalloc.get_traced_memory()
-        tracemalloc.stop()
-
-        uot_mod._batched_log_sinkhorn_eps_scaling = orig_solve
-        uot_mod._extract_batched_metrics = orig_extract
+        try:
+            tracemalloc.start()
+            t0 = time.perf_counter()
+            uot_mod.batched_uot_solve(
+                A=A,
+                B=B,
+                lambda_pl=lambda_pl,
+                kernels=kernels,
+                cfg=cfg,
+                return_plan=True,
+            )
+            total_ms = (time.perf_counter() - t0) * 1000.0
+            _, peak = tracemalloc.get_traced_memory()
+            tracemalloc.stop()
+        finally:
+            if can_patch_internal_phases:
+                uot_mod._batched_log_sinkhorn_eps_scaling = orig_solve
+                uot_mod._extract_batched_metrics = orig_extract
 
         results.append({
             "total_ms": total_ms,
-            "solve_ms": solve_timer.elapsed_ms,
-            "extract_ms": extract_timer.elapsed_ms,
+            "solve_ms": solve_timer.elapsed_ms if can_patch_internal_phases else float("nan"),
+            "extract_ms": extract_timer.elapsed_ms if can_patch_internal_phases else float("nan"),
             "peak_rss_mb": peak / 1024 / 1024,
         })
-
-    uot_mod._EXTRACTION_TARGET_PLAN_ELEMENTS = orig
 
     # Report median over repeats
     return {
@@ -144,6 +158,50 @@ def _run_benchmark_single(n: int, chunk_limit: int) -> dict[str, float]:
         "extract_ms": float(np.median([r["extract_ms"] for r in results])),
         "peak_rss_mb": float(np.median([r["peak_rss_mb"] for r in results])),
         "rows_per_sec": n / (float(np.median([r["total_ms"] for r in results])) / 1000.0),
+    }
+
+
+def _resolve_requested_backend(
+    requested_backend: str,
+    requested_device: str,
+) -> str:
+    if requested_backend != "torch":
+        return "numpy/cpu"
+    try:
+        import torch
+    except ImportError:
+        return "numpy/cpu (torch unavailable)"
+    if requested_device.startswith("cuda") and torch.cuda.is_available():
+        return f"torch/{requested_device}"
+    return "torch/cpu"
+
+
+def _run_backend_smoke(
+    n: int,
+    *,
+    requested_backend: str,
+    requested_device: str,
+) -> dict[str, object]:
+    rng = np.random.default_rng(RNG_SEED)
+    A, B, lambda_pl, kernels = _make_tensors(n, K, rng)
+    cfg = _make_cfg(
+        250_000,
+        uot_backend=requested_backend,
+        device=requested_device,
+    )
+    t0 = time.perf_counter()
+    metrics, _details, status = uot_mod.batched_uot_solve(
+        A=A,
+        B=B,
+        lambda_pl=lambda_pl,
+        kernels=kernels,
+        cfg=cfg,
+    )
+    return {
+        "elapsed_ms": (time.perf_counter() - t0) * 1000.0,
+        "status": status,
+        "transport": metrics["T"],
+        "resolved_backend": _resolve_requested_backend(requested_backend, requested_device),
     }
 
 
@@ -194,6 +252,41 @@ def main() -> None:
     print("  - Peak RSS reduction reflects memory savings from not materialising")
     print("    the full dense [N, K, K] plan slab before writing to output arrays")
     print("  - Remaining time in 'solve_ms' is outside this refactor's scope")
+    print()
+    print("--- Backend Smoke: NumPy vs Torch ---")
+    smoke_n = 128
+    baseline = _run_backend_smoke(smoke_n, requested_backend="numpy", requested_device="cpu")
+    print(f"{'requested':>18}  {'resolved':>22}  {'wall_ms':>9}  {'status_ok':>9}  {'max_|ΔT|':>10}")
+    print(" " + "-" * 76)
+    for requested_backend, requested_device in (
+        ("numpy", "cpu"),
+        ("torch", "cpu"),
+        ("torch", "cuda"),
+    ):
+        result = _run_backend_smoke(
+            smoke_n,
+            requested_backend=requested_backend,
+            requested_device=requested_device,
+        )
+        max_delta = float(
+            np.nanmax(
+                np.abs(
+                    np.asarray(result["transport"], dtype=float)
+                    - np.asarray(baseline["transport"], dtype=float)
+                )
+            )
+        )
+        status_ok = bool(np.all(np.asarray(result["status"], dtype=object) == "ok"))
+        requested_label = f"{requested_backend}/{requested_device}"
+        print(
+            f"{requested_label:>18}  {str(result['resolved_backend']):>22}  "
+            f"{float(result['elapsed_ms']):>9.1f}  {str(status_ok):>9}  {max_delta:>10.3e}"
+        )
+
+    print()
+    print("Smoke interpretation:")
+    print("  - Torch rows verify solver execution and numerical agreement against NumPy.")
+    print("  - On hosts without CUDA, torch/cuda requests should fall back cleanly to CPU.")
 
 
 if __name__ == "__main__":

@@ -9,6 +9,16 @@ import numpy as np
 from ..errors import ContractError
 
 
+def _normalize_composition(weights: np.ndarray | None) -> np.ndarray | None:
+    if weights is None:
+        return None
+    arr = np.asarray(weights, dtype=float).reshape(-1)
+    total = float(np.sum(arr, dtype=float))
+    if total <= 0.0:
+        return np.full(arr.shape, np.nan, dtype=float)
+    return arr / total
+
+
 @dataclass(frozen=True)
 class ContinuityOperator:
     """Patient-level continuity operator on the shared state basis."""
@@ -95,6 +105,48 @@ class PatientRelation:
     def emergence(self) -> EmergenceComponent:
         """Return the emergence component as a typed view."""
         return EmergenceComponent(weights=self.e, state_ids=self.state_ids)
+
+    @property
+    def T(self) -> np.ndarray:
+        """Return the conceptual block relation ``T = [A | d]``."""
+        return np.concatenate([self.A, self.d[:, None]], axis=1)
+
+    @property
+    def q_minus(self) -> np.ndarray | None:
+        """Return the derived pre-side normalized composition."""
+        return _normalize_composition(self.mu_minus)
+
+    @property
+    def q_plus(self) -> np.ndarray | None:
+        """Return the derived post-side normalized composition."""
+        return _normalize_composition(self.mu_plus)
+
+    @property
+    def m_depletion(self) -> np.ndarray | None:
+        """Return the burden-scale depletion summary ``m^(d)`` on the shared axis."""
+        if self.mu_minus is None:
+            return None
+        return np.asarray(self.d, dtype=float) * np.asarray(self.mu_minus, dtype=float)
+
+    @property
+    def m_emergence(self) -> np.ndarray | None:
+        """Return the burden-scale emergence summary ``m^(e)`` on the shared axis."""
+        if self.mu_minus is None:
+            return None
+        emergence_scale = float(np.sum(np.asarray(self.mu_minus, dtype=float), dtype=float))
+        return np.asarray(self.e, dtype=float) * emergence_scale
+
+    @property
+    def burden_auxiliaries(self) -> Mapping[str, np.ndarray | None]:
+        """Return the canonical burden/composition auxiliaries as one mapping."""
+        return {
+            "mu_minus": self.mu_minus,
+            "mu_plus": self.mu_plus,
+            "q_minus": self.q_minus,
+            "q_plus": self.q_plus,
+            "m_depletion": self.m_depletion,
+            "m_emergence": self.m_emergence,
+        }
 
 
 def validate_patient_relation(

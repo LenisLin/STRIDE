@@ -1,7 +1,7 @@
 """Observation-layer discrepancy helpers backed by OT adapter implementations."""
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 
 import numpy as np
 
@@ -64,6 +64,7 @@ def match_observation_clouds(
     tau_external: np.ndarray | None = None,
     external_support_mask: np.ndarray | None = None,
     return_plan: bool = False,
+    plan_consumer: Callable[[np.ndarray], None] | None = None,
 ) -> ObservationDiscrepancyResult:
     """Match paired observation clouds on a shared ``K``-state axis.
 
@@ -80,6 +81,7 @@ def match_observation_clouds(
         tau_external=tau_external,
         external_support_mask=external_support_mask,
         return_plan=return_plan,
+        plan_consumer=plan_consumer,
     )
     return ObservationDiscrepancyResult(metrics=metrics, details=details, status=status)
 
@@ -94,6 +96,7 @@ def compute_observation_discrepancy(
     tau_external: np.ndarray | None = None,
     external_support_mask: np.ndarray | None = None,
     return_plan: bool = False,
+    plan_consumer: Callable[[np.ndarray], None] | None = None,
 ) -> ObservationDiscrepancy:
     """Compute one named discrepancy between two domain-stratified measures.
 
@@ -119,6 +122,7 @@ def compute_observation_discrepancy(
         tau_external=tau_external,
         external_support_mask=external_support_mask,
         return_plan=return_plan,
+        plan_consumer=plan_consumer,
     )
     return ObservationDiscrepancy(
         pre_domain=pre_measure.domain_label,

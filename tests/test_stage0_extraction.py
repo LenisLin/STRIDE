@@ -7,7 +7,7 @@ from pathlib import Path
 import pandas as pd
 
 ROOT = Path(__file__).resolve().parents[1]
-EXTRACT_SCRIPT = ROOT / "tasks" / "task_A" / "extract_crlm_coldata.R"
+EXTRACT_SCRIPT = ROOT / "tasks" / "task_A" / "stage0" / "extract_crlm_coldata.R"
 
 
 def _run_r(code: str) -> subprocess.CompletedProcess[str]:

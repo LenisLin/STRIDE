@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib.util
 import sys
 import types
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import numpy as np
@@ -22,8 +23,11 @@ if importlib.util.find_spec("anndata") is None:
     anndata_stub.AnnData = _AnnData
     sys.modules["anndata"] = anndata_stub
 
+import slotar.compat.uot as compat_uot_mod
 import slotar.uot as uot_mod
 from slotar.uot import UOTSolveConfig, batched_uot_solve, precompute_logKernels
+from stride.observation import calibrate_match_penalty
+from stride.settings import RuntimeSettings
 
 CORE_METRICS = ("T", "D_pos", "B_pos", "d_rel", "b_rel", "M")
 ALL_METRICS = (*CORE_METRICS, "R", "tau")
@@ -349,31 +353,220 @@ def test_batched_uot_matches_singletons_with_chunked_extraction() -> None:
         ],
         dtype=float,
     )
-    cfg = UOTSolveConfig(eps_schedule=[1.0, 0.2], max_iter=4000, tol=1e-8)
+    cfg = UOTSolveConfig(
+        eps_schedule=[1.0, 0.2],
+        max_iter=4000,
+        tol=1e-8,
+        runtime_settings=RuntimeSettings(
+            max_calibration_workers=1,
+            plan_chunk_elements=4,
+        ),
+    )
     kernels = precompute_logKernels(cost, cfg.eps_schedule)
 
-    previous_target = uot_mod._EXTRACTION_TARGET_PLAN_ELEMENTS
-    try:
-        uot_mod._EXTRACTION_TARGET_PLAN_ELEMENTS = 4
-        batched_metrics, batched_details, batched_status = batched_uot_solve(
-            A=A,
-            B=B,
-            lambda_pl=lambda_pl,
-            kernels=kernels,
-            cfg=cfg,
-            return_plan=True,
-        )
-        singleton_metrics, singleton_details, singleton_status = _run_singletons(
-            A=A,
-            B=B,
-            lambda_pl=lambda_pl,
-            kernels=kernels,
-            cfg=cfg,
-            return_plan=True,
-        )
-    finally:
-        uot_mod._EXTRACTION_TARGET_PLAN_ELEMENTS = previous_target
+    batched_metrics, batched_details, batched_status = batched_uot_solve(
+        A=A,
+        B=B,
+        lambda_pl=lambda_pl,
+        kernels=kernels,
+        cfg=cfg,
+        return_plan=True,
+    )
+    singleton_metrics, singleton_details, singleton_status = _run_singletons(
+        A=A,
+        B=B,
+        lambda_pl=lambda_pl,
+        kernels=kernels,
+        cfg=cfg,
+        return_plan=True,
+    )
 
     np.testing.assert_array_equal(batched_status, singleton_status)
     _assert_metric_match(batched_metrics, singleton_metrics, names=ALL_METRICS)
     _assert_detail_match(batched_details, singleton_details, names=(*DETAIL_KEYS, "Pi"))
+
+
+def test_batched_uot_plan_consumer_streams_chunk_sums_without_materializing_plan_details() -> None:
+    A = np.array([[0.60, 0.40], [0.20, 0.80]], dtype=float)
+    B = np.array([[0.30, 0.70], [0.50, 0.50]], dtype=float)
+    lambda_pl = np.array([1.0, 1.0], dtype=float)
+    cfg = UOTSolveConfig(
+        eps_schedule=[1.0, 0.2],
+        max_iter=4000,
+        tol=1e-8,
+        runtime_settings=RuntimeSettings(
+            max_calibration_workers=1,
+            plan_chunk_elements=2,
+        ),
+    )
+    kernels = precompute_logKernels(np.asarray([[0.0, 1.0], [1.0, 0.0]], dtype=float), cfg.eps_schedule)
+
+    streamed_chunks: list[np.ndarray] = []
+    metrics, details, status = batched_uot_solve(
+        A=A,
+        B=B,
+        lambda_pl=lambda_pl,
+        kernels=kernels,
+        cfg=cfg,
+        plan_consumer=lambda plan_chunk: streamed_chunks.append(np.sum(plan_chunk, axis=0, dtype=float)),
+    )
+    ref_metrics, ref_details, ref_status = batched_uot_solve(
+        A=A,
+        B=B,
+        lambda_pl=lambda_pl,
+        kernels=kernels,
+        cfg=cfg,
+        return_plan=True,
+    )
+
+    np.testing.assert_array_equal(status, np.asarray(["ok", "ok"], dtype=object))
+    np.testing.assert_array_equal(status, ref_status)
+    _assert_metric_match(metrics, ref_metrics, names=ALL_METRICS)
+    assert "matching_plan" not in details
+    np.testing.assert_allclose(
+        np.sum(np.stack(streamed_chunks), axis=0, dtype=float),
+        np.sum(ref_details["Pi"], axis=0, dtype=float),
+        rtol=1e-6,
+        atol=1e-8,
+    )
+
+
+def test_legacy_slotar_wrappers_use_local_runtime_chunk_configs_without_global_crosstalk() -> None:
+    A = np.array([[0.60, 0.40], [0.20, 0.80]], dtype=float)
+    B = np.array([[0.30, 0.70], [0.50, 0.50]], dtype=float)
+    lambda_pl = np.array([1.0, 1.0], dtype=float)
+    kernels = precompute_logKernels(np.asarray([[0.0, 1.0], [1.0, 0.0]], dtype=float), [1.0, 0.2])
+
+    def _solve(module: object, chunk_limit: int) -> tuple[dict[str, np.ndarray], dict[str, np.ndarray], np.ndarray]:
+        cfg = UOTSolveConfig(
+            eps_schedule=[1.0, 0.2],
+            max_iter=4000,
+            tol=1e-8,
+            runtime_settings=RuntimeSettings(
+                max_calibration_workers=1,
+                plan_chunk_elements=chunk_limit,
+            ),
+        )
+        return module.batched_uot_solve(  # type: ignore[attr-defined]
+            A=A,
+            B=B,
+            lambda_pl=lambda_pl,
+            kernels=kernels,
+            cfg=cfg,
+            return_plan=True,
+        )
+
+    public_target_before = uot_mod._EXTRACTION_TARGET_PLAN_ELEMENTS
+    compat_target_before = compat_uot_mod._EXTRACTION_TARGET_PLAN_ELEMENTS
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        public_future = pool.submit(_solve, uot_mod, 4)
+        compat_future = pool.submit(_solve, compat_uot_mod, 10**9)
+        public_metrics, public_details, public_status = public_future.result(timeout=20)
+        compat_metrics, compat_details, compat_status = compat_future.result(timeout=20)
+
+    np.testing.assert_array_equal(public_status, compat_status)
+    _assert_metric_match(public_metrics, compat_metrics, names=ALL_METRICS)
+    _assert_detail_match(public_details, compat_details, names=(*DETAIL_KEYS, "Pi"))
+    assert uot_mod._EXTRACTION_TARGET_PLAN_ELEMENTS == public_target_before
+    assert compat_uot_mod._EXTRACTION_TARGET_PLAN_ELEMENTS == compat_target_before
+
+
+def test_batched_uot_runtime_chunk_configs_can_run_concurrently_without_hanging() -> None:
+    A = np.array(
+        [
+            [0.60, 0.40],
+            [0.25, 0.75],
+            [0.50, 0.50],
+        ],
+        dtype=float,
+    )
+    B = np.array(
+        [
+            [0.30, 0.70],
+            [0.55, 0.45],
+            [0.20, 0.80],
+        ],
+        dtype=float,
+    )
+    lambda_pl = np.array([1.2, 0.9, 1.5], dtype=float)
+    cost = np.array([[0.0, 0.8], [0.8, 0.0]], dtype=float)
+    kernels = precompute_logKernels(cost, [1.0, 0.2])
+
+    def _solve(chunk_limit: int) -> tuple[dict[str, np.ndarray], dict[str, np.ndarray], np.ndarray]:
+        cfg = UOTSolveConfig(
+            eps_schedule=[1.0, 0.2],
+            max_iter=4000,
+            tol=1e-8,
+            runtime_settings=RuntimeSettings(
+                max_calibration_workers=1,
+                plan_chunk_elements=chunk_limit,
+            ),
+        )
+        return batched_uot_solve(
+            A=A,
+            B=B,
+            lambda_pl=lambda_pl,
+            kernels=kernels,
+            cfg=cfg,
+            return_plan=True,
+        )
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        small_future = pool.submit(_solve, 4)
+        large_future = pool.submit(_solve, 10**9)
+        small_metrics, small_details, small_status = small_future.result(timeout=20)
+        large_metrics, large_details, large_status = large_future.result(timeout=20)
+
+    np.testing.assert_array_equal(small_status, large_status)
+    _assert_metric_match(small_metrics, large_metrics, names=ALL_METRICS)
+    _assert_detail_match(small_details, large_details, names=(*DETAIL_KEYS, "Pi"))
+
+
+def test_calibration_worker_limits_preserve_result_under_concurrent_calls() -> None:
+    A = np.array(
+        [
+            [0.60, 0.40],
+            [0.25, 0.75],
+            [0.50, 0.50],
+            [0.10, 0.90],
+        ],
+        dtype=float,
+    )
+    B = np.array(
+        [
+            [0.30, 0.70],
+            [0.55, 0.45],
+            [0.20, 0.80],
+            [0.15, 0.85],
+        ],
+        dtype=float,
+    )
+    kernels = precompute_logKernels(np.asarray([[0.0, 0.8], [0.8, 0.0]], dtype=float), [1.0, 0.2])
+    candidate_grid = (0.1, 0.5, 1.0, 2.0, 5.0)
+
+    def _calibrate(max_workers: int) -> float:
+        cfg = UOTSolveConfig(
+            eps_schedule=[1.0, 0.2],
+            max_iter=4000,
+            tol=1e-8,
+            runtime_settings=RuntimeSettings(
+                max_calibration_workers=max_workers,
+                plan_chunk_elements=4,
+            ),
+        )
+        return calibrate_match_penalty(
+            A=A,
+            B=B,
+            candidate_grid=candidate_grid,
+            kernels=kernels,
+            cfg=cfg,
+            target_alpha=0.05,
+        )
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        one_worker = pool.submit(_calibrate, 1)
+        two_workers = pool.submit(_calibrate, 2)
+        lambda_one = one_worker.result(timeout=20)
+        lambda_two = two_workers.result(timeout=20)
+
+    assert lambda_one == lambda_two

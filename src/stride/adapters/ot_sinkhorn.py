@@ -5,9 +5,10 @@ by ``stride.observation`` without defining the main public package surface.
 """
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
+from typing import Any
 
 import numpy as np
 from scipy.special import logsumexp
@@ -15,6 +16,7 @@ from scipy.special import logsumexp
 from ..errors import ContractError
 from ..observation.contracts import ObservationDiscrepancyConfig as ObservationMatchConfig
 from ..observation.validation import validate_observation_match_inputs
+from ..settings.runtime import RuntimeSettings
 
 _EXTRACTION_TARGET_PLAN_ELEMENTS = 250_000
 STATUS_OK = "ok"
@@ -23,6 +25,7 @@ ERR_UOT_EMPTY_MASS_TARGET = "ERR_UOT_EMPTY_MASS_TARGET"
 ERR_UOT_EMPTY_SUPPORT = "ERR_UOT_EMPTY_SUPPORT"
 ERR_UOT_NUMERICAL = "ERR_UOT_NUMERICAL"
 OBSERVATION_METRIC_NAMES: tuple[str, ...] = ("T", "D_pos", "B_pos", "d_rel", "b_rel", "M", "R", "tau")
+PlanChunkConsumer = Callable[[np.ndarray], None]
 
 
 @dataclass(frozen=True)
@@ -33,6 +36,30 @@ class _WorkingBatch:
     mask: np.ndarray
     lambda_pl: np.ndarray
     tau: np.ndarray | None
+
+
+def _resolve_runtime_settings(cfg: ObservationMatchConfig) -> RuntimeSettings:
+    runtime_settings = getattr(cfg, "runtime_settings", None)
+    if runtime_settings is None:
+        return RuntimeSettings()
+    if not isinstance(runtime_settings, RuntimeSettings):
+        raise ContractError("cfg.runtime_settings must be a RuntimeSettings object")
+    return runtime_settings
+
+
+def _resolve_torch_module_and_device(
+    runtime_settings: RuntimeSettings,
+) -> tuple[Any, Any] | None:
+    resolved_backend, resolved_device = runtime_settings.resolved_execution()
+    if resolved_backend != "torch":
+        return None
+
+    try:
+        import torch
+    except ImportError:
+        return None
+
+    return torch, torch.device(resolved_device)
 
 
 def _active_mask_from_combined_mass(combined_mass: np.ndarray, n_min_proto: float) -> np.ndarray:
@@ -191,7 +218,8 @@ def calibrate_match_penalty(
     if not np.isfinite(target_alpha):
         raise ContractError("target_alpha must be finite")
 
-    with ThreadPoolExecutor(max_workers=2) as pool:
+    max_workers = _resolve_runtime_settings(cfg).resolved_max_calibration_workers(candidates.size)
+    with ThreadPoolExecutor(max_workers=max_workers) as pool:
         futures = {
             pool.submit(_calibrate_one_candidate, c, A, B, kernels, cfg, target_alpha): c
             for c in candidates
@@ -341,8 +369,8 @@ def _screen_batch(
             active_mask = _active_mask_from_combined_mass(A + B, cfg.n_min_proto)
         else:
             active_mask = external_support_mask
-        active_source_mass = np.sum(np.where(active_mask, A, 0.0), axis=1, dtype=float)
-        active_target_mass = np.sum(np.where(active_mask, B, 0.0), axis=1, dtype=float)
+        active_source_mass = np.sum(A, axis=1, dtype=float, where=active_mask)
+        active_target_mass = np.sum(B, axis=1, dtype=float, where=active_mask)
 
     numerical = ~np.isfinite(source_mass) | ~np.isfinite(target_mass)
     status[numerical] = ERR_UOT_NUMERICAL
@@ -417,7 +445,7 @@ def _rowwise_max_update(
     return np.maximum(np.max(delta_u, axis=1), np.max(delta_v, axis=1))
 
 
-def _batched_log_sinkhorn_eps_scaling(
+def _batched_log_sinkhorn_eps_scaling_numpy(
     batch: _WorkingBatch,
     kernels: Sequence[np.ndarray],
     cfg: ObservationMatchConfig,
@@ -512,6 +540,212 @@ def _batched_log_sinkhorn_eps_scaling(
     return batch, log_u, log_v, last_log_kernel, last_eps
 
 
+def _invalid_scaling_rows_torch(
+    torch_mod: Any,
+    log_u: Any,
+    log_v: Any,
+    mask: Any,
+    source_positive: Any,
+    target_positive: Any,
+) -> np.ndarray:
+    bad_u = (source_positive & ~torch_mod.isfinite(log_u)) | (
+        mask & (torch_mod.isnan(log_u) | torch_mod.isposinf(log_u))
+    )
+    bad_v = (target_positive & ~torch_mod.isfinite(log_v)) | (
+        mask & (torch_mod.isnan(log_v) | torch_mod.isposinf(log_v))
+    )
+    return torch_mod.any(bad_u | bad_v, dim=1).to("cpu").numpy()
+
+
+def _rowwise_max_update_torch(
+    torch_mod: Any,
+    log_u_prev: Any,
+    log_u_next: Any,
+    log_v_prev: Any,
+    log_v_next: Any,
+    source_positive: Any,
+    target_positive: Any,
+) -> np.ndarray:
+    delta_u = torch_mod.zeros_like(log_u_prev)
+    delta_v = torch_mod.zeros_like(log_v_prev)
+
+    valid_u = source_positive & torch_mod.isfinite(log_u_prev) & torch_mod.isfinite(log_u_next)
+    valid_v = target_positive & torch_mod.isfinite(log_v_prev) & torch_mod.isfinite(log_v_next)
+
+    delta_u[valid_u] = torch_mod.abs(log_u_next[valid_u] - log_u_prev[valid_u])
+    delta_v[valid_v] = torch_mod.abs(log_v_next[valid_v] - log_v_prev[valid_v])
+    return torch_mod.maximum(
+        torch_mod.max(delta_u, dim=1).values,
+        torch_mod.max(delta_v, dim=1).values,
+    ).to("cpu").numpy()
+
+
+def _batched_log_sinkhorn_eps_scaling_torch(
+    batch: _WorkingBatch,
+    kernels: Sequence[np.ndarray],
+    cfg: ObservationMatchConfig,
+    status: np.ndarray,
+    runtime_settings: RuntimeSettings,
+) -> tuple[_WorkingBatch, np.ndarray, np.ndarray, np.ndarray, float] | None:
+    torch_runtime = _resolve_torch_module_and_device(runtime_settings)
+    if torch_runtime is None:
+        return _batched_log_sinkhorn_eps_scaling_numpy(
+            batch=batch,
+            kernels=kernels,
+            cfg=cfg,
+            status=status,
+        )
+
+    torch_mod, device = torch_runtime
+    a_t = torch_mod.as_tensor(batch.A, dtype=torch_mod.float64, device=device)
+    b_t = torch_mod.as_tensor(batch.B, dtype=torch_mod.float64, device=device)
+    mask_t = torch_mod.as_tensor(batch.mask, dtype=torch_mod.bool, device=device)
+    lambda_t = torch_mod.as_tensor(batch.lambda_pl, dtype=torch_mod.float64, device=device)
+
+    source_positive_t = mask_t & (a_t > 0.0)
+    target_positive_t = mask_t & (b_t > 0.0)
+    log_a_t = torch_mod.full_like(a_t, -torch_mod.inf)
+    log_b_t = torch_mod.full_like(b_t, -torch_mod.inf)
+    log_a_t[source_positive_t] = torch_mod.log(a_t[source_positive_t])
+    log_b_t[target_positive_t] = torch_mod.log(b_t[target_positive_t])
+    log_u_t = torch_mod.where(mask_t, torch_mod.zeros_like(a_t), torch_mod.full_like(a_t, -torch_mod.inf))
+    log_v_t = torch_mod.where(mask_t, torch_mod.zeros_like(b_t), torch_mod.full_like(b_t, -torch_mod.inf))
+
+    last_log_kernel_t: Any | None = None
+    last_log_kernel_np: np.ndarray | None = None
+    last_eps: float | None = None
+
+    for eps, log_kernel in zip(cfg.eps_schedule, kernels, strict=True):
+        if batch.row_idx.size == 0:
+            return None
+
+        last_eps = float(eps)
+        last_log_kernel_np = np.asarray(log_kernel, dtype=float)
+        last_log_kernel_t = torch_mod.as_tensor(
+            last_log_kernel_np,
+            dtype=torch_mod.float64,
+            device=device,
+        )
+        theta_t = lambda_t[:, None] / (lambda_t[:, None] + last_eps)
+        row_delta = np.full(batch.row_idx.shape, np.inf, dtype=float)
+        converged = False
+
+        for _ in range(cfg.max_iter):
+            log_kv_t = torch_mod.logsumexp(
+                last_log_kernel_t[None, :, :] + log_v_t[:, None, :],
+                dim=2,
+            )
+            log_u_next_t = theta_t * (log_a_t - log_kv_t)
+            log_u_next_t = torch_mod.where(mask_t, log_u_next_t, torch_mod.full_like(log_u_next_t, -torch_mod.inf))
+
+            log_ktu_t = torch_mod.logsumexp(
+                last_log_kernel_t.transpose(0, 1)[None, :, :] + log_u_next_t[:, None, :],
+                dim=2,
+            )
+            log_v_next_t = theta_t * (log_b_t - log_ktu_t)
+            log_v_next_t = torch_mod.where(mask_t, log_v_next_t, torch_mod.full_like(log_v_next_t, -torch_mod.inf))
+
+            invalid_rows = _invalid_scaling_rows_torch(
+                torch_mod=torch_mod,
+                log_u=log_u_next_t,
+                log_v=log_v_next_t,
+                mask=mask_t,
+                source_positive=source_positive_t,
+                target_positive=target_positive_t,
+            )
+            if np.any(invalid_rows):
+                status[batch.row_idx[invalid_rows]] = ERR_UOT_NUMERICAL
+                keep = ~invalid_rows
+                keep_t = torch_mod.as_tensor(keep, dtype=torch_mod.bool, device=device)
+                batch = _subset_working_batch(batch, keep)
+                a_t = a_t[keep_t]
+                b_t = b_t[keep_t]
+                mask_t = mask_t[keep_t]
+                lambda_t = lambda_t[keep_t]
+                log_a_t = log_a_t[keep_t]
+                log_b_t = log_b_t[keep_t]
+                source_positive_t = source_positive_t[keep_t]
+                target_positive_t = target_positive_t[keep_t]
+                log_u_t = log_u_t[keep_t]
+                log_v_t = log_v_t[keep_t]
+                log_u_next_t = log_u_next_t[keep_t]
+                log_v_next_t = log_v_next_t[keep_t]
+                theta_t = theta_t[keep_t]
+                if batch.row_idx.size == 0:
+                    return None
+
+            row_delta = _rowwise_max_update_torch(
+                torch_mod=torch_mod,
+                log_u_prev=log_u_t,
+                log_u_next=log_u_next_t,
+                log_v_prev=log_v_t,
+                log_v_next=log_v_next_t,
+                source_positive=source_positive_t,
+                target_positive=target_positive_t,
+            )
+            log_u_t = log_u_next_t
+            log_v_t = log_v_next_t
+
+            if np.all(row_delta <= cfg.tol):
+                converged = True
+                break
+
+        if not converged:
+            not_converged = row_delta > cfg.tol
+            if np.any(not_converged):
+                status[batch.row_idx[not_converged]] = ERR_UOT_NUMERICAL
+                keep = ~not_converged
+                keep_t = torch_mod.as_tensor(keep, dtype=torch_mod.bool, device=device)
+                batch = _subset_working_batch(batch, keep)
+                a_t = a_t[keep_t]
+                b_t = b_t[keep_t]
+                mask_t = mask_t[keep_t]
+                lambda_t = lambda_t[keep_t]
+                log_a_t = log_a_t[keep_t]
+                log_b_t = log_b_t[keep_t]
+                source_positive_t = source_positive_t[keep_t]
+                target_positive_t = target_positive_t[keep_t]
+                log_u_t = log_u_t[keep_t]
+                log_v_t = log_v_t[keep_t]
+                if batch.row_idx.size == 0:
+                    return None
+
+    if (
+        last_log_kernel_t is None
+        or last_log_kernel_np is None
+        or last_eps is None
+        or batch.row_idx.size == 0
+    ):
+        return None
+
+    log_u = log_u_t.to("cpu").numpy()
+    log_v = log_v_t.to("cpu").numpy()
+    return batch, log_u, log_v, last_log_kernel_np, last_eps
+
+
+def _batched_log_sinkhorn_eps_scaling(
+    batch: _WorkingBatch,
+    kernels: Sequence[np.ndarray],
+    cfg: ObservationMatchConfig,
+    status: np.ndarray,
+) -> tuple[_WorkingBatch, np.ndarray, np.ndarray, np.ndarray, float] | None:
+    runtime_settings = _resolve_runtime_settings(cfg)
+    if runtime_settings.uot_backend == "torch":
+        return _batched_log_sinkhorn_eps_scaling_torch(
+            batch=batch,
+            kernels=kernels,
+            cfg=cfg,
+            status=status,
+            runtime_settings=runtime_settings,
+        )
+    return _batched_log_sinkhorn_eps_scaling_numpy(
+        batch=batch,
+        kernels=kernels,
+        cfg=cfg,
+        status=status,
+    )
+
+
 def _empty_extracted_details(
     n_proto: int,
     *,
@@ -528,14 +762,22 @@ def _empty_extracted_details(
         "B_k": np.empty((0, n_proto), dtype=float),
     }
     if return_plan:
-        details["matching_plan"] = np.empty((0, n_proto, n_proto), dtype=float)
-        details["Pi"] = np.empty((0, n_proto, n_proto), dtype=float)
+        empty_plan = np.empty((0, n_proto, n_proto), dtype=float)
+        details["matching_plan"] = empty_plan
+        details["plan"] = empty_plan
+        details["Pi"] = empty_plan
     return details
 
 
-def _extraction_chunk_size(n_proto: int) -> int:
-    plan_elements = max(int(n_proto) * int(n_proto), 1)
-    return max(1, int(_EXTRACTION_TARGET_PLAN_ELEMENTS // plan_elements))
+def _extraction_chunk_size(
+    n_proto: int,
+    cfg: ObservationMatchConfig,
+) -> int:
+    runtime_settings = _resolve_runtime_settings(cfg)
+    return runtime_settings.resolved_plan_chunk_rows(
+        n_proto,
+        fallback_plan_chunk_elements=_EXTRACTION_TARGET_PLAN_ELEMENTS,
+    )
 
 
 def _extract_batched_metrics(
@@ -544,11 +786,13 @@ def _extract_batched_metrics(
     log_v: np.ndarray,
     last_log_kernel: np.ndarray,
     last_eps: float,
+    cfg: ObservationMatchConfig,
     status: np.ndarray,
     return_plan: bool,
+    plan_consumer: PlanChunkConsumer | None,
 ) -> tuple[np.ndarray, dict[str, np.ndarray], dict[str, np.ndarray]]:
     n_proto = int(batch.A.shape[1])
-    chunk_size = _extraction_chunk_size(n_proto)
+    chunk_size = _extraction_chunk_size(n_proto, cfg)
     final_cost = _scaled_cost_from_kernel(last_log_kernel, last_eps)
 
     row_chunks: list[np.ndarray] = []
@@ -565,7 +809,6 @@ def _extract_batched_metrics(
     }
     if return_plan:
         detail_chunks["matching_plan"] = []
-        detail_chunks["Pi"] = []
 
     for start in range(0, batch.row_idx.size, chunk_size):
         stop = min(start + chunk_size, batch.row_idx.size)
@@ -667,9 +910,12 @@ def _extract_batched_metrics(
         detail_chunks["target_unmatched_mass_by_state"].append(creation_by_proto[valid_rows])
         detail_chunks["D_k"].append(destruction_by_proto[valid_rows])
         detail_chunks["B_k"].append(creation_by_proto[valid_rows])
-        if return_plan:
-            detail_chunks["matching_plan"].append(scale[valid_rows, None, None] * plan_scaled[valid_rows])
-            detail_chunks["Pi"].append(scale[valid_rows, None, None] * plan_scaled[valid_rows])
+        if return_plan or plan_consumer is not None:
+            plan_chunk = scale[valid_rows, None, None] * plan_scaled[valid_rows]
+            if plan_consumer is not None:
+                plan_consumer(plan_chunk)
+            if return_plan:
+                detail_chunks["matching_plan"].append(plan_chunk)
 
     if not row_chunks:
         return (
@@ -686,6 +932,7 @@ def _extract_batched_metrics(
     details["T_k"] = details["source_matching_mass_by_state"]
     if return_plan:
         details["plan"] = details["matching_plan"]
+        details["Pi"] = details["matching_plan"]
     return row_idx, metrics, details
 
 
@@ -698,6 +945,7 @@ def batched_uot_solve(
     tau_external: np.ndarray | None = None,
     external_support_mask: np.ndarray | None = None,
     return_plan: bool = False,
+    plan_consumer: PlanChunkConsumer | None = None,
 ) -> tuple[dict[str, np.ndarray], dict[str, np.ndarray], np.ndarray]:
     """Solve paired unbalanced OT problems on a shared observation state axis.
 
@@ -754,8 +1002,10 @@ def batched_uot_solve(
         log_v=log_v,
         last_log_kernel=last_log_kernel,
         last_eps=last_eps,
+        cfg=cfg,
         status=status,
         return_plan=return_plan,
+        plan_consumer=plan_consumer,
     )
     for metric_name, values in row_metrics.items():
         metrics[metric_name][row_idx] = values
@@ -773,8 +1023,6 @@ def batched_uot_solve(
         details["B_k"][row_idx] = row_details["B_k"]
         if return_plan:
             details["matching_plan"][row_idx] = row_details["matching_plan"]
-            details["plan"][row_idx] = row_details["matching_plan"]
-            details["Pi"][row_idx] = row_details["Pi"]
 
     return metrics, details, status
 
