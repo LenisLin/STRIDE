@@ -1,24 +1,27 @@
 # Task A Operations
 
 This is the live Task A engineering runbook for the current
-canonical full-STRIDE Block 0-2 path. The canonical full STRIDE definition now lives in
+canonical Task A Block 0-2 first-pass path and the deferred/internal Block 3
+boundary. The canonical full STRIDE definition now lives in
 [`docs/stride_design_freeze.md`](/home/lenislin/Experiment/projects/STRIDE/docs/stride_design_freeze.md),
 and the frozen Task A migration target lives in
 [`docs/task_A_rewiring_plan.md`](/home/lenislin/Experiment/projects/STRIDE/docs/task_A_rewiring_plan.md).
-Scientific claims for the current live proxy stack remain in
+Task A scientific boundaries and preserved proxy-history context remain in
 [`docs/task_A_spec.md`](/home/lenislin/Experiment/projects/STRIDE/docs/task_A_spec.md).
 The canonical Task A results memo through Block 2, with explicit preserved
-lives in
+proxy-history context, lives in
 [`docs/task_A_result.md`](/home/lenislin/Experiment/projects/STRIDE/docs/task_A_result.md).
+This README is an operational mirror. Current `fit_stride(...)` implementation
+status and supported-input boundaries are owned by
+[`docs/state.md`](/home/lenislin/Experiment/projects/STRIDE/docs/state.md).
 
 ## Start here
 
 - If you do not yet have a Task A Stage 0 h5ad, start with
   [`stage0/build_artifacts.py`](/home/lenislin/Experiment/projects/STRIDE/tasks/task_A/stage0/build_artifacts.py).
-- If you already have a frozen Stage 0 h5ad, start with
-  [`workflows/prepare.py`](/home/lenislin/Experiment/projects/STRIDE/tasks/task_A/workflows/prepare.py).
-- After full-cohort `prepare`, run
-  [`workflows/descriptive_atlas.py`](/home/lenislin/Experiment/projects/STRIDE/tasks/task_A/workflows/descriptive_atlas.py)
+- If you already have a frozen Stage 0 h5ad, start with the descriptive atlas
+  and Step 1 prepare as separate Stage 0 consumers.
+- Run [`descriptive/`](/home/lenislin/Experiment/projects/STRIDE/tasks/task_A/descriptive)
   before Block 0 to export the descriptive biological context layer.
 - To gather the currently available descriptive atlas plus downstream Task A
   artifact surface into one objective human-review packet, use
@@ -44,8 +47,8 @@ lives in
 
 ## Step 3 boundary
 
-- This runbook now documents the canonical full-STRIDE rerun path for Task A
-  through Block 2.
+- This runbook now documents the canonical Task A first-pass rerun path through
+  Block 2.
 - It uses the Task A authority chain and the core STRIDE source-of-truth order.
 - The Step 3 packet layer covers atlas plus Block 0-2 evidence surfaces.
 
@@ -79,9 +82,17 @@ lives in
   5. run Block 1 real-data biological discovery with a passed Block 0 bundle
   6. run Block 2 robustness over Block 1 summaries from an evidence-ready Block 1 bundle
   7. run Block 3 method validation from an evidence-ready Block 2 manifest
+- The destructive-refactor stage labels mirror that scientific order as:
+  `descriptive -> block0 -> block1 -> block2 -> block3a -> block3b-1 ->
+  block3b-2 -> block3c-1 -> block3c-2 -> block3c-3`.
+- Under the current frozen Block 3 contract, `block3c-1` maps to
+  `recurrence_ablation`, `block3c-2` maps to `geometry_ablation`, and
+  `block3c-3` maps to `consistency_ablation`. A consistency-first 3C ordering
+  requires an explicit contract migration before it can be used in live
+  mirrors, code, tests, schemas, or output names.
 - The hard file prerequisites are narrower than the canonical order:
-  - The descriptive atlas consumes the frozen Step 1 prepare manifest and does
-    not create a separate Stage 0 ingestion surface.
+  - The descriptive atlas consumes `stage0_h5ad` plus `task-config` directly
+    and remains the biological context layer above Block 0.
   - Block 1 consumes `stage0_h5ad` plus a passed Block 0 bundle and
     recomputes its own mapping/dry-run files plus frozen summary exports.
   - Block 2 consumes the Block 1 bundle surface plus the frozen Stage 0 and
@@ -148,15 +159,33 @@ lives in
 - Block 3 scientific authority remains frozen in:
   - `docs/task_A_spec.md`
   - `docs/task_A_block3_redesign_v1_1.md`
-- The live scientific section structure is still:
+- The live scientific section structure is:
   - `3A generator validation`
   - `3B baseline comparison`
-  - `3B-1 A benchmark`
-  - `3B-2 d/e benchmark`
-  - `3C ablation study`, split into `3C-1 open-module ablation` and
-    `3C-2 cohort-module ablation`
+    - `3B-1 A benchmark`
+    - `3B-2 d/e benchmark`
+  - `3C ablation study`
+    - `3C-1 recurrence ablation`
+    - `3C-2 geometry ablation`
+    - `3C-3 consistency ablation`
 - This section structure is exhaustive for the live Block 3 public naming
   surface.
+- The task-local stage labels therefore stay aligned as `block3a`,
+  `block3b-1`, `block3b-2`, `block3c-1`, `block3c-2`, and `block3c-3`;
+  `block3b-1` and `block3b-2` are separate benchmark stages rather than one
+  mixed `3B` implementation surface.
+- `3C` is the core STRIDE refit-ablation surface. Each `3C` arm removes or
+  zero-weights the corresponding objective term and refits `A_p`, `d_p`, and
+  `e_p` on the same rerun-specific patient-level semi-synthetic realization,
+  resolved evidence blocks, deterministic initialization, and optimizer
+  protocol as the reference fit.
+- `3C` uses fixed full-estimator group denominators. Retained objective terms
+  keep the reference-fit objective coefficients.
+- The live `3C` native patient-level readout surface is `A_MAE_active`,
+  `A_MSE_active`, `d_MAE`, `e_MAE`, `d_MSE`, `e_MSE`, and
+  `open_support_F1`, with metric activity reported through the
+  `reported` / `not_applicable` / `not_estimable` status semantics in
+  `docs/task_A_spec.md`.
 - The active public Block 3 runner/review/packet bridge remains removed from
   the execution path. The on-disk `tasks/task_A/block3/` package may host
   internal single-subexperiment Phase 3 execution with real generator/method/
@@ -210,7 +239,7 @@ Before the next Block 1/2 coding round, two review notes must be completed:
 | `build_stage0_artifacts` | CRLM cohort RDS, build params | `task_A_stage0_k{K}.h5ad`, `task_A_stage0_validation.json` | `scaffold_active`, `contract_passed` | Does not run Step 1 or any block |
 | `check_data_suitability` | `--task-config`, `--stage0-h5ad`, `--output-dir` | `task_a_pre_block0_data_suitability.json` | `scaffold_active`, `contract_passed` | Does not satisfy Block 0 |
 | `prepare` | `--task-config`, `--stage0-h5ad`, `--output-dir`, optional subset selectors | `task_a_stride_mapping.json`, `task_a_core_fit_dry_run.csv`, `task_a_prepare_manifest.json` | `scaffold_active`, `contract_passed` | Does not satisfy Block 0 |
-| `descriptive_atlas` | `--prepare-manifest`, `--output-dir`, optional `--max-overlay-communities` | `task_a_descriptive_atlas_manifest.json`, `task_a_descriptive_atlas_output_index.csv`, atlas tables/figures | `scaffold_active`, `contract_passed` | Does not run Block 0/1/2 or emit confirmatory claims |
+| `descriptive_atlas` | `--task-config`, `--stage0-h5ad`, `--output-dir`, optional `--patient-id`, optional `--max-overlay-communities` | `task_a_descriptive_atlas_manifest.json`, `task_a_descriptive_atlas_output_index.csv`, atlas tables/figures | descriptive only | Does not run Block 0/1/2 or emit confirmatory claims |
 | `run_block0` | `--task-config`, `--stage0-h5ad`, `--output-dir`, optional subset selectors | `block0_bundle.json`, `block0_pair_metrics.csv`, `task_a_pre_block0_data_suitability.json` | `scaffold_active`, `contract_passed` | Does not read Step 1 files as hard inputs or redesign Block 1/2 |
 | `run_block1` | `--task-config`, `--stage0-h5ad`, `--block0-bundle`, `--output-dir` | `block1_stage0_mapping.json`, `block1_core_fit_dry_run.csv`, `block1_recurrence_summary.json`, `block1_recurrence_families.json`, `block1_recurrence_embeddings.csv`, `block1_family_summary.csv`, `block1_source_community_summary.csv`, `block1_target_community_summary.csv`, `block1_confirmatory_family_comparison.csv`, `block1_exploratory_source_community_comparison.csv`, `block1_exploratory_target_community_comparison.csv`, `community_correspondence/`, `block1_bundle.json`, `block1_workflow_manifest.json` | `evidence_ready` | Requires a passed Block 0 bundle |
 | `run_block2` | `--block1-bundle`, `--output-dir` | `block2_bounded_audit_summary.csv`, `block2_contract_audit.csv`, `block2_replicate_manifest.csv`, `block2_family_robustness.csv`, `block2_source_community_robustness.csv`, `block2_target_community_robustness.csv`, `block2_bounded_audit_manifest.json` | `evidence_ready` | Does not compare baselines, redesign Block 1, or prove true emergence/disappearance |
@@ -253,11 +282,12 @@ PYTHONPATH=.:src python -m tasks.task_A.workflows.prepare \
   --output-dir /tmp/task_a_prepare_full
 ```
 
-Descriptive atlas from a Step 1 prepare manifest:
+Descriptive atlas from Stage 0:
 
 ```bash
-PYTHONPATH=.:src python -m tasks.task_A.workflows.descriptive_atlas \
-  --prepare-manifest /tmp/task_a_prepare_full/task_a_prepare_manifest.json \
+PYTHONPATH=.:src python -m tasks.task_A.descriptive \
+  --task-config tasks/task_A/config.yaml \
+  --stage0-h5ad /mnt/NAS_21T/ProjectData/STRIDE/task_A_stage0/task_A_stage0_k25.h5ad \
   --output-dir /tmp/task_a_descriptive_atlas_full
 ```
 
@@ -336,6 +366,8 @@ PYTHONPATH=.:src python -m tasks.task_A.workflows.package_results \
 Packet notes:
 - `task_a_result_packet_manifest.json` now declares `included_layers=["atlas", "block0", "block1", "block2"]`.
 - `task_a_result_packet_manifest.json` now declares `deferred_layers=["block3"]`.
+- `--prepare-manifest` is an explicit packet input; the descriptive atlas
+  manifest no longer carries Step 1 prepare or mapping pointers.
 - `package_results` fail-fast rejects `--block3-manifest` with
   `Block 3 packet integration is deferred / non-authority / pending clean bridge spec`.
-- `task_a_result_packet_index.csv` now carries per-artifact `implementation_tier` and `evidence_lineage`.
+- `task_a_result_packet_index.csv` keeps lineage columns for prepare/Block rows; descriptive atlas rows remain descriptive-only.

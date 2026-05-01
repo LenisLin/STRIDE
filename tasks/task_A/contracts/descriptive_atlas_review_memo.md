@@ -1,25 +1,29 @@
 # Task A Descriptive Atlas Review Memo
 
-Status: reviewed against latest full-cohort atlas bundle
+Status: historical review context for the 2026-04-02 full-cohort atlas bundle
 
 Purpose:
-- Record whether the latest descriptive atlas output supports the current Task A
-  biological reading before any new Block 1/2 coding begins.
+- Record whether the 2026-04-02 descriptive atlas output supported the Task A
+  biological reading before the then-planned Block 1/2 coding round.
+- This memo is not the live descriptive entry contract. The live descriptive
+  atlas now consumes a Stage0 h5ad plus `tasks/task_A/config.yaml` directly and
+  does not carry Step 1 prepare, mapping, dry-run, or lineage fields.
 
 Reviewed input bundle:
 - Manifest:
   `/tmp/task_a_descriptive_atlas_full_20260402_review/task_a_descriptive_atlas_manifest.json`
 - Output index:
   `/tmp/task_a_descriptive_atlas_full_20260402_review/task_a_descriptive_atlas_output_index.csv`
-- Upstream prepare manifest:
+- Historical upstream prepare manifest used by that retired run path:
   `/tmp/task_a_prepare_full_20260402_review/task_a_prepare_manifest.json`
 
 Bundle-level checks:
 - Full-cohort atlas bundle was missing in-repo at review start, so a fresh
-  `prepare -> descriptive_atlas` run was generated on 2026-04-02.
-- The written atlas manifest reports `artifact_state=contract_passed`,
+  historical `prepare -> descriptive_atlas` run was generated on 2026-04-02.
+- The historical atlas manifest reported `artifact_state=contract_passed`,
   `run_scope=full_cohort_alignment_check`, `n_patients=32`, and
-  `n_observed_communities=25`.
+  `n_observed_communities=25`; those readiness fields are not part of the live
+  descriptive-atlas manifest contract.
 - The output index contains all expected atlas-side families from
   `artifact_contracts.md`: 5 tables, 4 top-level figures, and 8 representative
   overlay figures.

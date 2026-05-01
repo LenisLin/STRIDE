@@ -786,23 +786,22 @@ def _validate_canonical_inputs(
     )
     _check_field(
         checks,
-        name="atlas_implementation_tier_canonical_full",
-        passed=str(atlas_payload.get("implementation_tier", "")) == "canonical_full",
-        detail=str(atlas_payload.get("implementation_tier", "")),
+        name="atlas_role_descriptive_only",
+        passed=str(atlas_payload.get("atlas_role", "")) == "descriptive_only",
+        detail=str(atlas_payload.get("atlas_role", "")),
     )
     _check_field(
         checks,
-        name="atlas_evidence_lineage_canonical_rerun",
-        passed=str(atlas_payload.get("evidence_lineage", "")) == "canonical_rerun",
-        detail=str(atlas_payload.get("evidence_lineage", "")),
+        name="atlas_claim_scope_descriptive_only",
+        passed=str(atlas_payload.get("claim_scope", "")) == "descriptive_only",
+        detail=str(atlas_payload.get("claim_scope", "")),
     )
-    atlas_prepare_path = atlas_payload.get("prepare_manifest_path")
     _check_field(
         checks,
-        name="atlas_prepare_manifest_matches_supplied_prepare",
-        passed=isinstance(atlas_prepare_path, str)
-        and _resolve_path(atlas_prepare_path) == _resolve_path(canonical_inputs.prepare_manifest_path),
-        detail=str(atlas_prepare_path),
+        name="atlas_output_index_present",
+        passed=isinstance(atlas_payload.get("output_index"), str)
+        and _resolve_path(str(atlas_payload["output_index"])).exists(),
+        detail=str(atlas_payload.get("output_index", "")),
     )
 
     block0_payload = _load_json_dict(
@@ -997,11 +996,10 @@ def _validate_canonical_inputs(
         },
         "atlas": {
             "path": str(_resolve_path(canonical_inputs.atlas_manifest_path)),
-            "artifact_state": str(atlas_payload.get("artifact_state", "")),
-            "implementation_tier": str(atlas_payload.get("implementation_tier", "")),
-            "evidence_lineage": str(atlas_payload.get("evidence_lineage", "")),
-            "prepare_manifest_path": str(atlas_payload.get("prepare_manifest_path", "")),
-            "mapping_manifest_path": str(atlas_payload.get("mapping_manifest_path", "")),
+            "atlas_role": str(atlas_payload.get("atlas_role", "")),
+            "claim_scope": str(atlas_payload.get("claim_scope", "")),
+            "stage0_h5ad": str(atlas_payload.get("stage0_h5ad", "")),
+            "output_index": str(atlas_payload.get("output_index", "")),
         },
         "block0": {
             "path": str(_resolve_path(canonical_inputs.block0_bundle_path)),
@@ -1117,7 +1115,7 @@ def write_canonical_step3_review(
         "is_canonical_block0_2_evidence_stack_ready_for_human_biological_interpretation": True,
         "ready_basis": [
             "Block 2 manifest is present, readable, and evidence_ready.",
-            "Canonical prepare, atlas, Block 0, Block 1, and Block 2 lineage fields all report canonical_full / canonical_rerun.",
+            "Canonical prepare, Block 0, Block 1, and Block 2 lineage fields all report canonical_full / canonical_rerun; atlas is descriptive_only.",
             "Block 1 recurrence outputs are present with cohort_recurrence_fit_status=ok.",
             "Block 2 reuses the supplied canonical Block 1 bundle and recorded 284/284 executed replicates in the live run.",
             "The newly generated canonical Step 3 packet validates under the current packet contract.",

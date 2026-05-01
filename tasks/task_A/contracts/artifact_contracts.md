@@ -25,8 +25,8 @@ only, not current Block 3 authority.
 
 | Artifact | Purpose | Minimum required fields | `artifact_state` expectation | Readiness |
 |---|---|---|---|---|
-| `task_a_descriptive_atlas_manifest.json` | Declare descriptive-atlas provenance, descriptive-only labeling, and the indexed output surface. | `workflow_name`, `atlas_role`, `claim_scope`, `scientific_interpretation_allowed`, `artifact_state`, `block0_gate_status`, `prepare_manifest_path`, `mapping_manifest_path`, `config_path`, `stage0_h5ad`, `run_scope`, `community_id_key`, `cell_subtype_key`, `domain_key`, `fov_key`, `spatial_key`, `output_index` | Embedded field. Inherits the pre-inferential state from the Step 1 prepare manifest; allowed: `scaffold_active`, `contract_passed`. | contract-passed |
-| `task_a_descriptive_atlas_output_index.csv` | Index all descriptive-atlas tables and figures in a machine-readable form. | `relative_path`, `artifact_kind`, `category`, `format`, `description` | Inherits from sibling `task_a_descriptive_atlas_manifest.json`. Allowed: `scaffold_active`, `contract_passed`. | contract-passed |
+| `task_a_descriptive_atlas_manifest.json` | Declare descriptive-atlas labeling, Stage 0 field keys, counts, and the indexed output surface. | `workflow_name`, `atlas_role`, `claim_scope`, `scientific_interpretation_allowed`, `config_path`, `stage0_h5ad`, `community_id_key`, `cell_subtype_key`, `domain_key`, `fov_key`, `spatial_key`, `configured_community_ids`, `observed_community_ids`, `output_index` | No readiness state. | descriptive-only |
+| `task_a_descriptive_atlas_output_index.csv` | Index all descriptive-atlas tables and figures in a machine-readable form. | `relative_path`, `artifact_kind`, `category`, `format`, `description` | No readiness state. | descriptive-only |
 
 Expected atlas-side table and figure families:
 - `tables/community_cell_subtype_*.csv`
@@ -115,13 +115,13 @@ Frozen Block 1 summary naming and interpretation:
 | Artifact | Purpose | Minimum required fields | `artifact_state` expectation | Readiness |
 |---|---|---|---|---|
 | `task_a_result_packet_manifest.json` | Declare the Step 3 objective review packet over atlas plus canonical Block 0-2 surfaces. | `workflow_name`, `packet_role`, `packet_spec_version`, `packet_root`, `central_index_path`, `human_index_path`, `layer_manifest_paths`, `layer_review_index_paths`, `included_layers`, `deferred_layers`, `surface_lineage`, `input_sources`, `artifact_counts` | Packet-local manifest; no Task A evidence state is inferred from packet assembly alone. | packet-local |
-| `task_a_result_packet_index.csv` | Record one row per mirrored or packet-local review artifact in the Step 3 packet. | `layer`, `artifact_name`, `expected_relative_path`, `packet_relative_path`, `artifact_status`, `contract_alignment`, `implementation_tier`, `evidence_lineage`, `artifact_kind`, `claim_scope`, `review_role`, `analysis_level`, `source_workflow`, `sha256` | Packet-local index; available rows must hash-match the mirrored packet files. | packet-local |
+| `task_a_result_packet_index.csv` | Record one row per mirrored or packet-local review artifact in the Step 3 packet. | `layer`, `artifact_name`, `expected_relative_path`, `packet_relative_path`, `artifact_status`, `contract_alignment`, `implementation_tier`, `evidence_lineage`, `artifact_kind`, `claim_scope`, `review_role`, `analysis_level`, `source_workflow`, `sha256` | Packet-local index; available rows must hash-match the mirrored packet files. Atlas rows are descriptive-only and need not carry lineage values. | packet-local |
 | `RESULTS_INDEX.md` | Provide a human-readable packet entrypoint summarizing included layers, deferred layers, and suggested first-inspection artifacts. | Human-readable markdown summary. | Packet-local only. | packet-local |
 
 Packet-specific boundary notes:
 - The Step 3 packet includes only `atlas`, `block0`, `block1`, and `block2`.
 - `block3` is explicitly deferred from the Step 3 packet manifest rather than silently omitted.
-- The packet index now carries per-artifact `implementation_tier` and `evidence_lineage` so canonical rerun files and preserved proxy-history files cannot be confused.
+- The packet index keeps `implementation_tier` and `evidence_lineage` columns for prepare/Block rows so canonical rerun files and preserved proxy-history files cannot be confused. Descriptive atlas rows remain descriptive-only.
 - Any Block 3-facing packet builder, packet-local review surface, or preserved
   historical packet is result-layer implementation context only. None of those
   packet surfaces is current live Block 3 scientific authority or canonical
@@ -131,9 +131,8 @@ Packet-specific boundary notes:
 
 The Block 3 scientific contract remains frozen in the docs hierarchy. The Task
 A repository still does **not** ship an active public Block 3 workflow,
-review CLI, or packet bridge. The former demo-style `tasks/task_A/block3/`
-implementation was removed after it was judged too polluted by stale
-proxy-era contract topology.
+review CLI, or packet bridge. The former public/demo-style Block 3 route was
+removed after it was judged too polluted by stale proxy-era contract topology.
 
 The repository may carry an on-disk `tasks/task_A/block3/` package for
 internal Phase 3 execution, registry construction, execution planning, raw

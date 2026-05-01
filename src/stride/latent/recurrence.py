@@ -1,14 +1,35 @@
 """Cohort-level recurrence contracts built from STRIDE patient relations."""
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import Any, Mapping
+from typing import Any
 
 import numpy as np
 
 from ..errors import ContractError
 from .operators import PatientRelation, validate_patient_relation
+
+_ALLOWED_RECURRENCE_STATUSES = frozenset({"ok", "deferred", "failed"})
+
+
+def _require_recurrence_status(value: object, *, field_name: str) -> str:
+    status = str(value)
+    if status not in _ALLOWED_RECURRENCE_STATUSES:
+        raise ContractError(
+            f"{field_name} must be one of {tuple(sorted(_ALLOWED_RECURRENCE_STATUSES))}, "
+            f"got {status!r}"
+        )
+    return status
+
+
+def _normalize_patient_ids(patient_ids: Sequence[str], *, field_name: str) -> tuple[str, ...]:
+    normalized = tuple(str(patient_id).strip() for patient_id in patient_ids)
+    if any(patient_id == "" for patient_id in normalized):
+        raise ContractError(f"{field_name} must contain non-empty patient identifiers")
+    if len(set(normalized)) != len(normalized):
+        raise ContractError(f"{field_name} must not contain duplicates")
+    return normalized
 
 
 @dataclass(frozen=True)
@@ -28,6 +49,23 @@ class PatientRecurrenceEmbedding:
     coordinates: np.ndarray
     fit_status: str = "ok"
 
+    def __post_init__(self) -> None:
+        patient_id = str(self.patient_id).strip()
+        if patient_id == "":
+            raise ContractError("PatientRecurrenceEmbedding.patient_id must be non-empty")
+        status = _require_recurrence_status(
+            self.fit_status,
+            field_name="PatientRecurrenceEmbedding.fit_status",
+        )
+        coordinates = np.asarray(self.coordinates, dtype=float)
+        if coordinates.ndim != 1:
+            raise ContractError("PatientRecurrenceEmbedding.coordinates must be a 1D array")
+        if status == "ok" and not np.isfinite(coordinates).all():
+            raise ContractError("ok PatientRecurrenceEmbedding.coordinates must be finite")
+        object.__setattr__(self, "patient_id", patient_id)
+        object.__setattr__(self, "coordinates", coordinates)
+        object.__setattr__(self, "fit_status", status)
+
 
 @dataclass(frozen=True)
 class RecurrenceFamily:
@@ -41,6 +79,40 @@ class RecurrenceFamily:
     within_family_dispersion: float | None = None
     fit_status: str = "ok"
     member_patient_ids: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        family_id = str(self.family_id).strip()
+        if family_id == "":
+            raise ContractError("RecurrenceFamily.family_id must be non-empty")
+        status = _require_recurrence_status(
+            self.fit_status,
+            field_name="RecurrenceFamily.fit_status",
+        )
+        if (
+            isinstance(self.support_n_patients, bool)
+            or not isinstance(self.support_n_patients, int)
+            or int(self.support_n_patients) < 0
+        ):
+            raise ContractError("RecurrenceFamily.support_n_patients must be a non-negative int")
+        member_patient_ids = _normalize_patient_ids(
+            self.member_patient_ids,
+            field_name="RecurrenceFamily.member_patient_ids",
+        )
+        if int(self.support_n_patients) != len(member_patient_ids):
+            raise ContractError(
+                "RecurrenceFamily.support_n_patients must match member_patient_ids length"
+            )
+        validate_patient_relation(A=self.template_A, d=self.template_d, e=self.template_e)
+        if self.within_family_dispersion is not None:
+            dispersion = float(self.within_family_dispersion)
+            if not np.isfinite(dispersion) or dispersion < 0.0:
+                raise ContractError(
+                    "RecurrenceFamily.within_family_dispersion must be finite and non-negative"
+                )
+            object.__setattr__(self, "within_family_dispersion", dispersion)
+        object.__setattr__(self, "family_id", family_id)
+        object.__setattr__(self, "fit_status", status)
+        object.__setattr__(self, "member_patient_ids", member_patient_ids)
 
 
 @dataclass(frozen=True)
@@ -59,6 +131,52 @@ class RecurrenceResult:
     parameters: RecurrenceParameters | None = None
     embeddings: tuple[PatientRecurrenceEmbedding, ...] = ()
     metadata: Mapping[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        patient_ids = _normalize_patient_ids(
+            self.patient_ids,
+            field_name="RecurrenceResult.patient_ids",
+        )
+        used_patient_ids = _normalize_patient_ids(
+            self.used_patient_ids,
+            field_name="RecurrenceResult.used_patient_ids",
+        )
+        invalid_used = tuple(patient_id for patient_id in used_patient_ids if patient_id not in patient_ids)
+        if invalid_used:
+            raise ContractError("RecurrenceResult.used_patient_ids must be a subset of patient_ids")
+        status = _require_recurrence_status(
+            self.fit_status,
+            field_name="RecurrenceResult.fit_status",
+        )
+        families = tuple(self.families)
+        for family in families:
+            if not isinstance(family, RecurrenceFamily):
+                raise ContractError("RecurrenceResult.families must contain RecurrenceFamily objects")
+            invalid_members = tuple(
+                patient_id for patient_id in family.member_patient_ids if patient_id not in patient_ids
+            )
+            if invalid_members:
+                raise ContractError(
+                    "RecurrenceFamily.member_patient_ids must be a subset of RecurrenceResult.patient_ids"
+                )
+            if status == "ok" and family.fit_status != "ok":
+                raise ContractError("ok RecurrenceResult must not contain non-ok families")
+            if status != "ok" and family.fit_status == "ok":
+                raise ContractError("non-ok RecurrenceResult must not contain ok families")
+        embeddings = tuple(self.embeddings)
+        if embeddings:
+            embedding_ids = tuple(embedding.patient_id for embedding in embeddings)
+            if embedding_ids != patient_ids:
+                raise ContractError("RecurrenceResult.embeddings must align with patient_ids")
+            if status == "ok" and any(embedding.fit_status != "ok" for embedding in embeddings):
+                raise ContractError("ok RecurrenceResult must carry ok embeddings when provided")
+            if status != "ok" and any(embedding.fit_status == "ok" for embedding in embeddings):
+                raise ContractError("non-ok RecurrenceResult must not carry ok embeddings")
+        object.__setattr__(self, "patient_ids", patient_ids)
+        object.__setattr__(self, "used_patient_ids", used_patient_ids)
+        object.__setattr__(self, "fit_status", status)
+        object.__setattr__(self, "families", families)
+        object.__setattr__(self, "embeddings", embeddings)
 
 
 @dataclass(frozen=True)

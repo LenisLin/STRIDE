@@ -43,7 +43,7 @@ public `run_block3` node.
 |---|---|---|---|---|---|
 | `stage0_artifact_builder` | `build_stage0_artifacts` | CRLM cohort RDS | `task_A_stage0_k{K}.h5ad`, `task_A_stage0_validation.json` | executable | Builds the frozen Task A input surface only. |
 | `step1_prepare_full_cohort` | `prepare_task_a_stage0_mapping` | `stage0-h5ad`, `task-config` | `task_a_stride_mapping.json`, `task_a_core_fit_dry_run.csv`, `task_a_prepare_manifest.json` | executable | Canonical Step 1 real-data entrypoint. |
-| `descriptive_atlas_context_layer` | `write_task_a_descriptive_atlas` | `task_a_prepare_manifest.json` | `task_a_descriptive_atlas_manifest.json`, `task_a_descriptive_atlas_output_index.csv`, atlas tables, atlas figures | executable | Canonical biological context layer; descriptive only and upstream of Block 0. |
+| `descriptive_atlas_context_layer` | `write_task_a_descriptive_atlas` | `stage0-h5ad`, `task-config` | `task_a_descriptive_atlas_manifest.json`, `task_a_descriptive_atlas_output_index.csv`, atlas tables, atlas figures | executable | Canonical biological context layer; descriptive only and upstream of Block 0. |
 | `pre_block0_data_suitability_report` | `check_task_a_pre_block0_data_suitability` | `stage0-h5ad`, `task-config` | `task_a_pre_block0_data_suitability.json` | executable | Report wrapper over Step 1 semantics; never substitutes for Block 0. |
 | `step1_prepare_subset_or_demo` | `prepare_task_a_stage0_mapping` | `stage0-h5ad`, `task-config`, subset selector | same as full prepare | executable | Cheap wiring path only; emits `scaffold_active`. |
 | `block0_locality_gate` | `run_block0_workflow` | `stage0-h5ad`, `task-config` | `block0_bundle.json`, `block0_pair_metrics.csv` | executable | Runs the STRIDE-native `TC-IM` real-vs-null gate after the descriptive atlas context layer. Full cohort may emit `contract_passed`; subset/demo sidecars remain non-passing. |
@@ -61,11 +61,10 @@ public `run_block3` node.
   `target_community_summary_path`, paired comparison paths,
   correspondence-packet paths, summary roles, summary scales, and eligibility
   rules replace the older `primary_evidence_lines` wording.
-- Step 1 full-cohort prepare is still the canonical readiness check before the
-  descriptive atlas and downstream block execution path.
-- The descriptive atlas consumes the Step 1 prepare manifest so that run scope,
-  patient subset provenance, and descriptive-only labeling stay anchored to the
-  frozen Step 1 surface.
+- Step 1 full-cohort prepare is still the canonical readiness check for the
+  STRIDE-consuming downstream block execution path.
+- The descriptive atlas consumes Stage 0 plus the Task A config directly and
+  stays descriptive-only; it does not carry Step 1 mapping or dry-run context.
 - Block 2 consumes the Block 1 bundle plus the frozen Stage 0 and Block 1
   output paths declared inside that bundle. It re-estimates the same Block 1
   summary/comparison objects under perturbation rather than introducing a new

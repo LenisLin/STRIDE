@@ -30,6 +30,7 @@ from tests.test_task_a_result_packet import (
     _write_current_contract_block0_run,
     _write_csv,
     _write_json,
+    _write_prepare_bundle,
 )
 
 
@@ -57,11 +58,8 @@ def _patch_field(path: Path, *, key: str, value: object) -> None:
 
 
 def _build_canonical_inputs(tmp_path: Path) -> CanonicalStep3Inputs:
+    prepare_manifest_path = _write_prepare_bundle(tmp_path / "canonical_prepare")
     atlas_manifest_path = _write_atlas_bundle(tmp_path / "canonical_atlas")
-    atlas_payload = _load_json(atlas_manifest_path)
-    atlas_payload["implementation_tier"] = "canonical_full"
-    _rewrite_json(atlas_manifest_path, atlas_payload)
-    prepare_manifest_path = Path(str(atlas_payload["prepare_manifest_path"]))
 
     _, block0_bundle_path, suitability_path = _write_current_contract_block0_run(
         tmp_path / "canonical_block0"

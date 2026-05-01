@@ -1,13 +1,13 @@
 """Canonical result containers for STRIDE bridge and cohort fit surfaces."""
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Mapping
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
 from ..errors import ContractError
-from ..objectives import LossBreakdown
 from ..latent.operators import (
     PatientRelation,
     PatientRelationAudit,
@@ -15,16 +15,18 @@ from ..latent.operators import (
     validate_patient_relation,
 )
 from ..latent.recurrence import RecurrenceResult
+from ..objectives import LossBreakdown
+from .provenance import STRIDEFitProvenance, validate_stride_fit_provenance
 from .uncertainty import STRIDEBootstrapUncertaintyResult
 
 if TYPE_CHECKING:
-    from ..workflows.fit_stride import PatientBridgeInput
+    from ..workflows._fit_inputs import _PatientFitInput
 
 
 _ALLOWED_FIT_STATUSES: tuple[str, ...] = ("ok", "deferred", "failed")
 _ALLOWED_IMPLEMENTATION_TIERS: tuple[str, ...] = (
     "canonical_full",
-    "approximate_proxy",
+    "local_initializer",
     "assembled_relation",
 )
 _KNOWN_BRIDGE_AUXILIARY_ARRAY_FIELDS: tuple[str, ...] = (
@@ -33,6 +35,7 @@ _KNOWN_BRIDGE_AUXILIARY_ARRAY_FIELDS: tuple[str, ...] = (
     "source_unmatched_burden",
     "target_unmatched_burden",
 )
+_NON_OK_STATUS_LABELS = frozenset({"deferred", "failed"})
 
 
 def _require_nonempty_message(value: object, *, field_name: str) -> str:
@@ -116,18 +119,24 @@ def _validate_known_bridge_auxiliary_arrays(result: PatientBridgeResult) -> None
             "Known burden-scale auxiliary arrays require mu_minus on ok PatientBridgeResult objects"
         )
 
-    if matched_transition_burden is not None and raw_matched_transition_burden is not None:
-        if np.any(matched_transition_burden > raw_matched_transition_burden + 1e-8):
-            raise ContractError(
-                "PatientBridgeResult.auxiliary['matched_transition_burden'] must not exceed "
-                "PatientBridgeResult.auxiliary['raw_matched_transition_burden'] elementwise"
-            )
+    if (
+        matched_transition_burden is not None
+        and raw_matched_transition_burden is not None
+        and np.any(matched_transition_burden > raw_matched_transition_burden + 1e-8)
+    ):
+        raise ContractError(
+            "PatientBridgeResult.auxiliary['matched_transition_burden'] must not exceed "
+            "PatientBridgeResult.auxiliary['raw_matched_transition_burden'] elementwise"
+        )
 
-    if matched_transition_burden is not None and mu_minus is not None:
-        if np.any(np.sum(matched_transition_burden, axis=1, dtype=float) > mu_minus + 1e-8):
-            raise ContractError(
-                "PatientBridgeResult.auxiliary['matched_transition_burden'] row sums must not exceed mu_minus"
-            )
+    if (
+        matched_transition_burden is not None
+        and mu_minus is not None
+        and np.any(np.sum(matched_transition_burden, axis=1, dtype=float) > mu_minus + 1e-8)
+    ):
+        raise ContractError(
+            "PatientBridgeResult.auxiliary['matched_transition_burden'] row sums must not exceed mu_minus"
+        )
 
     if matched_transition_burden is not None and mu_minus is not None:
         expected_transition_burden = np.asarray(result.A, dtype=float) * mu_minus[:, None]
@@ -142,11 +151,14 @@ def _validate_known_bridge_auxiliary_arrays(result: PatientBridgeResult) -> None
                 "A on the realized operator scale implied by mu_minus"
             )
 
-    if source_unmatched_burden is not None and mu_minus is not None:
-        if np.any(source_unmatched_burden > mu_minus + 1e-8):
-            raise ContractError(
-                "PatientBridgeResult.auxiliary['source_unmatched_burden'] must not exceed mu_minus"
-            )
+    if (
+        source_unmatched_burden is not None
+        and mu_minus is not None
+        and np.any(source_unmatched_burden > mu_minus + 1e-8)
+    ):
+        raise ContractError(
+            "PatientBridgeResult.auxiliary['source_unmatched_burden'] must not exceed mu_minus"
+        )
 
     if target_unmatched_burden is not None:
         expected_target_unmatched = np.asarray(result.e, dtype=float) * float(
@@ -167,6 +179,35 @@ def _validate_known_bridge_auxiliary_arrays(result: PatientBridgeResult) -> None
 def _validate_patient_bridge_status_metadata(result: PatientBridgeResult) -> None:
     if result.audit is not None and str(result.audit.patient_id) != str(result.patient_id):
         raise ContractError("PatientBridgeResult.audit.patient_id must align with patient_id")
+
+    if result.audit is not None:
+        bridge_status = str(result.audit.bridge_status)
+        observation_status = (
+            None
+            if result.audit.observation_fit_status is None
+            else str(result.audit.observation_fit_status)
+        )
+        if result.fit_status == "ok":
+            if bridge_status in _NON_OK_STATUS_LABELS:
+                raise ContractError(
+                    "fit_status='ok' PatientBridgeResult must not carry "
+                    "audit.bridge_status deferred/failed drift"
+                )
+            if observation_status in _NON_OK_STATUS_LABELS:
+                raise ContractError(
+                    "fit_status='ok' PatientBridgeResult must not carry "
+                    "audit.observation_fit_status deferred/failed drift"
+                )
+        else:
+            if bridge_status == "ok":
+                raise ContractError(
+                    "Non-ok PatientBridgeResult must not carry audit.bridge_status='ok'"
+                )
+            if observation_status == "ok":
+                raise ContractError(
+                    "Non-ok PatientBridgeResult must not carry "
+                    "audit.observation_fit_status='ok'"
+                )
 
     if result.fit_status == "deferred":
         if "defer_reason" in result.diagnostics:
@@ -199,7 +240,7 @@ class PatientBridgeResult:
     audit: PatientRelationAudit | None = None
     diagnostics: Mapping[str, Any] = field(default_factory=dict)
     auxiliary: Mapping[str, Any] = field(default_factory=dict)
-    implementation_tier: str = "approximate_proxy"
+    implementation_tier: str = "local_initializer"
     objective: LossBreakdown | None = None
 
     def __post_init__(self) -> None:
@@ -226,9 +267,9 @@ class PatientBridgeResult:
         return self.implementation_tier == "canonical_full"
 
     @property
-    def is_proxy_path(self) -> bool:
-        """Return whether the result comes from the explicit approximate proxy path."""
-        return self.implementation_tier == "approximate_proxy"
+    def is_local_initializer(self) -> bool:
+        """Return whether the result comes from the current local initializer."""
+        return self.implementation_tier == "local_initializer"
 
     @property
     def relation(self) -> PatientRelation | None:
@@ -290,16 +331,108 @@ def validate_patient_bridge_result(result: PatientBridgeResult) -> None:
     _validate_patient_bridge_status_metadata(result)
 
 
+def _stride_fit_provenance_payload(
+    provenance: STRIDEFitProvenance | Mapping[str, Any],
+) -> Mapping[str, Any]:
+    if isinstance(provenance, STRIDEFitProvenance):
+        return provenance.to_dict()
+    return provenance
+
+
+def _require_positive_int_metadata(mapping: Mapping[str, Any], field_name: str) -> int:
+    if field_name not in mapping:
+        raise ContractError(f"STRIDEFitResult.metadata[{field_name!r}] is required when provenance is present")
+    value = mapping[field_name]
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ContractError(f"STRIDEFitResult.metadata[{field_name!r}] must be a positive integer")
+    if int(value) <= 0:
+        raise ContractError(f"STRIDEFitResult.metadata[{field_name!r}] must be positive")
+    return int(value)
+
+
+def _validate_stride_fit_result_provenance_metadata_count(result: STRIDEFitResult) -> None:
+    if result.provenance is None:
+        return
+    if "n_evidence_blocks" not in result.metadata:
+        return
+
+    payload = _stride_fit_provenance_payload(result.provenance)
+    comparison_plan = dict(payload["observation_comparison_plan"])
+    provenance_count = int(comparison_plan["n_evidence_blocks"])
+    metadata_count = _require_positive_int_metadata(result.metadata, "n_evidence_blocks")
+    if provenance_count != metadata_count:
+        raise ContractError(
+            "STRIDEFitResult.provenance.observation_comparison_plan.n_evidence_blocks "
+            "must match STRIDEFitResult.metadata['n_evidence_blocks']"
+        )
+
+
+def _validate_stride_fit_result_provenance_coherence(result: STRIDEFitResult) -> None:
+    if result.provenance is None:
+        return
+
+    payload = _stride_fit_provenance_payload(result.provenance)
+    initialization = dict(payload["initialization"])
+    provenance_k = int(initialization["K"])
+    patient_relation_dimensions = {
+        int(np.asarray(patient_result.A, dtype=float).shape[0])
+        for patient_result in result.patient_results
+        if patient_result.fit_status == "ok"
+    }
+    if patient_relation_dimensions != {provenance_k}:
+        raise ContractError(
+            "STRIDEFitResult.provenance.initialization.K must match patient relation state dimension"
+        )
+
+    recurrence_payload = dict(payload["recurrence"])
+    provenance_support = int(recurrence_payload["support_n_patients"])
+    used_patient_count = len(result.recurrence.used_patient_ids)
+    if provenance_support != used_patient_count:
+        raise ContractError(
+            "STRIDEFitResult.provenance.recurrence.support_n_patients must match "
+            "recurrence.used_patient_ids"
+        )
+
+    if len(result.recurrence.families) != 1:
+        raise ContractError(
+            "STRIDEFitResult compact provenance requires a single cohort recurrence family"
+        )
+    recurrence_family = result.recurrence.families[0]
+    family_support = int(recurrence_family.support_n_patients)
+    if provenance_support != family_support:
+        raise ContractError(
+            "STRIDEFitResult.provenance.recurrence.support_n_patients must match "
+            "the single cohort recurrence family"
+        )
+    family_dispersion = recurrence_family.within_family_dispersion
+    if family_dispersion is None:
+        raise ContractError(
+            "STRIDEFitResult.recurrence.families[0].within_family_dispersion "
+            "is required when compact provenance is present"
+        )
+    provenance_dispersion = float(recurrence_payload["dispersion"])
+    if not np.isclose(
+        provenance_dispersion,
+        float(family_dispersion),
+        rtol=0.0,
+        atol=1e-8,
+    ):
+        raise ContractError(
+            "STRIDEFitResult.provenance.recurrence.dispersion must match "
+            "the single cohort recurrence family"
+        )
+
 @dataclass(frozen=True)
 class STRIDEFitResult:
     """Canonical cohort-wide fit bundle for the deferred STRIDE fit path."""
 
-    patient_inputs: tuple["PatientBridgeInput", ...]
+    patient_inputs: tuple[_PatientFitInput, ...]
     patient_results: tuple[PatientBridgeResult, ...]
     recurrence: RecurrenceResult
     fit_status: str
     implementation_tier: str = "canonical_full"
     objective: LossBreakdown | None = None
+    provenance: STRIDEFitProvenance | Mapping[str, Any] | None = None
     summaries: Mapping[str, Any] = field(default_factory=dict)
     diagnostics: Mapping[str, Any] = field(default_factory=dict)
     uncertainty: STRIDEBootstrapUncertaintyResult | None = None
@@ -373,6 +506,25 @@ def validate_stride_fit_result(result: STRIDEFitResult) -> None:
         raise ContractError("fit_status='failed' must not contain ok patient_results")
     if result.objective is not None and result.fit_status == "failed":
         raise ContractError("fit_status='failed' STRIDEFitResult objects must not carry an objective")
+    if result.provenance is not None:
+        validate_stride_fit_provenance(result.provenance)
+        _validate_stride_fit_result_provenance_metadata_count(result)
+        if result.fit_status != "ok":
+            raise ContractError(
+                "Only fit_status='ok' STRIDEFitResult objects may carry "
+                "compact successful-fit provenance"
+            )
+    if (
+        result.fit_status == "ok"
+        and result.implementation_tier == "canonical_full"
+        and result.provenance is None
+    ):
+        raise ContractError(
+            "STRIDEFitResult fit_status='ok' and implementation_tier='canonical_full' "
+            "requires compact successful-fit provenance"
+        )
+    if result.fit_status == "ok" and result.implementation_tier == "canonical_full":
+        _validate_stride_fit_result_provenance_coherence(result)
 
     if "patient_status_counts" in result.summaries:
         normalized_summary_counts = {

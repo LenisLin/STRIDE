@@ -295,7 +295,11 @@ not the canonical future architecture.
   - canonical `A/d/e` outputs must come from the full objective fit or from
     explicit assembly of already valid relation objects,
   - observation-matching post-processing cannot be used to define the
-    manuscript-level full estimator.
+    manuscript-level full estimator,
+  - compatibility paths that depend on proxy initialization, bridge matching,
+    or recurrence shrinkage are not manuscript-level full STRIDE fits unless
+    the emitted `A_p`, `d_p`, and `e_p` come from objective-driven fitting under
+    the frozen full-estimator contract.
 
 ## D014 - Proxy And Public Bridge Estimator Surfaces Are Retired
 
@@ -317,12 +321,16 @@ not the canonical future architecture.
 ## D015 - Full Estimator Objective Grouping And `alpha` Semantics
 
 - Context: The full estimator now has a frozen objective grouping, default
-  `alpha`, normalization policy, and primary hyperparameter semantics.
-  Remaining raw formulas remain tracked as implementation targets where not
-  explicitly frozen by later decisions.
+  `alpha`, normalization policy, and primary hyperparameter semantics. Any
+  lower-level formula not explicitly frozen here remains governed by later
+  decisions and `docs/state.md`.
 - Decision:
   - the full STRIDE objective is grouped as:
     `L_total = (1 - alpha) * L_local + alpha * L_regularization`,
+  - group-internal fixed means are:
+    `L_local = mean(normalized_L_obs, normalized_L_open, normalized_L_geometry)`
+    and
+    `L_regularization = mean(normalized_L_consistency, normalized_L_recurrence)`,
   - default `alpha = 0.5`,
   - `alpha` is the primary local-versus-regularization hyperparameter,
   - `alpha` sensitivity grids are optional diagnostics,
@@ -331,9 +339,34 @@ not the canonical future architecture.
     rule,
   - `L_regularization` combines normalized patient consistency and cohort
     recurrence by fixed rule,
-  - component scales are computed from the deterministic
-    identity-plus-small-open initialization,
-  - near-zero scales use an epsilon floor and record floor usage in provenance,
+  - except for open, component scales are computed as
+    `scale_c = max(raw_L_c(theta_init), epsilon_norm)` and
+    `normalized_L_c = raw_L_c(theta) / scale_c`,
+  - `theta_init` is the deterministic identity-plus-small-open initialization,
+  - `epsilon_norm = 1e-2`,
+  - `epsilon_norm` is the full-estimator loss-normalization floor rather than
+    the Task A Block 3 generator `epsilon_fixed`; equal numeric values do not
+    imply equal semantics,
+  - canonical normalization provenance records `epsilon_norm` as a
+    dimensionless `float64` modeling floor,
+  - open is the explicit normalization exception:
+    `scale_open = 1` and
+    `normalized_L_open = L_open_raw = mean(d_p) + mean(e_p)`,
+  - when a raw baseline loss is valid and finite but the effective scale uses
+    the floor, the floor is provenance-only and does not change `fit_status`
+    or create a warning/failure by itself,
+  - floor provenance records component raw value, effective scale, normalized
+    value, `epsilon_norm`, and floor flag,
+  - the normalization floor does not rescue invalid raw losses or invalid
+    inputs; NaN/Inf values, illegal negative raw losses, empty observation
+    bags, invalid simplexes, invalid cost matrices, unavailable `torch`, and
+    related contract violations still fail fast,
+  - when the geometry baseline is zero or near zero because the initialization
+    is primarily diagonal and `C_norm[i,i] = 0`, `epsilon_norm = 1e-2` is used
+    and `loss.components.geometry.floor_used = true` is recorded as normal
+    provenance,
+  - no geometry-specific normalization scale is defined outside the
+    deterministic initialization policy,
   - group-internal component weighting is fixed by the contract rather than
     task-tuned,
   - STRIDE v1 uses simple continuous differentiable component losses where
@@ -352,6 +385,10 @@ not the canonical future architecture.
     `l_{p,b}` is the normalized `L_obs` for patient `p` and resolved evidence
     block `b` evaluated under shared `A_p` and `e_p`,
     `L_consistency_raw(p) = mean_b (l_{p,b} - mean_b l_{p,b})^2`,
+  - consistency normalization order is fixed: first determine the `L_obs`
+    normalization scale, then compute `L_consistency_raw` from normalized
+    `L_obs` block values, then compute the consistency normalization scale
+    from `L_consistency_raw(theta_init)` and `epsilon_norm`,
   - if `n_blocks < 2`, `L_consistency_raw(p) = 0` and
     `consistency_status = "insufficient_blocks"`,
   - `L_consistency` penalizes block-level support dispersion and does not
@@ -364,8 +401,9 @@ not the canonical future architecture.
     normalization policy, and fixed group-internal weighting unless a later
     decision explicitly supersedes this one,
   - local optimum risk is managed through deterministic initialization, fixed
-    optimizer protocol, optimizer status/provenance, and optional stability
-    diagnostics rather than through a global-optimum claim.
+    optimizer protocol recorded in successful-fit provenance, explicit result
+    status where applicable, and optional stability diagnostics rather than
+    through a global-optimum claim.
 
 ## D016 - Open-Channel Variables Are Required Fitted Components
 
@@ -424,46 +462,132 @@ not the canonical future architecture.
     objective configuration,
   - `none` is the full reference fit,
   - the `recurrence`, `geometry`, and `consistency` modes fit under objective
-    configurations with the corresponding term disabled or zero-weighted.
+    configurations with the corresponding term removed or zero-weighted,
+  - ablations must refit `A_p`, `d_p`, and `e_p` under the ablated objective;
+    they must not be implemented by masking reference-fit outputs or by
+    post-hoc rescoring only,
+  - ablations retain the reference fit's deterministic initialization,
+    optimizer protocol, resolved evidence blocks, and rerun-specific
+    semi-synthetic realization; the only objective change is removal or
+    zero-weighting of the corresponding recurrence, geometry, or consistency
+    term,
+  - ablations keep fixed group denominators and do not reweight remaining
+    terms:
+    `geometry` uses
+    `L_local = (normalized_L_obs + normalized_L_open + 0) / 3`,
+    `recurrence` uses
+    `L_regularization = (normalized_L_consistency + 0) / 2`, and
+    `consistency` uses
+    `L_regularization = (0 + normalized_L_recurrence) / 2`,
+  - no-`d/e`, open-channel removal, closed, balanced, and transport-style
+    comparisons remain baseline/comparator surfaces rather than 3C ablations.
 - Consequences:
   - ablation results must identify the fitted objective configuration,
-  - provenance must record `ablation_mode` for the full reference fit and each
-    ablated fit.
+  - ablation/refit experiment provenance must record `ablation_mode`, the
+    fixed-denominator policy, and the remove versus zero-weight implementation
+    route for each ablated fit,
+  - ordinary successful reference-fit provenance is not required to expose
+    ablation as a user-level `fit_stride(...)` control; compatibility payloads
+    may temporarily record `ablation_mode: "none"` only as a migration label.
 
 ## D019 - Compact Provenance Is Required For Manuscript-Level Results
 
-- Context: Manuscript-level STRIDE outputs need enough provenance to audit the
-  fit without requiring every detailed optimizer trace by default.
+- Context: Manuscript-level STRIDE outputs need compact provenance for a
+  successful full-estimator fit without creating a new audit module or
+  requiring detailed optimizer traces by default.
 - Decision:
   - default STRIDE package output must include the biological result plus
-    compact provenance,
-  - detailed optimization traces are optional,
-  - compact provenance must cover at least default `alpha` and any `alpha`
-    sensitivity grid, loss decomposition and normalization, normalization
-    baseline scales, epsilon-floor flags, initialization policy,
-    `e_bound = [0, 1]`,
-    `post_reconstruction_form = normalize(q_minus @ A + e)`,
-    `observation_comparison_plan`,
-    `observation_discrepancy_backend`,
-    observation discrepancy operator version,
-    `C_norm = C_raw / s_C` cost normalization,
-    Sinkhorn/UOT backend version and status handling,
-    observation-layer diagnostics such as `D_pos/B_pos` when emitted,
-    `open_channel_complexity_form = mean(d)+mean(e)`,
-    `open_channel_normalization_scale = 1`, optional augmented display object
-    status if emitted, geometry cost normalization, optimizer framework,
-    optimizer protocol, optimizer status, scheduler policy/status when used,
-    recurrence consensus support/dispersion/status, ablation mode, random seed,
-    and optimizer convergence or failure reason.
+    compact successful-fit provenance,
+  - compact provenance is a parameter, loss, and protocol record for a
+    successful `fit_stride(...)` full-estimator fit,
+  - compact provenance does not replace fail-fast input or configuration
+    validation and does not duplicate status fields already owned by result
+    containers,
+  - invalid parameters, invalid inputs, empty observation bags, invalid
+    simplexes, invalid cost matrices, unavailable canonical dependencies, and
+    low-level contract violations fail fast under canonical `ContractError`
+    semantics rather than being represented as null provenance fields,
+  - the required compact successful-fit provenance schema is:
+
+```yaml
+provenance_schema_version: "stride_fit_provenance.v1"
+alpha: float
+random_seed: int | null
+initialization:
+  policy: "identity_plus_small_open"
+  delta_init: float
+  K: int
+  dtype: "float64"
+loss:
+  total: float
+  local: float
+  regularization: float
+  epsilon_norm: 0.01
+  local_denominator: 3
+  regularization_denominator: 2
+  components:
+    obs: {raw: float, scale: float, normalized: float, floor_used: bool}
+    open: {raw: float, scale: float, normalized: float, floor_used: bool}
+    geometry: {raw: float, scale: float, normalized: float, floor_used: bool}
+    consistency: {raw: float, scale: float, normalized: float, floor_used: bool}
+    recurrence: {raw: float, scale: float, normalized: float, floor_used: bool}
+e_bounds: [0.0, 1.0]
+post_reconstruction_form: "normalize(q_minus @ A + e)"
+observation_comparison_plan:
+  resolved_by: "task_layer"
+  n_evidence_blocks: int
+  domain_policy: "observation_layer_only"
+observation_discrepancy:
+  operator_version: "D_obs^BalancedSinkhornDivergence-v1"
+  backend: "torch"
+  dtype: "float64"
+  inner_epsilon_schedule: [0.5, 0.2, 0.1]
+  outer_epsilon_schedule: [0.5, 0.2, 0.1]
+  max_iter: 1000
+  tol: 1e-6
+  warning_tol: 1e-4
+state_geometry:
+  normalization: "C_norm = C_raw / s_C"
+  s_C: float
+optimizer:
+  framework: "torch"
+  algorithm: "AdamW"
+  weight_decay: 0.0
+  scheduler_policy: "none" | "ReduceLROnPlateau_on_total_objective"
+recurrence:
+  support_n_patients: int
+  dispersion: float
+detailed_optimizer_trace: bool
+```
+
+  - ablation/refit experiment fits may add `ablation_mode`,
+    `ablation_term_handling`, and
+    `ablation_denominator_policy="fixed_denominator_no_reweighting"` as
+    experiment-only provenance fields; they are not required user-facing fields
+    for an ordinary successful `fit_stride(...)` fit,
+  - `D_obs^BalancedSinkhornDivergence-v1` is the canonical successful-fit
+    observation-discrepancy operator version in provenance,
+  - detailed optimizer traces are off by default and may be emitted only as
+    optional diagnostics,
+  - optional provenance diagnostics are limited to `alpha_sensitivity`,
+    `legacy_observation_diagnostics`, and `optimizer_trace_ref`,
+  - optional provenance diagnostics must not change objective semantics,
+    biological claims, or the canonical meaning of `L_obs`,
+  - compact provenance does not require `fit_status`, `patient_status`,
+    `recurrence_status`, `evidence_block_status`, status counts,
+    `failure_reason`, `optimizer_failure_reason`, per-patient records, or
+    per-evidence-block records.
 - Consequences:
   - biological result tables alone are incomplete manuscript-level outputs,
-  - provenance schema design is required before final full-estimator promotion.
+  - compact provenance records the successful fit's parameter, loss, and
+    protocol context without defining a separate status or failure hierarchy,
+  - existing result containers may continue to carry their own status fields.
 
 ## D020 - Source/Target Declaration And Observation-Fit Evidence Boundary
 
 - Context: Full STRIDE needs task-specific source/target observation
   comparisons without allowing tasks to redefine the core estimator or convert
-  observation residuals into biological claims.
+  observation diagnostics into biological claims.
 - Decision:
   - tasks declare and resolve ordered source/target observation groups and the
     valid domain strata or domain mapping used for observation comparison,
@@ -475,18 +599,25 @@ not the canonical future architecture.
     state axis, relation axis, or recurrence axis,
   - once resolved, every analysis uses the same task-insensitive
     `fit_stride(...)` full estimator and canonical v1 observation-discrepancy
-    backend,
-  - `L_obs` compares predicted and observed domain-stratified bag-of-FOV
-    empirical measures,
+    operator,
+  - `D_obs` is the fixed operator inside `L_obs`, not a sixth loss term and
+    not an independently weighted component,
+  - `L_obs` compares the model-implied predicted target-side FOV bag with the
+    observed target-side FOV bag,
   - the source-side FOV form is
-    `predicted_v_target = normalize(v_source @ A_p + e_p)`,
-  - `L_obs_pair_raw = D_obs^UOT-v1(predicted target-side bag-of-FOV, observed target-side bag-of-FOV; C_norm)`,
-  - `C_norm = C_raw / s_C`,
-  - `D_obs^UOT-v1` is the fixed, versioned, auditable canonical observation
-    discrepancy operator for v1,
-  - observation diagnostics such as `D_pos/B_pos` remain observation-layer
-    diagnostics rather than biological `d/e` or independently weighted loss
-    components,
+    `y_hat_f = normalize(v_source_f @ A_p + e_p)`,
+  - `L_obs_pair_raw = D_obs^BalancedSinkhornDivergence-v1(predicted target FOV bag, observed target FOV bag; C_norm)`,
+  - `C_norm = C_raw / s_C` remains the state/community-level cost
+    normalization,
+  - canonical v1 `D_obs` is the fixed, versioned, auditable, torch-native,
+    `float64`, log-domain, differentiable, balanced, debiased Sinkhorn
+    divergence operator,
+  - the canonical observation layer has no unbalanced unmatched residual; open
+    behavior is expressed only by fitted biological `d/e`,
+  - legacy UOT, `D_pos/B_pos`, and unbalanced observation residual diagnostics
+    remain diagnostic or Block 3 comparator concepts, including the external
+    Task A `uot_baseline` comparator name, rather than canonical `L_obs`,
+    biological `d/e`, or independently weighted loss components,
   - biological interpretation requires the evidence chain from observation
     discrepancy to patient-level fitted `A/d/e` to cohort consensus
     recurrence/dispersion support.
@@ -494,10 +625,13 @@ not the canonical future architecture.
   - task layers may choose the comparison plan, but they do not define a
     task-local STRIDE estimator or replace the observation solver for
     `stride_reference`,
-  - provenance must record the observation comparison plan, observation
-    discrepancy backend, operator version, cost normalization, Sinkhorn/UOT
-    status handling, and emitted observation diagnostics,
-  - manuscript-level claims must distinguish observation residual diagnostics
+  - compact successful-fit provenance records the task-resolved observation
+    comparison plan and the canonical
+    `D_obs^BalancedSinkhornDivergence-v1` operator settings required by the
+    success schema,
+  - legacy observation diagnostics may appear only in the optional
+    `legacy_observation_diagnostics` provenance field,
+  - manuscript-level claims must distinguish legacy observation diagnostics
     from fitted patient-level open-channel quantities and cohort-level
     recurrence evidence.
 
@@ -515,12 +649,135 @@ not the canonical future architecture.
   - a scheduler may be used only if fixed, predeclared, and recorded in
     provenance; the canonical v1 recommendation is `ReduceLROnPlateau` on the
     total objective,
-  - the observation term uses a torch-native differentiable canonical
-    Sinkhorn/UOT-v1 operator,
-  - Sinkhorn/UOT solves the observation discrepancy; AdamW optimizes `A_p`,
-    `d_p`, `e_p`, and any necessary objective variables.
+  - the observation term uses the torch-native differentiable canonical
+    `D_obs^BalancedSinkhornDivergence-v1` operator,
+  - the balanced Sinkhorn divergence operator solves the observation
+    discrepancy; AdamW optimizes `A_p`, `d_p`, `e_p`, and any necessary
+    objective variables.
 - Consequences:
-  - optimizer provenance must distinguish numerical optimization settings from
-    objective regularization,
-  - status/failure handling must report optimizer convergence or failure
-    without implying global optimality.
+  - compact successful-fit provenance records optimizer framework, algorithm,
+    `weight_decay`, and scheduler policy as numerical protocol fields,
+  - optimizer protocol provenance must distinguish numerical optimization
+    settings from objective regularization,
+  - optimizer or dependency contract violations fail fast through the same
+    exception/status surfaces as other contract failures rather than becoming
+    required compact provenance fields,
+  - failure handling must not imply global optimality.
+
+## D022 - Canonical Observation Discrepancy Uses Debiased Balanced Sinkhorn Divergence
+
+- Context: The full-estimator observation term needs a fixed discrepancy
+  operator that compares predicted and observed target-side FOV bags without
+  introducing an observation-layer unmatched residual or a separate loss
+  weight.
+- Decision:
+  - the canonical v1 operator is
+    `D_obs^BalancedSinkhornDivergence-v1`,
+  - `D_obs` is a fixed operator inside `L_obs`; it is not a sixth loss term and
+    has no independent weight,
+  - `y_hat_f = normalize(v_source_f @ A_p + e_p)`,
+  - `L_obs` compares the model-implied predicted target-side FOV bag with the
+    observed target-side FOV bag,
+  - the operator is torch-native, `float64`, log-domain, differentiable,
+    balanced, and debiased,
+  - observation-layer unbalanced unmatched residuals are not part of canonical
+    `L_obs`; open behavior is expressed only by fitted `d/e`,
+  - `C_norm = C_raw / s_C` remains the state/community-level cost,
+  - the FOV-level ground cost is
+    `G[f,g] = debiased balanced Sinkhorn composition distance(y_hat_f, y_true_g; C_norm)`,
+  - tiny negative inner composition-distance values in `[-1e-10, 0)` are
+    clamped to `0` with provenance; values below `-1e-10` are numerical
+    failure,
+  - the outer loss is
+    `L_obs_pair_raw = debiased balanced Sinkhorn divergence(predicted target FOV bag, observed target FOV bag; G_norm)`,
+  - `G_norm = G / s_G_init`,
+  - `s_G_init` is a fixed evidence-block scale computed at deterministic
+    identity-plus-small-open initialization from positive finite
+    initialization-time FOV-level costs,
+  - if no positive finite initialization-time FOV-level costs exist,
+    `s_G_init = 1.0` and floor usage is recorded,
+  - `s_G_init` is not recomputed dynamically during optimization,
+  - fixed v1 numeric defaults are inner epsilon schedule `(0.5, 0.2, 0.1)`,
+    outer epsilon schedule `(0.5, 0.2, 0.1)`, `max_iter = 1000` per epsilon
+    stage, `tol = 1e-6`, `warning_tol = 1e-4`, backend `torch`, and dtype
+    `float64`,
+  - empty source or target FOV bag, invalid simplex, negative entries, NaN/Inf,
+    invalid cost matrix, or unavailable `torch` for the canonical full
+    estimator fails explicitly,
+  - no padding is allowed,
+  - reaching `max_iter` with finite values and final update `<= warning_tol`
+    is usable with warning; final update above `warning_tol` is numerical
+    failure,
+  - UOT, `D_pos/B_pos`, and unbalanced observation residuals are legacy,
+    diagnostic, or Block 3 comparator concepts only,
+  - Task A Block 3 preserves `uot_baseline` as an external comparator name and
+    does not rename it to the canonical full-estimator operator.
+- Consequences:
+  - compact successful-fit provenance records
+    `operator_version = "D_obs^BalancedSinkhornDivergence-v1"`, backend
+    `torch`, dtype `float64`, inner and outer epsilon schedules, `max_iter`,
+    `tol`, `warning_tol`, and `C_norm = C_raw / s_C` state-geometry
+    normalization,
+  - UOT remains a legacy diagnostic or Block 3 comparator concept only and is
+    not the canonical full-estimator observation operator,
+  - tests and documents that describe canonical full-estimator `L_obs` must not
+    treat legacy UOT or legacy residual diagnostics as canonical biological
+    open-channel quantities.
+
+## D023 - Geometry/Locality Prior Uses Raw A And Symmetric Shared-State Cost
+
+- Context: The full estimator needs a fixed geometry/locality contract that
+  raises the explanation cost of complex or distant remodeling without turning
+  state geometry into a hard support mask or an additional reported biology
+  class.
+- Decision:
+  - `L_geometry` is a soft biological-complexity cost on shared-state
+    geometry,
+  - distant remodeling may remain in the fitted relation when supported by the
+    joint objective,
+  - the term acts directly on canonical raw `A_p`,
+  - it does not act on a derived conditional kernel such as
+    `A_p / (1 - d_p)`,
+  - the full `A_p` matrix is the objective contract surface for the term,
+  - `C_norm = C_raw / s_C`,
+  - `C_raw` and `C_norm` must be finite, nonnegative, symmetric `[K, K]`
+    state-geometry matrices on the shared `K`-state basis,
+  - diagonal entries must be `0` within declared numerical tolerance,
+  - `s_C` defaults to the median of positive finite off-diagonal entries of
+    `C_raw`,
+  - at least one positive finite off-diagonal entry must exist; otherwise the
+    fit fails the contract explicitly,
+  - invalid state geometry must not fall back to `s_C = 1.0` and must not
+    silently disable the geometry term,
+  - `C` represents symmetric state-identity distance, while `A_p` is directed,
+  - for a valid fitted patient:
+    `L_geometry_raw(p) = (1 / K) * sum_i sum_j A_p[i,j] * C_norm[i,j]`,
+  - all `K` source rows are included in the row mean,
+  - diagonal self-retention pays no geometry cost because `C_norm[i,i] = 0`,
+  - cohort/objective-level `L_geometry_raw` is the simple mean over valid
+    fitted patients,
+  - `normalized_L_geometry` uses the deterministic
+    identity-plus-small-open baseline-scale policy with
+    `scale_geometry = max(raw_L_geometry(theta_init), 1e-2)`,
+  - a zero or near-zero geometry baseline uses `epsilon_norm = 1e-2` and
+    records `loss.components.geometry.floor_used = true` as provenance-only
+    normal provenance when the raw geometry loss is valid,
+  - no geometry-specific scale outside the initialization policy is introduced,
+  - no geometry-specific objective weight is introduced,
+  - `L_geometry` is the fixed normalized geometry component inside
+    `L_local = mean(normalized_L_obs, normalized_L_open, normalized_L_geometry)`,
+  - `L_regularization = mean(normalized_L_consistency, normalized_L_recurrence)`,
+  - the default scientific result surface remains fitted `A_p`, `d_p`, and
+    `e_p` plus existing derived summaries,
+  - geometry information is emitted through the objective, compact provenance,
+    and geometry ablation rather than as a separate biological result class.
+- Consequences:
+  - official and custom representation routes must provide a valid
+    shared-state geometry cost matrix before canonical fitting,
+  - compact provenance records `state_geometry.s_C`,
+    `loss.components.geometry.{raw, scale, normalized, floor_used}`,
+    `epsilon_norm`, and ablation mode,
+  - geometry ablation removes or zeroes the geometry/locality term and refits
+    `A_p`, `d_p`, and `e_p` under the ablated objective,
+  - later implementation work must preserve the fixed objective grouping and
+    avoid introducing a geometry-specific hyperparameter.

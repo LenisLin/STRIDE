@@ -1,57 +1,62 @@
-"""Canonical STRIDE fit orchestration with benchmark-aware ablation controls.
+"""Canonical STRIDE fit orchestration for the current Python interface.
 
 Role:
-    Provide the canonical patient-plus-cohort STRIDE fit path together with the
-    compatibility proxy initializer and the benchmark controls consumed by Task
-    A Block 3.
+    Provide the public patient-plus-cohort STRIDE fit path together with the
+    bounded first-pass PyTorch/AdamW full-estimator implementation and the
+    compatibility local initializer used outside the supported envelope.
 
 Local boundary:
-    - This module owns bridge-input validation, proxy initialization, canonical
-      cohort shrinkage, and benchmark-mode control of the fit output.
+    - This module owns input validation, full-estimator fitting, local
+      compatibility initialization, and the cohort recurrence layer used by
+      `fit_stride`.
     - It does not define Task A routing, semisynthetic generation, or Block 3
       scoring rules.
-    - It must preserve the distinction between the approximate proxy path and
-      the canonical full path.
+    - It exposes Task A core ablations only through the private internal refit
+      hook used by validation surfaces.
 
 Primary contents:
-    - Canonical bridge-input dataclasses and validators.
-    - Proxy patient bridge fitting and canonical full STRIDE refinement.
-    - Benchmark-mode controls for `reference`, `open_channel_ablation`, and
-      `cohort_ablation`.
+    - Canonical input dataclasses and validators.
+    - Full-estimator objective/optimizer orchestration.
+    - Local patient initialization compatibility path.
+    - Internal Task A ablation refit hooks.
 
 Why this module exists:
-    Task A Block 3 needs ablations that change real inference outputs without
-    inventing a task-local fit engine. Centralizing those controls here makes
-    the ablation semantics auditable at the same layer where canonical STRIDE
-    actually applies them.
+    The Python API needs one audited path for `fit_stride(...)`. Task A may ask
+    this layer for core STRIDE ablation refits through a private hook, keeping
+    experiment controls out of the ordinary public configuration surface.
 """
 from __future__ import annotations
 
 from collections import Counter
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, replace
-from typing import Any, Mapping
+from typing import Any
 
 import numpy as np
 
-from ..basis.contracts import StateBasis, validate_state_basis
+from ..basis.contracts import StateBasis
 from ..errors import ContractError
 from ..geometry.state_geometry import StateGeometry
 from ..latent.operators import PatientRelationAudit, initialize_patient_relation
 from ..latent.recurrence import (
+    PatientRecurrenceEmbedding,
     RecurrenceConfig,
+    RecurrenceFamily,
+    RecurrenceParameters,
+    RecurrenceResult,
     build_deferred_recurrence_result,
     estimate_recurrence,
 )
 from ..objectives import LossBreakdown, LossWeights, aggregate_loss_breakdowns, evaluate_loss_bundle
+from ..objectives.full_estimator import FullEstimatorEvidenceBlock
 from ..observation.contracts import (
     DomainStratifiedMeasure,
     FovObservation,
     ObservationDiscrepancyConfig,
-    validate_fov_observation,
 )
 from ..observation.discrepancy import build_observation_kernels, match_observation_clouds
 from ..observation.measures import build_domain_stratified_measure
+from ..optimize import FullEstimatorOptimizerConfig, optimize_full_estimator
 from ..outputs.fit_result import PatientBridgeResult, STRIDEFitResult
 from ..outputs.uncertainty import (
     PatientBootstrapConfig,
@@ -61,37 +66,17 @@ from ..outputs.uncertainty import (
     summarize_bootstrap_array,
 )
 from ..settings.runtime import RuntimeSettings
-
-
-def _require_nonempty_identifier(value: str, *, field_name: str) -> str:
-    """Normalize one identifier field and require non-empty string content."""
-
-    normalized = str(value).strip()
-    if normalized == "":
-        raise ContractError(f"{field_name} must be a non-empty string")
-    return normalized
-
-
-def _observation_key(observation: FovObservation) -> tuple[str, str, str, str]:
-    """Build a stable observation identity key for grouping and validation."""
-
-    return (
-        str(observation.patient_id),
-        str(observation.timepoint),
-        str(observation.fov_id),
-        str(observation.domain_label),
-    )
-
-
-def _normalize_nested_counts(
-    counts: Mapping[str, Mapping[str, int]],
-) -> dict[str, dict[str, int]]:
-    """Convert nested count mappings into plain serializable dictionaries."""
-
-    return {
-        str(group_label): {str(domain_label): int(count) for domain_label, count in domain_counts.items()}
-        for group_label, domain_counts in counts.items()
-    }
+from ._fit_inputs import (
+    _build_patient_fit_inputs as _build_patient_fit_inputs_for_order,
+)
+from ._fit_inputs import (
+    _FitObservationGroup,
+    _normalize_nested_counts,
+    _PatientFitInput,
+    _require_nonempty_identifier,
+    _validate_fit_observation_group,  # noqa: F401 - retained as private module surface.
+    _validate_patient_fit_input,  # noqa: F401 - retained as private module surface.
+)
 
 
 def _count_patient_statuses(results: tuple[PatientBridgeResult, ...]) -> dict[str, int]:
@@ -152,19 +137,19 @@ def _build_canonical_bridge_auxiliary(
 ) -> dict[str, Any]:
     """Build the auxiliary payload carried by canonical full patient results."""
 
-    proxy_auxiliary = dict(local_result.auxiliary)
+    local_auxiliary = dict(local_result.auxiliary)
     canonical_auxiliary: dict[str, Any] = {}
     emergence_scale = float(np.sum(mu_minus, dtype=float))
-    known_proxy_fields = (
+    known_local_fields = (
         "matched_transition_burden",
         "raw_matched_transition_burden",
         "source_unmatched_burden",
         "target_unmatched_burden",
     )
 
-    for field_name, value in proxy_auxiliary.items():
-        if field_name in known_proxy_fields:
-            canonical_auxiliary[f"proxy_initializer_{field_name}"] = value
+    for field_name, value in local_auxiliary.items():
+        if field_name in known_local_fields:
+            canonical_auxiliary[f"local_initializer_{field_name}"] = value
             continue
         canonical_auxiliary[field_name] = value
 
@@ -205,36 +190,13 @@ def _shrink_relation_to_template(
     return shrunk_A, shrunk_d, shrunk_e
 
 
-def _apply_benchmark_mode_to_relation(
+def _normalize_relation_arrays(
     *,
-    benchmark_mode: str,
     A: np.ndarray,
     d: np.ndarray,
     e: np.ndarray,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Normalize the realized relation after benchmark controls were applied upstream.
-
-    Purpose:
-        Return canonical relation arrays after any bridge-stage or
-        shrinkage-stage benchmark controls have already taken effect.
-
-    Inputs:
-        benchmark_mode: One of `reference`, `open_channel_ablation`, or
-            `cohort_ablation`.
-        A/d/e: Canonical relation components after upstream inference controls.
-
-    Returns:
-        The normalized `(A, d, e)` tuple exposed to callers.
-
-    Core flow:
-        1. Accept the already-controlled relation from the upstream bridge and
-           cohort stages.
-        2. Normalize each array to float dtype without rewriting the inferred
-           open channels.
-        3. Preserve identical output semantics across benchmark modes at this
-           projection layer.
-    """
-    del benchmark_mode
+    """Normalize relation arrays before attaching them to output objects."""
     return (
         np.asarray(A, dtype=float),
         np.asarray(d, dtype=float),
@@ -242,40 +204,8 @@ def _apply_benchmark_mode_to_relation(
     )
 
 
-def _resolve_bridge_match_penalty(*, benchmark_mode: str) -> float:
-    """Resolve the observation-layer match penalty used by one benchmark mode."""
-
-    if benchmark_mode == "open_channel_ablation":
-        return float(_OPEN_CHANNEL_ABLATION_MATCH_PENALTY)
-    return float(_DEFAULT_BRIDGE_MATCH_PENALTY)
-
-
-def _resolve_benchmark_controls(
-    config: "STRIDEFitConfig",
-) -> tuple[LossWeights, float]:
-    """Resolve objective-weight and shrinkage controls for one benchmark mode.
-
-    This helper changes the optimization surface itself, not just the labels on
-    the returned fit object.
-    """
-    objective_weights = config.objective_weights
-    shrinkage_weight = float(config.cohort_shrinkage_weight)
-    if config.benchmark_mode == "open_channel_ablation":
-        objective_weights = replace(
-            objective_weights,
-            open_relation=0.0,
-            open_channel_control=(
-                0.0 if objective_weights.open_channel_control is not None else None
-            ),
-        )
-    elif config.benchmark_mode == "cohort_ablation":
-        objective_weights = replace(objective_weights, cohort_recurrence=0.0)
-        shrinkage_weight = 0.0
-    return objective_weights, shrinkage_weight
-
-
 def _build_patient_loss_breakdown(
-    patient_input: "PatientBridgeInput",
+    patient_input: _PatientFitInput,
     *,
     local_result: PatientBridgeResult,
     final_A: np.ndarray,
@@ -371,7 +301,7 @@ def _unpack_relation_variables(
 
 
 def _refine_relation_by_objective(
-    patient_input: "PatientBridgeInput",
+    patient_input: _PatientFitInput,
     *,
     local_result: PatientBridgeResult,
     initial_A: np.ndarray,
@@ -582,12 +512,11 @@ def _refine_relation_by_objective(
     return refined_A, refined_d, refined_e, metadata
 
 
-def _canonicalize_proxy_patient_result(
-    patient_input: "PatientBridgeInput",
+def _canonicalize_local_patient_result(
+    patient_input: _PatientFitInput,
     *,
     local_result: PatientBridgeResult,
     objective_weights: LossWeights,
-    benchmark_mode: str,
     template_A: np.ndarray | None = None,
     template_d: np.ndarray | None = None,
     template_e: np.ndarray | None = None,
@@ -597,19 +526,18 @@ def _canonicalize_proxy_patient_result(
     relation_refinement_max_iter: int,
     relation_refinement_tol: float,
 ) -> PatientBridgeResult:
-    """Project a proxy-initialized patient result onto the canonical full path.
+    """Project a local initializer result onto the canonical full path.
 
     Purpose:
-        Combine the local proxy initializer with cohort recurrence shrinkage and
-        benchmark-mode controls to produce the patient result returned by
-        canonical full STRIDE.
+        Combine the local initializer with cohort recurrence shrinkage to
+        produce the patient result returned by canonical full STRIDE.
 
     Core flow:
         1. Preserve deferred/failed local statuses without fabricating new
            patient relations.
         2. Optionally shrink the realized local relation toward the cohort
            template.
-        3. Apply benchmark-mode controls that alter the exposed output object.
+        3. Normalize relation arrays.
         4. Rebuild diagnostics, auxiliary payloads, and loss breakdowns for the
            canonical result.
     """
@@ -618,7 +546,7 @@ def _canonicalize_proxy_patient_result(
             local_result.diagnostics.get(
                 "message",
                 "Canonical full STRIDE preserved the explicit deferred/failed patient "
-                "status from the proxy initializer.",
+                "status from the local initializer.",
             )
         )
         return PatientBridgeResult(
@@ -631,10 +559,10 @@ def _canonicalize_proxy_patient_result(
                 "local_fit_status": local_result.fit_status,
                 "cohort_fit_status": cohort_fit_status,
                 "message": local_message,
-                "proxy_initializer_message": local_message,
+                "local_initializer_message": local_message,
                 "canonical_context_message": (
                     "Canonical full STRIDE preserved the explicit deferred/failed patient "
-                    "status from the proxy initializer."
+                    "status from the local initializer."
                 ),
             },
             auxiliary=dict(local_result.auxiliary),
@@ -656,8 +584,7 @@ def _canonicalize_proxy_patient_result(
             np.asarray(local_result.e, dtype=float),
         )
     )
-    final_A, final_d, final_e = _apply_benchmark_mode_to_relation(
-        benchmark_mode=benchmark_mode,
+    final_A, final_d, final_e = _normalize_relation_arrays(
         A=final_A,
         d=final_d,
         e=final_e,
@@ -730,10 +657,9 @@ def _canonicalize_proxy_patient_result(
             "local_fit_status": local_result.fit_status,
             "cohort_fit_status": cohort_fit_status,
             "template_shrinkage_applied": template_shrinkage_applied,
-            "benchmark_mode": benchmark_mode,
             **refinement_metadata,
             "message": (
-                "Canonical full STRIDE combined the proxy local initializer with the "
+                "Canonical full STRIDE combined the current local initializer with the "
                 "current cohort-level recurrence template."
                 if template_shrinkage_applied
                 else (
@@ -817,11 +743,11 @@ _GEOMETRY_DEFER_REASON = "requires_shared_state_geometry"
 _OBSERVATION_DEFER_REASON = "requires_supported_observation_discrepancy_rows"
 _BRIDGE_PLAN_CHUNK_ELEMENTS = 250_000
 _DEFAULT_BRIDGE_MATCH_PENALTY = 1.0
-_OPEN_CHANNEL_ABLATION_MATCH_PENALTY = 50.0
-_ALLOWED_BENCHMARK_MODES: tuple[str, ...] = (
-    "reference",
-    "open_channel_ablation",
-    "cohort_ablation",
+_ALLOWED_INTERNAL_ABLATION_MODES: tuple[str, ...] = (
+    "none",
+    "recurrence",
+    "geometry",
+    "consistency",
 )
 _BRIDGE_DISCREPANCY_CONFIG = ObservationDiscrepancyConfig(
     eps_schedule=(1.0, 0.2),
@@ -856,25 +782,7 @@ class _DomainPairBridgeAccumulation:
     target_unmatched_burden: np.ndarray
 
 
-def _resolve_ordered_group_labels(
-    observed_labels: tuple[str, ...],
-    *,
-    declared_order: tuple[str, ...],
-) -> tuple[str, ...]:
-    if not declared_order:
-        return observed_labels
-
-    extras = [label for label in observed_labels if label not in declared_order]
-    if extras:
-        raise ContractError(
-            "Observed group labels are missing from STRIDEFitConfig.timepoint_order: "
-            f"{tuple(extras)}"
-        )
-
-    return tuple(label for label in declared_order if label in observed_labels)
-
-
-def _resolve_patient_state_ids(patient_input: "PatientBridgeInput") -> tuple[int, ...] | None:
+def _resolve_patient_state_ids(patient_input: _PatientFitInput) -> tuple[int, ...] | None:
     if patient_input.state_basis is not None:
         return patient_input.state_basis.resolved_state_ids
     if patient_input.geometry is not None:
@@ -882,7 +790,7 @@ def _resolve_patient_state_ids(patient_input: "PatientBridgeInput") -> tuple[int
     return None
 
 
-def _shared_bridge_count_diagnostics(patient_input: "PatientBridgeInput") -> dict[str, Any]:
+def _shared_bridge_count_diagnostics(patient_input: _PatientFitInput) -> dict[str, Any]:
     return {
         "ordered_group_labels": patient_input.ordered_group_labels,
         "n_groups": len(patient_input.ordered_group_labels),
@@ -894,7 +802,7 @@ def _shared_bridge_count_diagnostics(patient_input: "PatientBridgeInput") -> dic
     }
 
 
-def _shared_bridge_audit_metadata(patient_input: "PatientBridgeInput") -> dict[str, Any]:
+def _shared_bridge_audit_metadata(patient_input: _PatientFitInput) -> dict[str, Any]:
     diagnostics = _shared_bridge_count_diagnostics(patient_input)
     return {
         "n_observations_by_group": diagnostics["n_observations_by_group"],
@@ -905,7 +813,7 @@ def _shared_bridge_audit_metadata(patient_input: "PatientBridgeInput") -> dict[s
 
 
 def _evaluate_patient_bridge_support(
-    patient_input: "PatientBridgeInput",
+    patient_input: _PatientFitInput,
 ) -> tuple[bool, str | None, str | None]:
     if patient_input.mass_mode != "uniform":
         return (
@@ -934,7 +842,7 @@ def _evaluate_patient_bridge_support(
     return True, None, None
 
 
-def _mean_group_composition(group: "BridgeObservationGroup") -> np.ndarray:
+def _mean_group_composition(group: _FitObservationGroup) -> np.ndarray:
     compositions = np.vstack(
         [np.asarray(observation.community_composition, dtype=float) for observation in group.observations]
     ).astype(float, copy=False)
@@ -1014,7 +922,7 @@ def _serialize_domain_couplings(
     ]
 
 
-def _summarize_group_domains(group: "BridgeObservationGroup") -> tuple[_GroupDomainSummary, ...]:
+def _summarize_group_domains(group: _FitObservationGroup) -> tuple[_GroupDomainSummary, ...]:
     total_observations = len(group.observations)
     summaries: list[_GroupDomainSummary] = []
     for domain_label in sorted(group.observations_by_domain):
@@ -1239,13 +1147,12 @@ def _geometry_greedy_transport(
 
 
 def _build_realized_patient_bridge_result(
-    patient_input: "PatientBridgeInput",
+    patient_input: _PatientFitInput,
     *,
     runtime_settings: RuntimeSettings,
-    benchmark_mode: str = "reference",
 ) -> PatientBridgeResult:
     if patient_input.geometry is None:
-        raise ContractError("Realized bridge estimation requires PatientBridgeInput.geometry")
+        raise ContractError("Realized bridge estimation requires _PatientFitInput.geometry")
 
     pre_group, post_group = patient_input.groups
     pre_label, post_label = patient_input.ordered_group_labels
@@ -1263,7 +1170,7 @@ def _build_realized_patient_bridge_result(
         discrepancy_cfg.eps_schedule,
         cost_scale=geometry.cost_scale,
     )
-    effective_match_penalty = _resolve_bridge_match_penalty(benchmark_mode=benchmark_mode)
+    effective_match_penalty = float(_DEFAULT_BRIDGE_MATCH_PENALTY)
 
     total_pre_observations = len(pre_group.observations)
     total_post_observations = len(post_group.observations)
@@ -1304,7 +1211,6 @@ def _build_realized_patient_bridge_result(
                         "observation discrepancy row did not produce an honest canonical "
                         "matching summary."
                     ),
-                    benchmark_mode=benchmark_mode,
                 )
 
             pair_weight = (pre_share * post_share) / float(domain_pair_summary.n_pairs)
@@ -1333,7 +1239,6 @@ def _build_realized_patient_bridge_result(
         "supported_case": _MINIMAL_SUPPORTED_CASE,
         "estimator_mode": _CANONICAL_BRIDGE_MODE,
         "estimator_method": _CANONICAL_BRIDGE_METHOD,
-        "benchmark_mode": benchmark_mode,
         "effective_match_penalty": float(effective_match_penalty),
         "observation_discrepancy_config": {
             "eps_schedule": tuple(discrepancy_cfg.eps_schedule),
@@ -1411,11 +1316,10 @@ def _build_realized_patient_bridge_result(
 
 
 def _build_deferred_patient_bridge_result(
-    patient_input: "PatientBridgeInput",
+    patient_input: _PatientFitInput,
     *,
     defer_reason: str,
     message: str,
-    benchmark_mode: str = "reference",
 ) -> PatientBridgeResult:
     group_labels = patient_input.ordered_group_labels
     n_pre_observations = (
@@ -1450,10 +1354,7 @@ def _build_deferred_patient_bridge_result(
             **_shared_bridge_count_diagnostics(patient_input),
             "mode": "deferred",
             "defer_reason": defer_reason,
-            "benchmark_mode": benchmark_mode,
-            "effective_match_penalty": _resolve_bridge_match_penalty(
-                benchmark_mode=benchmark_mode
-            ),
+            "effective_match_penalty": float(_DEFAULT_BRIDGE_MATCH_PENALTY),
             "message": message,
         },
     )
@@ -1480,13 +1381,13 @@ def _bootstrap_observation(
 
 
 def _bootstrap_patient_bridge_input(
-    patient_input: "PatientBridgeInput",
+    patient_input: _PatientFitInput,
     *,
     rng: np.random.Generator,
     replicate_index: int,
     preserve_domain_stratification: bool,
-) -> "PatientBridgeInput":
-    bootstrap_groups: list[BridgeObservationGroup] = []
+) -> _PatientFitInput:
+    bootstrap_groups: list[_FitObservationGroup] = []
     counts_by_group: dict[str, int] = {}
     counts_by_domain: dict[str, int] = {}
     counts_by_group_and_domain: dict[str, dict[str, int]] = {}
@@ -1545,14 +1446,14 @@ def _bootstrap_patient_bridge_input(
             counts_by_domain[domain_label] = counts_by_domain.get(domain_label, 0) + len(domain_observations)
 
         bootstrap_groups.append(
-            BridgeObservationGroup(
+            _FitObservationGroup(
                 group_label=group.group_label,
                 observations=tuple(sampled_group_observations),
                 observations_by_domain=sampled_group_by_domain,
             )
         )
 
-    return PatientBridgeInput(
+    return _PatientFitInput(
         patient_id=patient_input.patient_id,
         ordered_group_labels=patient_input.ordered_group_labels,
         groups=tuple(bootstrap_groups),
@@ -1571,7 +1472,7 @@ def _bootstrap_patient_bridge_input(
 
 
 def _build_deferred_patient_bootstrap_uncertainty(
-    patient_input: "PatientBridgeInput",
+    patient_input: _PatientFitInput,
     patient_result: PatientBridgeResult,
     *,
     config: PatientBootstrapConfig,
@@ -1610,13 +1511,12 @@ def _build_deferred_patient_bootstrap_uncertainty(
 
 
 def _build_patient_bootstrap_uncertainty(
-    patient_input: "PatientBridgeInput",
+    patient_input: _PatientFitInput,
     patient_result: PatientBridgeResult,
     *,
     config: PatientBootstrapConfig,
     bootstrap_seed: int,
     runtime_settings: RuntimeSettings,
-    benchmark_mode: str,
 ) -> PatientBootstrapUncertaintyResult:
     rng = np.random.default_rng(int(bootstrap_seed))
     replicate_statuses: list[str] = []
@@ -1636,7 +1536,6 @@ def _build_patient_bootstrap_uncertainty(
             bootstrap_result = _build_realized_patient_bridge_result(
                 bootstrap_input,
                 runtime_settings=runtime_settings,
-                benchmark_mode=benchmark_mode,
             )
         except ContractError as exc:
             replicate_statuses.append("failed")
@@ -1728,12 +1627,11 @@ def _build_patient_bootstrap_uncertainty(
 
 
 def _build_stride_bootstrap_uncertainty(
-    patient_inputs: tuple["PatientBridgeInput", ...],
+    patient_inputs: tuple[_PatientFitInput, ...],
     patient_results: tuple[PatientBridgeResult, ...],
     *,
     config: PatientBootstrapConfig,
     runtime_settings: RuntimeSettings,
-    benchmark_mode: str,
 ) -> STRIDEBootstrapUncertaintyResult:
     master_rng = np.random.default_rng(config.random_state)
     uncertainty_patient_results: list[PatientBootstrapUncertaintyResult] = []
@@ -1778,7 +1676,6 @@ def _build_stride_bootstrap_uncertainty(
                 config=config,
                 bootstrap_seed=bootstrap_seed,
                 runtime_settings=runtime_settings,
-                benchmark_mode=benchmark_mode,
             )
         )
 
@@ -1800,21 +1697,16 @@ class STRIDEFitConfig:
     """Configuration for the canonical full STRIDE fit flow.
 
     Fields:
-        benchmark_mode: Output/control regime used by downstream benchmark
-            callers. `reference` keeps the full canonical path,
-            `open_channel_ablation` disables explicit open-channel control, and
-            `cohort_ablation` disables cohort recurrence shrinkage.
-        objective_weights: Canonical loss weights before any benchmark-mode
-            adjustments are applied.
-        cohort_shrinkage_weight: Canonical shrinkage strength before benchmark
-            controls optionally zero it out.
+        objective_weights: Canonical loss weights for the current reference
+            path. These do not expose Task A ablation controls to normal users.
+        cohort_shrinkage_weight: Canonical shrinkage strength for the current
+            reference path.
         enable_relation_refinement: Whether to run the active constrained
-            relation refinement step after proxy initialization and cohort
+            relation refinement step after local initialization and cohort
             shrinkage.
     """
 
     timepoint_order: tuple[str, ...] = ()
-    benchmark_mode: str = "reference"
     recurrence_config: RecurrenceConfig | None = None
     uncertainty_config: PatientBootstrapConfig | None = None
     objective_weights: LossWeights = field(default_factory=LossWeights)
@@ -1824,23 +1716,16 @@ class STRIDEFitConfig:
     relation_refinement_tol: float = 1e-8
     runtime_settings: RuntimeSettings = field(default_factory=RuntimeSettings)
     metadata: Mapping[str, Any] = field(default_factory=dict)
+    _ablation_mode: str = field(default="none", init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         normalized_labels = tuple(
             _require_nonempty_identifier(label, field_name="timepoint_order label")
             for label in self.timepoint_order
         )
-        benchmark_mode = _require_nonempty_identifier(
-            self.benchmark_mode,
-            field_name="benchmark_mode",
-        )
+        _validate_internal_ablation_mode(self._ablation_mode)
         if len(set(normalized_labels)) != len(normalized_labels):
             raise ContractError("STRIDEFitConfig.timepoint_order must not contain duplicates")
-        if benchmark_mode not in _ALLOWED_BENCHMARK_MODES:
-            raise ContractError(
-                "STRIDEFitConfig.benchmark_mode must be one of "
-                f"{_ALLOWED_BENCHMARK_MODES}, got {benchmark_mode!r}"
-            )
         if self.uncertainty_config is not None and not isinstance(
             self.uncertainty_config,
             PatientBootstrapConfig,
@@ -1866,326 +1751,77 @@ class STRIDEFitConfig:
             raise ContractError("STRIDEFitConfig.relation_refinement_tol must be positive")
 
 
-@dataclass(frozen=True)
-class BridgeObservationGroup:
-    """One ordered-side/timepoint group of observations for a patient bridge."""
-
-    group_label: str
-    observations: tuple[FovObservation, ...]
-    observations_by_domain: Mapping[str, tuple[FovObservation, ...]]
-
-    def __post_init__(self) -> None:
-        validate_bridge_observation_group(self)
-
-
-@dataclass(frozen=True)
-class PatientBridgeInput:
-    """Canonical per-patient bridge input bundle for future STRIDE fitting."""
-
-    patient_id: str
-    ordered_group_labels: tuple[str, ...]
-    groups: tuple[BridgeObservationGroup, ...]
-    n_observations_by_group: Mapping[str, int]
-    n_observations_by_domain: Mapping[str, int]
-    n_observations_by_group_and_domain: Mapping[str, Mapping[str, int]]
-    state_basis: StateBasis | None = None
-    geometry: StateGeometry | None = None
-    mass_mode: str = "uniform"
-    metadata: Mapping[str, Any] = field(default_factory=dict)
-
-    def __post_init__(self) -> None:
-        validate_patient_bridge_input(self)
-
-    @property
-    def observations(self) -> tuple[FovObservation, ...]:
-        """Return the flattened ordered observation sequence across groups."""
-        return tuple(
-            observation
-            for group in self.groups
-            for observation in group.observations
-        )
-
-    @property
-    def groups_by_label(self) -> dict[str, BridgeObservationGroup]:
-        """Return the grouped observations keyed by their declared label."""
-        return {group.group_label: group for group in self.groups}
-
-
-def validate_bridge_observation_group(group: BridgeObservationGroup) -> None:
-    """Validate one ordered-side/timepoint observation group."""
-    group_label = _require_nonempty_identifier(group.group_label, field_name="group_label")
-    if len(group.observations) == 0:
-        raise ContractError("BridgeObservationGroup.observations must be non-empty")
-    if len(group.observations_by_domain) == 0:
-        raise ContractError("BridgeObservationGroup.observations_by_domain must be non-empty")
-
-    n_states: int | None = None
-    observed_counter: Counter[tuple[str, str, str, str]] = Counter()
-    observed_domain_counter: Counter[str] = Counter()
-    for observation in group.observations:
-        validate_fov_observation(observation)
-        if observation.timepoint != group_label:
-            raise ContractError(
-                "All BridgeObservationGroup.observations must share the declared group_label"
-            )
-        if observation.domain_label is None:
-            raise ContractError("BridgeObservationGroup observations must declare domain_label")
-
-        observed_counter[_observation_key(observation)] += 1
-        observed_domain_counter[str(observation.domain_label)] += 1
-        current_n_states = int(np.asarray(observation.community_composition, dtype=float).shape[0])
-        if n_states is None:
-            n_states = current_n_states
-        elif current_n_states != n_states:
-            raise ContractError(
-                "BridgeObservationGroup observations must share one K-state axis size"
-            )
-
-    grouped_counter: Counter[tuple[str, str, str, str]] = Counter()
-    grouped_domain_counter: Counter[str] = Counter()
-    for domain_label, domain_observations in group.observations_by_domain.items():
-        normalized_domain = _require_nonempty_identifier(domain_label, field_name="domain_label")
-        if len(domain_observations) == 0:
-            raise ContractError(
-                "BridgeObservationGroup.observations_by_domain entries must be non-empty"
-            )
-        for observation in domain_observations:
-            validate_fov_observation(observation)
-            if observation.timepoint != group_label:
-                raise ContractError(
-                    "Domain-grouped observations must share the BridgeObservationGroup.group_label"
-                )
-            if observation.domain_label != normalized_domain:
-                raise ContractError(
-                    "BridgeObservationGroup.observations_by_domain keys must match observation.domain_label"
-                )
-            grouped_counter[_observation_key(observation)] += 1
-            grouped_domain_counter[normalized_domain] += 1
-
-    if grouped_counter != observed_counter:
+def _validate_internal_ablation_mode(value: object) -> str:
+    normalized_mode = _require_nonempty_identifier(
+        value,
+        field_name="_ablation_mode",
+    )
+    if normalized_mode not in _ALLOWED_INTERNAL_ABLATION_MODES:
         raise ContractError(
-            "BridgeObservationGroup.observations_by_domain must partition the declared observations"
+            "Internal STRIDEFitConfig._ablation_mode must be one of "
+            f"{_ALLOWED_INTERNAL_ABLATION_MODES}, got {normalized_mode!r}"
         )
-    if grouped_domain_counter != observed_domain_counter:
-        raise ContractError(
-            "BridgeObservationGroup.observations_by_domain counts must match observed domain counts"
-        )
+    return normalized_mode
 
 
-def validate_patient_bridge_input(patient_input: PatientBridgeInput) -> None:
-    """Validate one canonical per-patient bridge input bundle."""
-    patient_id = _require_nonempty_identifier(patient_input.patient_id, field_name="patient_id")
-    if patient_input.mass_mode != "uniform":
-        raise ContractError("PatientBridgeInput.mass_mode must be 'uniform' in the current pass")
-    if len(patient_input.groups) == 0:
-        raise ContractError("PatientBridgeInput.groups must be non-empty")
+def _with_internal_ablation_mode(
+    config: STRIDEFitConfig | None,
+    ablation_mode: str,
+) -> STRIDEFitConfig:
+    """Return a config carrying a Task A-only core ablation request.
 
-    expected_group_labels = tuple(group.group_label for group in patient_input.groups)
-    if patient_input.ordered_group_labels != expected_group_labels:
-        raise ContractError(
-            "PatientBridgeInput.ordered_group_labels must align with PatientBridgeInput.groups"
-        )
-    if len(set(patient_input.ordered_group_labels)) != len(patient_input.ordered_group_labels):
-        raise ContractError("PatientBridgeInput.ordered_group_labels must not contain duplicates")
+    The hook is intentionally private so recurrence/geometry/consistency refits
+    remain experiment provenance rather than ordinary user-level fit controls.
+    """
 
-    counts_by_group: dict[str, int] = {}
-    counts_by_domain: dict[str, int] = {}
-    counts_by_group_and_domain: dict[str, dict[str, int]] = {}
-    n_states: int | None = None
-    for group in patient_input.groups:
-        validate_bridge_observation_group(group)
-        counts_by_group[group.group_label] = len(group.observations)
-        group_domain_counts: dict[str, int] = {}
-
-        for observation in group.observations:
-            if observation.patient_id != patient_id:
-                raise ContractError("PatientBridgeInput observations must belong to one patient_id")
-            if observation.mass_mode != patient_input.mass_mode:
-                raise ContractError(
-                    "PatientBridgeInput observations must share PatientBridgeInput.mass_mode"
-                )
-
-            current_n_states = int(np.asarray(observation.community_composition, dtype=float).shape[0])
-            if n_states is None:
-                n_states = current_n_states
-            elif current_n_states != n_states:
-                raise ContractError("PatientBridgeInput observations must share one K-state axis size")
-
-            domain_label = str(observation.domain_label)
-            counts_by_domain[domain_label] = counts_by_domain.get(domain_label, 0) + 1
-            group_domain_counts[domain_label] = group_domain_counts.get(domain_label, 0) + 1
-
-        counts_by_group_and_domain[group.group_label] = group_domain_counts
-
-    if dict(patient_input.n_observations_by_group) != counts_by_group:
-        raise ContractError(
-            "PatientBridgeInput.n_observations_by_group does not match grouped observations"
-        )
-    if dict(patient_input.n_observations_by_domain) != counts_by_domain:
-        raise ContractError(
-            "PatientBridgeInput.n_observations_by_domain does not match grouped observations"
-        )
-    if _normalize_nested_counts(patient_input.n_observations_by_group_and_domain) != counts_by_group_and_domain:
-        raise ContractError(
-            "PatientBridgeInput.n_observations_by_group_and_domain does not match grouped observations"
-        )
-
-    if n_states is None:
-        raise ContractError("PatientBridgeInput must contain at least one observation")
-
-    if patient_input.state_basis is not None:
-        validate_state_basis(patient_input.state_basis)
-        if patient_input.state_basis.n_states != n_states:
-            raise ContractError(
-                "PatientBridgeInput.state_basis must align to the observation shared K-state axis"
-            )
-
-    if patient_input.geometry is not None:
-        geometry_shape = np.asarray(patient_input.geometry.cost_matrix, dtype=float).shape
-        if len(geometry_shape) != 2 or geometry_shape[0] != geometry_shape[1]:
-            raise ContractError("PatientBridgeInput.geometry.cost_matrix must be square")
-        if geometry_shape[0] != n_states:
-            raise ContractError(
-                "PatientBridgeInput.geometry must align to the observation shared K-state axis"
-            )
-        if len(patient_input.geometry.state_ids) != n_states:
-            raise ContractError("PatientBridgeInput.geometry.state_ids must align to the shared K-state axis")
-
-    if patient_input.state_basis is not None and patient_input.geometry is not None:
-        if patient_input.state_basis.resolved_state_ids != tuple(patient_input.geometry.state_ids):
-            raise ContractError(
-                "PatientBridgeInput.state_basis and geometry must share the same declared state_ids"
-            )
+    resolved_config = config or STRIDEFitConfig()
+    normalized_mode = _validate_internal_ablation_mode(ablation_mode)
+    copied_config = replace(resolved_config)
+    object.__setattr__(copied_config, "_ablation_mode", normalized_mode)
+    return copied_config
 
 
-def build_patient_bridge_inputs(
+def _build_patient_fit_inputs(
     observations: tuple[FovObservation, ...] | list[FovObservation],
     *,
     state_basis: StateBasis | None = None,
     geometry: StateGeometry | None = None,
     config: STRIDEFitConfig | None = None,
-) -> tuple[PatientBridgeInput, ...]:
-    """Group observations into canonical per-patient bridge input bundles.
+) -> tuple[_PatientFitInput, ...]:
+    """Group observations into canonical per-patient fit input bundles.
 
     Purpose:
-        Normalize raw observation rows into one validated `PatientBridgeInput`
-        per patient for the canonical STRIDE fit path.
-
-    Inputs:
-        observations: Flat observation sequence supplied by callers.
-        state_basis / geometry: Optional shared state-space metadata.
-        config: Fit configuration whose `timepoint_order` controls group order.
-
-    Returns:
-        Ordered patient bridge inputs with domain-stratified group structure and
-        count diagnostics.
+        Adapt the workflow-level `STRIDEFitConfig` surface into the canonical
+        per-patient input bundles consumed by the current fit path.
 
     Core flow:
-        1. Validate the incoming observations and group them by patient id.
-        2. Resolve the effective ordered group labels from the configuration.
-        3. Partition each patient's observations by ordered group and domain.
-        4. Emit validated `PatientBridgeInput` objects with count diagnostics.
+        1. Resolve the default fit config when callers omit one.
+        2. Carry the declared `timepoint_order` into the input-grouping layer.
+        3. Delegate grouping and validation to `stride.workflows._fit_inputs`.
     """
     resolved_config = config or STRIDEFitConfig()
-    observation_sequence = tuple(observations)
-    if len(observation_sequence) == 0:
-        raise ContractError("observations must contain at least one FovObservation")
-
-    patient_order: list[str] = []
-    observed_group_order: dict[str, list[str]] = {}
-    patient_groups: dict[str, dict[str, list[FovObservation]]] = {}
-
-    for observation in observation_sequence:
-        validate_fov_observation(observation)
-        patient_id = _require_nonempty_identifier(observation.patient_id, field_name="patient_id")
-        group_label = _require_nonempty_identifier(observation.timepoint, field_name="timepoint")
-        _require_nonempty_identifier(observation.fov_id, field_name="fov_id")
-        if observation.domain_label is None:
-            raise ContractError("All bridge observations must declare domain_label")
-
-        if patient_id not in patient_groups:
-            patient_order.append(patient_id)
-            patient_groups[patient_id] = {}
-            observed_group_order[patient_id] = []
-        if group_label not in patient_groups[patient_id]:
-            patient_groups[patient_id][group_label] = []
-            observed_group_order[patient_id].append(group_label)
-        patient_groups[patient_id][group_label].append(observation)
-
-    bridge_inputs: list[PatientBridgeInput] = []
-    for patient_id in patient_order:
-        observed_labels = tuple(observed_group_order[patient_id])
-        ordered_labels = _resolve_ordered_group_labels(
-            observed_labels,
-            declared_order=resolved_config.timepoint_order,
-        )
-
-        groups: list[BridgeObservationGroup] = []
-        counts_by_group: dict[str, int] = {}
-        counts_by_domain: dict[str, int] = {}
-        counts_by_group_and_domain: dict[str, dict[str, int]] = {}
-        for group_label in ordered_labels:
-            group_observations = tuple(patient_groups[patient_id][group_label])
-            observations_by_domain_lists: dict[str, list[FovObservation]] = {}
-            for observation in group_observations:
-                domain_label = str(observation.domain_label)
-                observations_by_domain_lists.setdefault(domain_label, []).append(observation)
-                counts_by_domain[domain_label] = counts_by_domain.get(domain_label, 0) + 1
-
-            observations_by_domain = {
-                domain_label: tuple(domain_observations)
-                for domain_label, domain_observations in observations_by_domain_lists.items()
-            }
-            groups.append(
-                BridgeObservationGroup(
-                    group_label=group_label,
-                    observations=group_observations,
-                    observations_by_domain=observations_by_domain,
-                )
-            )
-            counts_by_group[group_label] = len(group_observations)
-            counts_by_group_and_domain[group_label] = {
-                domain_label: len(domain_observations)
-                for domain_label, domain_observations in observations_by_domain.items()
-            }
-
-        bridge_inputs.append(
-            PatientBridgeInput(
-                patient_id=patient_id,
-                ordered_group_labels=ordered_labels,
-                groups=tuple(groups),
-                n_observations_by_group=counts_by_group,
-                n_observations_by_domain=counts_by_domain,
-                n_observations_by_group_and_domain=counts_by_group_and_domain,
-                state_basis=state_basis,
-                geometry=geometry,
-                mass_mode="uniform",
-                metadata={
-                    "grouping_axis": "timepoint",
-                    "declared_timepoint_order": tuple(resolved_config.timepoint_order),
-                },
-            )
-        )
-
-    return tuple(bridge_inputs)
+    return _build_patient_fit_inputs_for_order(
+        observations,
+        state_basis=state_basis,
+        geometry=geometry,
+        timepoint_order=tuple(resolved_config.timepoint_order),
+    )
 
 
-def run_stride_proxy_fit(
+def _run_local_initializer_fit(
     observations: tuple[FovObservation, ...] | list[FovObservation],
     *,
     state_basis: StateBasis | None = None,
     geometry: StateGeometry | None = None,
     config: STRIDEFitConfig | None = None,
 ) -> STRIDEFitResult:
-    """Run the explicit approximate proxy fit path preserved for compatibility.
+    """Run the current local patient initializer used by `fit_stride`.
 
-    This path may realize local patient bridges and apply bridge-stage
-    benchmark controls, but it does not estimate the canonical cohort
-    recurrence object and therefore remains
-    `implementation_tier=approximate_proxy`.
+    This initializer may realize local patient relations, but it does not
+    estimate the canonical cohort recurrence object by itself.
     """
     resolved_config = config or STRIDEFitConfig()
-    patient_inputs = build_patient_bridge_inputs(
+    patient_inputs = _build_patient_fit_inputs(
         observations,
         state_basis=state_basis,
         geometry=geometry,
@@ -2200,7 +1836,6 @@ def run_stride_proxy_fit(
                 _build_realized_patient_bridge_result(
                     patient_input,
                     runtime_settings=resolved_config.runtime_settings,
-                    benchmark_mode=resolved_config.benchmark_mode,
                 )
             )
             continue
@@ -2210,7 +1845,6 @@ def run_stride_proxy_fit(
                 patient_input,
                 defer_reason=str(defer_reason),
                 message=str(message),
-                benchmark_mode=resolved_config.benchmark_mode,
             )
         )
 
@@ -2223,8 +1857,8 @@ def run_stride_proxy_fit(
         ),
         config=recurrence_config,
         message=(
-            "The preserved approximate proxy path does not estimate canonical cohort-level "
-            "recurrence even when some local patient bridges are realized."
+            "The local patient initializer does not estimate canonical cohort-level "
+            "recurrence by itself even when some patient relations are realized."
         ),
     )
 
@@ -2236,7 +1870,6 @@ def run_stride_proxy_fit(
             patient_results_tuple,
             config=resolved_config.uncertainty_config,
             runtime_settings=resolved_config.runtime_settings,
-            benchmark_mode=resolved_config.benchmark_mode,
         )
         if resolved_config.uncertainty_config is not None
         else None
@@ -2244,26 +1877,20 @@ def run_stride_proxy_fit(
     metadata = dict(resolved_config.metadata)
     if resolved_config.timepoint_order:
         metadata["timepoint_order"] = tuple(resolved_config.timepoint_order)
-    metadata["benchmark_mode"] = resolved_config.benchmark_mode
-    metadata["effective_match_penalty"] = _resolve_bridge_match_penalty(
-        benchmark_mode=resolved_config.benchmark_mode
-    )
+    metadata["effective_match_penalty"] = float(_DEFAULT_BRIDGE_MATCH_PENALTY)
 
     return STRIDEFitResult(
         patient_inputs=patient_inputs,
         patient_results=patient_results_tuple,
         recurrence=recurrence,
         fit_status="deferred",
-        implementation_tier="approximate_proxy",
+        implementation_tier="local_initializer",
         summaries={
             "n_patients": len(patient_results_tuple),
             "patient_status_counts": patient_status_counts,
             "recurrence_fit_status": recurrence.fit_status,
-            "implementation_tier": "approximate_proxy",
-            "benchmark_mode": resolved_config.benchmark_mode,
-            "effective_match_penalty": _resolve_bridge_match_penalty(
-                benchmark_mode=resolved_config.benchmark_mode
-            ),
+            "implementation_tier": "local_initializer",
+            "effective_match_penalty": float(_DEFAULT_BRIDGE_MATCH_PENALTY),
             **(
                 {
                     "uncertainty_status": uncertainty.cohort_summary.uncertainty_status,
@@ -2275,27 +1902,23 @@ def run_stride_proxy_fit(
         },
         diagnostics={
             "mode": (
-                "proxy_patient_bridge_realized_recurrence_deferred"
+                "local_patient_relation_realized_recurrence_deferred"
                 if any_realized_bridges
                 else "deferred"
             ),
             "message": (
-                "Supported patients may receive realized proxy patient bridge estimates while "
-                "canonical cohort-level recurrence remains deferred on the preserved "
-                "approximate proxy path."
+                "Supported patients may receive realized local patient relation estimates while "
+                "canonical cohort-level recurrence remains deferred at the initializer layer."
                 if any_realized_bridges
                 else (
                     "No patients satisfied the minimal supported bridge-fitting case, "
-                    "so proxy patient bridge estimates remain deferred while cohort-level "
+                    "so local patient relation estimates remain deferred while cohort-level "
                     "recurrence also remains deferred."
                 )
             ),
             "patient_status_counts": patient_status_counts,
-            "implementation_tier": "approximate_proxy",
-            "benchmark_mode": resolved_config.benchmark_mode,
-            "effective_match_penalty": _resolve_bridge_match_penalty(
-                benchmark_mode=resolved_config.benchmark_mode
-            ),
+            "implementation_tier": "local_initializer",
+            "effective_match_penalty": float(_DEFAULT_BRIDGE_MATCH_PENALTY),
             **(
                 {"uncertainty_status": uncertainty.cohort_summary.uncertainty_status}
                 if uncertainty is not None
@@ -2303,6 +1926,488 @@ def run_stride_proxy_fit(
             ),
         },
         uncertainty=uncertainty,
+        metadata=metadata,
+    )
+
+
+def _build_deferred_ablation_fit(
+    observations: tuple[FovObservation, ...] | list[FovObservation],
+    *,
+    state_basis: StateBasis | None,
+    geometry: StateGeometry | None,
+    config: STRIDEFitConfig,
+) -> STRIDEFitResult:
+    """Represent an internal core STRIDE ablation request as deferred refit work."""
+
+    ablation_mode = _validate_internal_ablation_mode(config._ablation_mode)
+    patient_inputs = _build_patient_fit_inputs(
+        observations,
+        state_basis=state_basis,
+        geometry=geometry,
+        config=config,
+    )
+    message = (
+        "Internal Task A core STRIDE ablation refit is deferred because this input "
+        "does not satisfy the supported two-timepoint geometry-present full-estimator path."
+    )
+    patient_results = tuple(
+        PatientBridgeResult(
+            patient_id=patient_input.patient_id,
+            fit_status="deferred",
+            state_ids=_resolve_patient_state_ids(patient_input),
+            audit=PatientRelationAudit(
+                patient_id=patient_input.patient_id,
+                timepoint_order=patient_input.ordered_group_labels,
+                mass_mode=patient_input.mass_mode,
+                observation_fit_status="deferred",
+                bridge_status="deferred",
+                metadata={
+                    **_shared_bridge_audit_metadata(patient_input),
+                    "ablation_mode": ablation_mode,
+                    "defer_reason": "unsupported_full_estimator_input",
+                },
+            ),
+            diagnostics={
+                **_shared_bridge_count_diagnostics(patient_input),
+                "mode": "core_ablation_refit_deferred",
+                "ablation_mode": ablation_mode,
+                "defer_reason": "unsupported_full_estimator_input",
+                "message": message,
+            },
+            implementation_tier="canonical_full",
+        )
+        for patient_input in patient_inputs
+    )
+    recurrence_config = config.recurrence_config or RecurrenceConfig()
+    recurrence = build_deferred_recurrence_result(
+        tuple(patient_input.patient_id for patient_input in patient_inputs),
+        used_patient_ids=(),
+        config=recurrence_config,
+        message=message,
+    )
+    patient_status_counts = _count_patient_statuses(patient_results)
+    metadata = {
+        **dict(config.metadata),
+        "ablation_mode": ablation_mode,
+        "ablation_status": "deferred_unsupported_full_estimator_input",
+    }
+    if config.timepoint_order:
+        metadata["timepoint_order"] = tuple(config.timepoint_order)
+    summaries = {
+        "n_patients": len(patient_results),
+        "n_realized_patients": 0,
+        "patient_status_counts": patient_status_counts,
+        "recurrence_fit_status": recurrence.fit_status,
+        "n_recurrence_used_patients": 0,
+        "implementation_tier": "canonical_full",
+        "ablation_mode": ablation_mode,
+        "ablation_status": "deferred_unsupported_full_estimator_input",
+    }
+    diagnostics = {
+        "mode": "canonical_full_ablation_refit_deferred",
+        "message": message,
+        "patient_status_counts": patient_status_counts,
+        "recurrence_used_patient_ids": (),
+        "implementation_tier": "canonical_full",
+        "ablation_mode": ablation_mode,
+        "ablation_status": "deferred_unsupported_full_estimator_input",
+    }
+    return STRIDEFitResult(
+        patient_inputs=patient_inputs,
+        patient_results=patient_results,
+        recurrence=recurrence,
+        fit_status="deferred",
+        implementation_tier="canonical_full",
+        objective=None,
+        summaries=summaries,
+        diagnostics=diagnostics,
+        uncertainty=None,
+        metadata=metadata,
+    )
+
+
+def _group_state_matrix(observations: Sequence[FovObservation]) -> np.ndarray:
+    return np.vstack(
+        [np.asarray(observation.community_composition, dtype=float) for observation in observations]
+    ).astype(float, copy=False)
+
+
+def _build_full_estimator_evidence_blocks(
+    patient_inputs: Sequence[_PatientFitInput],
+) -> tuple[FullEstimatorEvidenceBlock, ...]:
+    blocks: list[FullEstimatorEvidenceBlock] = []
+    for patient_input in patient_inputs:
+        source_group, target_group = patient_input.groups
+        for source_domain, source_observations in sorted(
+            source_group.observations_by_domain.items()
+        ):
+            for target_domain, target_observations in sorted(
+                target_group.observations_by_domain.items()
+            ):
+                block_id = (
+                    f"{patient_input.patient_id}:"
+                    f"{source_group.group_label}:{source_domain}->"
+                    f"{target_group.group_label}:{target_domain}"
+                )
+                blocks.append(
+                    FullEstimatorEvidenceBlock(
+                        patient_id=patient_input.patient_id,
+                        source_bag=_group_state_matrix(source_observations),
+                        target_bag=_group_state_matrix(target_observations),
+                        block_id=block_id,
+                    )
+                )
+    if not blocks:
+        raise ContractError("Canonical full estimator requires at least one evidence block")
+    return tuple(blocks)
+
+
+def _all_patient_inputs_support_full_optimizer(
+    patient_inputs: Sequence[_PatientFitInput],
+) -> bool:
+    return bool(patient_inputs) and all(
+        _evaluate_patient_bridge_support(patient_input)[0]
+        for patient_input in patient_inputs
+    )
+
+
+def _tensor_scalar(value: object) -> float:
+    try:
+        import torch
+    except ImportError:  # pragma: no cover - optimizer path requires torch first
+        torch = None  # type: ignore[assignment]
+    if torch is not None and torch.is_tensor(value):
+        return float(value.detach().cpu().item())
+    return float(value)
+
+
+def _tensor_array(value: object) -> np.ndarray:
+    try:
+        import torch
+    except ImportError:  # pragma: no cover - optimizer path requires torch first
+        torch = None  # type: ignore[assignment]
+    if torch is not None and torch.is_tensor(value):
+        return np.asarray(value.detach().cpu(), dtype=float)
+    return np.asarray(value, dtype=float)
+
+
+def _loss_breakdown_from_full_ledger(ledger: object) -> LossBreakdown:
+    components = ledger.components
+
+    def _effective(component_name: str) -> float:
+        component = components[component_name]
+        return _tensor_scalar(
+            component.effective_normalized
+            if component.effective_normalized is not None
+            else component.normalized
+        )
+
+    return LossBreakdown(
+        observation_data_fit=_effective("obs"),
+        patient_consistency=_effective("consistency"),
+        open_relation=_effective("open"),
+        cohort_recurrence=_effective("recurrence"),
+        geometry_structure=_effective("geometry"),
+        total=_tensor_scalar(ledger.total),
+    )
+
+
+def _build_full_optimizer_recurrence(
+    patient_ids: tuple[str, ...],
+    ledger: object,
+    *,
+    recurrence_config: RecurrenceConfig,
+) -> RecurrenceResult:
+    recurrence = ledger.recurrence
+    family = RecurrenceFamily(
+        family_id="cohort_consensus",
+        template_A=_tensor_array(recurrence.A_bar),
+        template_d=_tensor_array(recurrence.d_bar),
+        template_e=_tensor_array(recurrence.e_bar),
+        support_n_patients=int(recurrence.support_n_patients),
+        within_family_dispersion=_tensor_scalar(recurrence.dispersion),
+        fit_status="ok",
+        member_patient_ids=patient_ids,
+    )
+    embeddings = tuple(
+        PatientRecurrenceEmbedding(
+            patient_id=patient_id,
+            coordinates=np.zeros(int(recurrence_config.basis_dim), dtype=float),
+            fit_status="ok",
+        )
+        for patient_id in patient_ids
+    )
+    return RecurrenceResult(
+        patient_ids=patient_ids,
+        families=(family,),
+        fit_status="ok",
+        used_patient_ids=patient_ids,
+        recurrence_unit=recurrence_config.recurrence_unit,
+        parameters=RecurrenceParameters(
+            basis_dim=recurrence_config.basis_dim,
+            loadings=None,
+            metadata={"mode": "full_estimator_consensus_v1"},
+        ),
+        embeddings=embeddings,
+        metadata={
+            "mode": "full_estimator_consensus_v1",
+            "message": "Built the single cohort recurrence family from the full-estimator ledger.",
+            "n_used_patients": len(patient_ids),
+        },
+    )
+
+
+def _build_full_optimizer_patient_results(
+    patient_inputs: Sequence[_PatientFitInput],
+    *,
+    optimizer_result: object,
+    evidence_blocks: Sequence[FullEstimatorEvidenceBlock],
+    objective: LossBreakdown,
+) -> tuple[PatientBridgeResult, ...]:
+    parameters = optimizer_result.parameters
+    A_all = _tensor_array(parameters.A)
+    d_all = _tensor_array(parameters.d)
+    e_all = _tensor_array(parameters.e)
+    block_counts = Counter(block.patient_id for block in evidence_blocks)
+    results: list[PatientBridgeResult] = []
+    for patient_index, patient_input in enumerate(patient_inputs):
+        pre_group, post_group = patient_input.groups
+        mu_minus = _mean_group_composition(pre_group)
+        mu_plus = _mean_group_composition(post_group)
+        audit = PatientRelationAudit(
+            patient_id=patient_input.patient_id,
+            timepoint_order=patient_input.ordered_group_labels,
+            mass_mode=patient_input.mass_mode,
+            n_pre_observations=int(patient_input.n_observations_by_group[pre_group.group_label]),
+            n_post_observations=int(patient_input.n_observations_by_group[post_group.group_label]),
+            observation_fit_status="D_obs^BalancedSinkhornDivergence-v1",
+            bridge_status="ok",
+            metadata={
+                **_shared_bridge_audit_metadata(patient_input),
+                "estimator_mode": "canonical_full_estimator_v1",
+                "optimizer_status": optimizer_result.status,
+                "n_evidence_blocks": int(block_counts[patient_input.patient_id]),
+            },
+        )
+        results.append(
+            PatientBridgeResult(
+                patient_id=patient_input.patient_id,
+                fit_status="ok",
+                A=A_all[patient_index],
+                d=d_all[patient_index],
+                e=e_all[patient_index],
+                mu_minus=mu_minus,
+                mu_plus=mu_plus,
+                state_ids=_resolve_patient_state_ids(patient_input),
+                audit=audit,
+                diagnostics={
+                    **_shared_bridge_count_diagnostics(patient_input),
+                    "mode": "canonical_full_estimator_v1",
+                    "supported_case": _MINIMAL_SUPPORTED_CASE,
+                    "estimator_mode": "canonical_full_estimator_v1",
+                    "observation_fit_status": "D_obs^BalancedSinkhornDivergence-v1",
+                    "optimizer_status": optimizer_result.status,
+                    "n_evidence_blocks": int(block_counts[patient_input.patient_id]),
+                    "message": (
+                        "Fitted A, d, and e through the canonical PyTorch/AdamW "
+                        "full-estimator objective."
+                    ),
+                },
+                implementation_tier="canonical_full",
+                objective=objective,
+            )
+        )
+    return tuple(results)
+
+
+def _build_non_ok_full_optimizer_fit(
+    patient_inputs: tuple[_PatientFitInput, ...],
+    *,
+    optimizer_result: object,
+    recurrence_config: RecurrenceConfig,
+) -> STRIDEFitResult:
+    fit_status = (
+        optimizer_result.status
+        if optimizer_result.status in {"deferred", "failed"}
+        else "failed"
+    )
+    reason_key = "defer_reason" if fit_status == "deferred" else "failure_reason"
+    reason = str(
+        optimizer_result.diagnostics.get(
+            reason_key,
+            optimizer_result.diagnostics.get("failure_reason", "optimizer_failed"),
+        )
+    )
+    message = str(
+        optimizer_result.diagnostics.get(
+            "message",
+            reason,
+        )
+    )
+    patient_results = tuple(
+        PatientBridgeResult(
+            patient_id=patient_input.patient_id,
+            fit_status=fit_status,
+            state_ids=_resolve_patient_state_ids(patient_input),
+            audit=PatientRelationAudit(
+                patient_id=patient_input.patient_id,
+                timepoint_order=patient_input.ordered_group_labels,
+                mass_mode=patient_input.mass_mode,
+                observation_fit_status=fit_status,
+                bridge_status=fit_status,
+                metadata={
+                    **_shared_bridge_audit_metadata(patient_input),
+                    reason_key: reason,
+                },
+            ),
+            diagnostics={
+                **_shared_bridge_count_diagnostics(patient_input),
+                "mode": f"canonical_full_estimator_{fit_status}",
+                reason_key: reason,
+                "message": message,
+            },
+            implementation_tier="canonical_full",
+        )
+        for patient_input in patient_inputs
+    )
+    recurrence = build_deferred_recurrence_result(
+        tuple(patient_input.patient_id for patient_input in patient_inputs),
+        used_patient_ids=(),
+        config=recurrence_config,
+        message=message,
+    )
+    status_counts = _count_patient_statuses(patient_results)
+    return STRIDEFitResult(
+        patient_inputs=patient_inputs,
+        patient_results=patient_results,
+        recurrence=recurrence,
+        fit_status=fit_status,
+        implementation_tier="canonical_full",
+        summaries={
+            "n_patients": len(patient_results),
+            "n_realized_patients": 0,
+            "patient_status_counts": status_counts,
+            "recurrence_fit_status": recurrence.fit_status,
+            "implementation_tier": "canonical_full",
+            "optimizer_status": optimizer_result.status,
+        },
+        diagnostics={
+            "mode": f"canonical_full_estimator_{fit_status}",
+            "message": message,
+            "patient_status_counts": status_counts,
+            "implementation_tier": "canonical_full",
+            "optimizer_status": optimizer_result.status,
+            **dict(optimizer_result.diagnostics),
+        },
+        metadata={
+            "implementation_tier": "canonical_full",
+            "optimizer_status": optimizer_result.status,
+            reason_key: reason,
+        },
+    )
+
+
+def _run_full_optimizer_fit(
+    patient_inputs: tuple[_PatientFitInput, ...],
+    *,
+    geometry: StateGeometry,
+    config: STRIDEFitConfig,
+    ablation_mode: str,
+) -> STRIDEFitResult:
+    evidence_blocks = _build_full_estimator_evidence_blocks(patient_inputs)
+    patient_ids = tuple(patient_input.patient_id for patient_input in patient_inputs)
+    K = int(np.asarray(geometry.cost_matrix, dtype=float).shape[0])
+    optimizer_result = optimize_full_estimator(
+        patient_ids=patient_ids,
+        K=K,
+        evidence_blocks=evidence_blocks,
+        geometry=geometry,
+        config=FullEstimatorOptimizerConfig(
+            max_steps=4,
+            min_steps=1,
+            learning_rate=0.02,
+            min_relative_improvement=1e-12,
+            gradient_norm_tol=0.06,
+            ablation_mode=ablation_mode,
+        ),
+    )
+    recurrence_config = config.recurrence_config or RecurrenceConfig()
+    if optimizer_result.status != "ok":
+        return _build_non_ok_full_optimizer_fit(
+            patient_inputs,
+            optimizer_result=optimizer_result,
+            recurrence_config=recurrence_config,
+        )
+    if (
+        optimizer_result.parameters is None
+        or optimizer_result.final_ledger is None
+        or optimizer_result.provenance is None
+    ):
+        raise ContractError("ok full-estimator optimizer result must carry parameters, ledger, and provenance")
+
+    objective = _loss_breakdown_from_full_ledger(optimizer_result.final_ledger)
+    recurrence = _build_full_optimizer_recurrence(
+        patient_ids,
+        optimizer_result.final_ledger,
+        recurrence_config=recurrence_config,
+    )
+    patient_results = _build_full_optimizer_patient_results(
+        patient_inputs,
+        optimizer_result=optimizer_result,
+        evidence_blocks=evidence_blocks,
+        objective=objective,
+    )
+    patient_status_counts = _count_patient_statuses(patient_results)
+    metadata = {
+        **dict(config.metadata),
+        "implementation_tier": "canonical_full",
+        "optimizer_status": optimizer_result.status,
+        "n_evidence_blocks": len(evidence_blocks),
+        "recurrence_support_n_patients": len(recurrence.used_patient_ids),
+        "detailed_optimizer_trace": False,
+    }
+    if config.timepoint_order:
+        metadata["timepoint_order"] = tuple(config.timepoint_order)
+    if ablation_mode != "none":
+        metadata["ablation_mode"] = ablation_mode
+        metadata["ablation_status"] = "ok"
+    summaries = {
+        "n_patients": len(patient_results),
+        "n_realized_patients": _count_realized_patients(patient_results),
+        "patient_status_counts": patient_status_counts,
+        "recurrence_fit_status": recurrence.fit_status,
+        "n_recurrence_used_patients": len(recurrence.used_patient_ids),
+        "implementation_tier": "canonical_full",
+        "optimizer_status": optimizer_result.status,
+        "n_evidence_blocks": len(evidence_blocks),
+        **({"ablation_mode": ablation_mode, "ablation_status": "ok"} if ablation_mode != "none" else {}),
+    }
+    diagnostics = {
+        "mode": "canonical_full_estimator_v1",
+        "message": (
+            "Canonical full STRIDE fitted patient relations through the PyTorch/AdamW "
+            "full-estimator objective."
+        ),
+        "patient_status_counts": patient_status_counts,
+        "recurrence_used_patient_ids": tuple(recurrence.used_patient_ids),
+        "implementation_tier": "canonical_full",
+        "optimizer_status": optimizer_result.status,
+        "n_evidence_blocks": len(evidence_blocks),
+        "recurrence_support_n_patients": len(recurrence.used_patient_ids),
+        **dict(optimizer_result.diagnostics),
+        **({"ablation_mode": ablation_mode, "ablation_status": "ok"} if ablation_mode != "none" else {}),
+    }
+    return STRIDEFitResult(
+        patient_inputs=patient_inputs,
+        patient_results=patient_results,
+        recurrence=recurrence,
+        fit_status="ok",
+        implementation_tier="canonical_full",
+        objective=objective,
+        provenance=optimizer_result.provenance,
+        summaries=summaries,
+        diagnostics=diagnostics,
+        uncertainty=None,
         metadata=metadata,
     )
 
@@ -2317,33 +2422,53 @@ def run_stride_fit(
     """Run the canonical full STRIDE path with patient-plus-cohort structure.
 
     Purpose:
-        Upgrade the proxy-initialized patient bridges into canonical full STRIDE
-        outputs by estimating cohort recurrence, shrinking patient relations
-        toward the cohort template when allowed, while preserving any
-        benchmark-mode bridge controls already applied upstream.
+        Fit the supported full-estimator path through the PyTorch/AdamW
+        objective when geometry and patient inputs satisfy the bounded
+        first-pass envelope. Non-ablation compatibility inputs outside that
+        envelope may still route through the local initializer fallback.
 
     Inputs:
         observations: Flat observation sequence for one cohort.
         state_basis / geometry: Optional shared state-space metadata.
-        config: Canonical fit configuration, including benchmark-mode control.
+        config: Canonical fit configuration.
 
     Returns:
         A `STRIDEFitResult` whose patient outputs and cohort recurrence reflect
-        the canonical full path rather than the preserved proxy tier.
+        the current canonical full path or an explicit non-`ok` status when the
+        full optimizer cannot complete.
 
     Core flow:
-        1. Run the preserved proxy initializer to get local patient relations.
-        2. Estimate cohort recurrence from realized local relations when
-           possible.
-        3. Canonicalize each patient result with template shrinkage and
-           benchmark-mode controls.
-        4. Return canonical patient, cohort, summary, and diagnostic outputs.
+        1. Resolve patient fit inputs under the requested source/target order.
+        2. Run the full optimizer when the bounded support envelope is met.
+        3. Defer unsupported internal ablations rather than masking outputs.
+        4. Route non-ablation compatibility inputs through the local initializer
+           fallback.
     """
     resolved_config = config or STRIDEFitConfig()
-    effective_objective_weights, effective_shrinkage_weight = _resolve_benchmark_controls(
-        resolved_config
+    ablation_mode = _validate_internal_ablation_mode(resolved_config._ablation_mode)
+    patient_inputs = _build_patient_fit_inputs(
+        observations,
+        state_basis=state_basis,
+        geometry=geometry,
+        config=resolved_config,
     )
-    proxy_result = run_stride_proxy_fit(
+    if geometry is not None and _all_patient_inputs_support_full_optimizer(patient_inputs):
+        return _run_full_optimizer_fit(
+            patient_inputs,
+            geometry=geometry,
+            config=resolved_config,
+            ablation_mode=ablation_mode,
+        )
+    if ablation_mode != "none":
+        return _build_deferred_ablation_fit(
+            observations,
+            state_basis=state_basis,
+            geometry=geometry,
+            config=resolved_config,
+        )
+    effective_objective_weights = resolved_config.objective_weights
+    effective_shrinkage_weight = float(resolved_config.cohort_shrinkage_weight)
+    local_initializer_result = _run_local_initializer_fit(
         observations,
         state_basis=state_basis,
         geometry=geometry,
@@ -2352,23 +2477,23 @@ def run_stride_fit(
     recurrence_config = resolved_config.recurrence_config or RecurrenceConfig()
     realized_relations = tuple(
         result.relation
-        for result in proxy_result.patient_results
+        for result in local_initializer_result.patient_results
         if result.relation is not None
     )
     realized_patient_ids = tuple(
         result.patient_id
-        for result in proxy_result.patient_results
+        for result in local_initializer_result.patient_results
         if result.relation is not None
     )
     if realized_relations:
         recurrence = _align_recurrence_to_all_patients(
-            proxy_result.patient_ids,
+            local_initializer_result.patient_ids,
             estimate_recurrence(realized_relations, config=recurrence_config),
             basis_dim=recurrence_config.basis_dim,
         )
     else:
         recurrence = build_deferred_recurrence_result(
-            proxy_result.patient_ids,
+            local_initializer_result.patient_ids,
             used_patient_ids=(),
             config=recurrence_config,
             message=(
@@ -2379,11 +2504,10 @@ def run_stride_fit(
 
     template_family = recurrence.families[0] if recurrence.fit_status == "ok" and recurrence.families else None
     canonical_patient_results = tuple(
-        _canonicalize_proxy_patient_result(
+        _canonicalize_local_patient_result(
             patient_input,
-            local_result=proxy_patient_result,
+            local_result=local_patient_result,
             objective_weights=effective_objective_weights,
-            benchmark_mode=resolved_config.benchmark_mode,
             template_A=(template_family.template_A if template_family is not None else None),
             template_d=(template_family.template_d if template_family is not None else None),
             template_e=(template_family.template_e if template_family is not None else None),
@@ -2393,17 +2517,24 @@ def run_stride_fit(
             relation_refinement_max_iter=resolved_config.relation_refinement_max_iter,
             relation_refinement_tol=resolved_config.relation_refinement_tol,
         )
-        for patient_input, proxy_patient_result in zip(
-            proxy_result.patient_inputs,
-            proxy_result.patient_results,
+        for patient_input, local_patient_result in zip(
+            local_initializer_result.patient_inputs,
+            local_initializer_result.patient_results,
             strict=True,
         )
     )
     patient_status_counts = _count_patient_statuses(canonical_patient_results)
+    patient_and_recurrence_realized = (
+        recurrence.fit_status == "ok"
+        and all(result.fit_status == "ok" for result in canonical_patient_results)
+    )
+    compact_successful_fit_provenance = None
+    compatibility_result_without_provenance = (
+        patient_and_recurrence_realized and compact_successful_fit_provenance is None
+    )
     fit_status = (
         "ok"
-        if recurrence.fit_status == "ok"
-        and all(result.fit_status == "ok" for result in canonical_patient_results)
+        if patient_and_recurrence_realized and compact_successful_fit_provenance is not None
         else "deferred"
     )
     objective = aggregate_loss_breakdowns(
@@ -2414,11 +2545,8 @@ def run_stride_fit(
         )
     )
     metadata = {
-        **dict(proxy_result.metadata),
-        "benchmark_mode": resolved_config.benchmark_mode,
-        "effective_match_penalty": _resolve_bridge_match_penalty(
-            benchmark_mode=resolved_config.benchmark_mode
-        ),
+        **dict(local_initializer_result.metadata),
+        "effective_match_penalty": float(_DEFAULT_BRIDGE_MATCH_PENALTY),
         "effective_cohort_shrinkage_weight": effective_shrinkage_weight,
         "effective_objective_weights": {
             "observation_data_fit": float(effective_objective_weights.resolved_observation_data_fit),
@@ -2427,10 +2555,10 @@ def run_stride_fit(
             "cohort_recurrence": float(effective_objective_weights.cohort_recurrence),
             "geometry_structure": float(effective_objective_weights.resolved_geometry_structure),
         },
-        "proxy_initializer_tier": proxy_result.implementation_tier,
+        "local_initializer_tier": local_initializer_result.implementation_tier,
         "uncertainty_scope": (
-            "proxy_initializer_bootstrap"
-            if proxy_result.uncertainty is not None
+            "local_initializer_bootstrap"
+            if local_initializer_result.uncertainty is not None
             else "not_requested"
         ),
     }
@@ -2438,6 +2566,8 @@ def run_stride_fit(
         "mode": (
             "canonical_full_joint_patient_cohort"
             if fit_status == "ok"
+            else "canonical_full_compatibility_without_provenance"
+            if compatibility_result_without_provenance
             else "canonical_full_patient_or_cohort_deferred"
         ),
         "message": (
@@ -2445,21 +2575,31 @@ def run_stride_fit(
             "cohort-level recurrence/common-structure layer."
             if fit_status == "ok"
             else (
+                "Canonical namespace STRIDE returned realized patient-level relations and "
+                "cohort-level recurrence, but compact successful-fit provenance is not available "
+                "because this compatibility fallback did not run the supported full-estimator "
+                "optimizer path."
+            )
+            if compatibility_result_without_provenance
+            else (
                 "Canonical full STRIDE returned explicit patient-level and cohort-level status, "
                 "with at least one patient or cohort component remaining deferred."
             )
         ),
         "patient_status_counts": patient_status_counts,
-        "proxy_initializer_patient_status_counts": dict(proxy_result.summaries.get("patient_status_counts", {})),
+        "local_initializer_patient_status_counts": dict(
+            local_initializer_result.summaries.get("patient_status_counts", {})
+        ),
         "recurrence_used_patient_ids": tuple(recurrence.used_patient_ids or realized_patient_ids),
         "implementation_tier": "canonical_full",
-        "benchmark_mode": resolved_config.benchmark_mode,
-        "effective_match_penalty": _resolve_bridge_match_penalty(
-            benchmark_mode=resolved_config.benchmark_mode
-        ),
+        "effective_match_penalty": float(_DEFAULT_BRIDGE_MATCH_PENALTY),
         **(
-            {"uncertainty_status": proxy_result.uncertainty.cohort_summary.uncertainty_status}
-            if proxy_result.uncertainty is not None
+            {
+                "uncertainty_status": (
+                    local_initializer_result.uncertainty.cohort_summary.uncertainty_status
+                )
+            }
+            if local_initializer_result.uncertainty is not None
             else {}
         ),
     }
@@ -2470,21 +2610,22 @@ def run_stride_fit(
         "recurrence_fit_status": recurrence.fit_status,
         "n_recurrence_used_patients": len(recurrence.used_patient_ids),
         "implementation_tier": "canonical_full",
-        "benchmark_mode": resolved_config.benchmark_mode,
-        "effective_match_penalty": _resolve_bridge_match_penalty(
-            benchmark_mode=resolved_config.benchmark_mode
-        ),
+        "effective_match_penalty": float(_DEFAULT_BRIDGE_MATCH_PENALTY),
         **(
             {
-                "uncertainty_status": proxy_result.uncertainty.cohort_summary.uncertainty_status,
-                "n_patients_with_uncertainty": proxy_result.uncertainty.cohort_summary.n_realized_patients,
+                "uncertainty_status": (
+                    local_initializer_result.uncertainty.cohort_summary.uncertainty_status
+                ),
+                "n_patients_with_uncertainty": (
+                    local_initializer_result.uncertainty.cohort_summary.n_realized_patients
+                ),
             }
-            if proxy_result.uncertainty is not None
+            if local_initializer_result.uncertainty is not None
             else {}
         ),
     }
     return STRIDEFitResult(
-        patient_inputs=proxy_result.patient_inputs,
+        patient_inputs=local_initializer_result.patient_inputs,
         patient_results=canonical_patient_results,
         recurrence=recurrence,
         fit_status=fit_status,
@@ -2492,18 +2633,12 @@ def run_stride_fit(
         objective=objective,
         summaries=summaries,
         diagnostics=diagnostics,
-        uncertainty=proxy_result.uncertainty,
+        uncertainty=local_initializer_result.uncertainty,
         metadata=metadata,
     )
 
 
 __all__ = [
-    "BridgeObservationGroup",
-    "PatientBridgeInput",
     "STRIDEFitConfig",
-    "build_patient_bridge_inputs",
-    "run_stride_proxy_fit",
     "run_stride_fit",
-    "validate_bridge_observation_group",
-    "validate_patient_bridge_input",
 ]

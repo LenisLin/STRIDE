@@ -141,16 +141,10 @@ def _surface_lineage_summary(
         block0_evidence_lineage = "proxy_history"
     lineage: dict[str, dict[str, Any]] = {
         "atlas": {
-            "implementation_tier": str(
-                atlas_payload.get("implementation_tier", "descriptive_context")
-            ),
-            "evidence_lineage": str(
-                atlas_payload.get(
-                    "evidence_lineage",
-                    prepare_payload.get("evidence_lineage", ""),
-                )
-            ),
+            "atlas_role": str(atlas_payload.get("atlas_role", "")),
             "claim_scope": str(atlas_payload.get("claim_scope", "")),
+            "stage0_h5ad": str(atlas_payload.get("stage0_h5ad", "")),
+            "output_index": str(atlas_payload.get("output_index", "")),
         },
         "prepare": {
             "implementation_tier": str(prepare_payload.get("implementation_tier", "")),
@@ -330,8 +324,8 @@ def _atlas_metadata(relative_path: str, *, category: str, artifact_kind: str, fo
             artifact_kind="manifest",
             format_name="json",
             rows_represent="Single JSON object for one descriptive atlas export.",
-            columns_represent="Top-level keys record atlas provenance, scope labels, counts, and the atlas output index path.",
-            claim_scope="provenance",
+            columns_represent="Top-level keys record atlas role, Stage 0 field keys, counts, and the atlas output index path.",
+            claim_scope="descriptive",
             proof_carrying_status="none",
         )
     if name == "task_a_descriptive_atlas_output_index.csv":
@@ -340,7 +334,7 @@ def _atlas_metadata(relative_path: str, *, category: str, artifact_kind: str, fo
             format_name="csv",
             rows_represent="One row per atlas table or figure written by the descriptive-atlas workflow.",
             columns_represent="Columns identify each artifact's relative path, kind, category, format, and short description.",
-            claim_scope="provenance",
+            claim_scope="descriptive",
             proof_carrying_status="none",
         )
     if name == "community_cell_subtype_counts.csv":
@@ -513,7 +507,7 @@ def _collect_atlas_plans(atlas_manifest_path: Path) -> list[ArtifactPlan]:
     atlas_payload = _load_json_dict(atlas_manifest_path, label="Task A atlas manifest")
     _require_fields(
         atlas_payload,
-        required_fields=("output_index", "prepare_manifest_path", "mapping_manifest_path"),
+        required_fields=("output_index",),
         label="Task A atlas manifest",
     )
     atlas_root = atlas_manifest_path.parent
@@ -566,7 +560,7 @@ def _collect_atlas_plans(atlas_manifest_path: Path) -> list[ArtifactPlan]:
                     "tables/community_patient_occurrence_matrix.csv": 25,
                     "tables/representative_overlay_selection.csv": 26,
                 }.get(relative_path, 50),
-                review_role="descriptive" if str(metadata["claim_scope"]) == "descriptive" else "provenance",
+                review_role="descriptive",
                 analysis_level=(
                     "run_level"
                     if relative_path in {"task_a_descriptive_atlas_manifest.json", "task_a_descriptive_atlas_output_index.csv"}
@@ -575,16 +569,6 @@ def _collect_atlas_plans(atlas_manifest_path: Path) -> list[ArtifactPlan]:
             )
         )
 
-    atlas_prepare_manifest = _resolve_path(atlas_payload["prepare_manifest_path"])
-    plans.extend(
-        _prepare_provenance_plans(
-            prepare_manifest_path=atlas_prepare_manifest,
-            layer="atlas",
-            packet_dir="atlas/provenance/prepare",
-            review_rank_base=60,
-            label_suffix="",
-        )
-    )
     return plans
 
 def _collect_block0_plans(

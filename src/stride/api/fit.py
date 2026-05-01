@@ -1,11 +1,8 @@
-"""Public fit facades for canonical STRIDE and the preserved proxy path."""
+"""Public fit facades for the canonical STRIDE interface."""
 from __future__ import annotations
 
 from collections.abc import Sequence
-from dataclasses import dataclass, field
 from typing import Any, Mapping
-
-import numpy as np
 
 from ..basis.contracts import StateBasis
 from ..data.longitudinal import AnnData, load_state_basis_from_adata, validate_longitudinal_adata
@@ -13,54 +10,34 @@ from ..errors import ContractError
 from ..geometry.state_geometry import StateGeometry, build_state_geometry
 from ..latent.operators import PatientRelation, PatientRelationAudit, initialize_patient_relation
 from ..observation import FovObservation, build_fov_observations
-from ..outputs.fit_result import PatientBridgeResult, PatientRelationFitResult, STRIDEFitResult
-from ..workflows.fit_stride import STRIDEFitConfig, run_stride_fit, run_stride_proxy_fit
+from ..outputs.fit_result import STRIDEFitResult
+from ..workflows.fit_stride import STRIDEFitConfig, run_stride_fit
 from .basis import BasisSpec
 from .dataset import DatasetHandle
 from .model import STRIDEModel
 
 
-@dataclass(frozen=True)
-class BridgeConfig:
-    """Configuration for packaging explicit patient-level bridge artifacts."""
-
-    bridge_mode: str = "explicit_patient_relation"
-    preserve_emergence: bool = True
-    metadata: Mapping[str, Any] = field(default_factory=dict)
-
-
-@dataclass(frozen=True)
-class PatientRelationFitConfig:
-    """Compatibility configuration for the single-patient fit wrapper."""
-
-    mode: str = "deferred"
-    preserve_emergence: bool = True
-    metadata: Mapping[str, Any] = field(default_factory=dict)
-
-
-ProxySTRIDEFitConfig = STRIDEFitConfig
-
-
 def build_patient_relation(
     *,
     patient_id: str,
-    A: np.ndarray,
-    d: np.ndarray,
-    e: np.ndarray,
-    mu_minus: np.ndarray | None = None,
-    mu_plus: np.ndarray | None = None,
+    A: object,
+    d: object,
+    e: object,
+    mu_minus: object | None = None,
+    mu_plus: object | None = None,
     state_ids: tuple[int, ...] | None = None,
     audit: PatientRelationAudit | None = None,
-    config: BridgeConfig | None = None,
+    relation_status: str = "explicit_patient_relation",
+    metadata: Mapping[str, Any] | None = None,
 ) -> PatientRelation:
     """Assemble one validated patient relation from explicit shared-axis arrays."""
-    resolved_config = config or BridgeConfig()
+    metadata_dict = dict(metadata or {})
     resolved_audit = audit
     if resolved_audit is None:
         resolved_audit = PatientRelationAudit(
             patient_id=str(patient_id),
-            bridge_status=resolved_config.bridge_mode,
-            metadata=dict(resolved_config.metadata),
+            bridge_status=str(relation_status),
+            metadata=metadata_dict,
         )
 
     return initialize_patient_relation(
@@ -72,7 +49,7 @@ def build_patient_relation(
         mu_plus=mu_plus,
         state_ids=state_ids,
         audit=resolved_audit,
-        metadata=dict(resolved_config.metadata),
+        metadata=metadata_dict,
     )
 
 
@@ -163,122 +140,6 @@ def _normalize_dataset_inputs(
     return observations, resolved_basis, resolved_geometry
 
 
-def fit_patient_relation(
-    observations: object,
-    *,
-    state_basis: object,
-    geometry: object | None = None,
-    schedule: object | None = None,
-    config: PatientRelationFitConfig | None = None,
-) -> PatientRelationFitResult:
-    """Return the explicit proxy single-patient bridge result for compatibility callers."""
-    resolved_config = config or PatientRelationFitConfig()
-    del schedule
-
-    result = fit_stride_proxy(
-        observations,
-        state_basis=state_basis,  # type: ignore[arg-type]
-        geometry=geometry,  # type: ignore[arg-type]
-        config=STRIDEFitConfig(
-            metadata={
-                "compat_mode": resolved_config.mode,
-                "preserve_emergence": resolved_config.preserve_emergence,
-                **dict(resolved_config.metadata),
-            }
-        ),
-    )
-    if len(result.patient_results) != 1:
-        raise ContractError(
-            "fit_patient_relation expects input that resolves to exactly one patient"
-        )
-
-    patient_result = result.patient_results[0]
-    return PatientBridgeResult(
-        patient_id=patient_result.patient_id,
-        fit_status=patient_result.fit_status,
-        A=patient_result.A,
-        d=patient_result.d,
-        e=patient_result.e,
-        mu_minus=patient_result.mu_minus,
-        mu_plus=patient_result.mu_plus,
-        state_ids=patient_result.state_ids,
-        audit=patient_result.audit,
-        diagnostics={
-            **dict(patient_result.diagnostics),
-            "compat_mode": resolved_config.mode,
-            "preserve_emergence": resolved_config.preserve_emergence,
-        },
-        auxiliary=dict(patient_result.auxiliary),
-    )
-
-
-def bridge_observation_matches(*args: object, **kwargs: object) -> PatientRelation:
-    """Reserved bridge estimator entrypoint kept honest by an explicit defer."""
-    raise NotImplementedError(
-        "Direct bridge_observation_matches(...) remains deferred as a standalone API. "
-        "Use fit_stride(...) for the canonical full STRIDE path, "
-        "fit_stride_proxy(...) for the preserved approximate proxy bridge path, "
-        "or build_patient_relation(...) when A/d/e are already known."
-    )
-
-
-def fit_stride_proxy(
-    data: object,
-    *,
-    state_basis: StateBasis | None = None,
-    geometry: StateGeometry | None = None,
-    basis_spec: BasisSpec | None = None,
-    model: STRIDEModel | None = None,
-    config: STRIDEFitConfig | None = None,
-) -> STRIDEFitResult:
-    """Normalize canonical inputs and run the preserved explicit proxy path."""
-    resolved_config = config or STRIDEFitConfig()
-
-    observations = _coerce_observation_sequence(data)
-    if observations is not None:
-        normalized_observations, resolved_basis, resolved_geometry = _normalize_observation_inputs(
-            observations,
-            state_basis=state_basis,
-            geometry=geometry,
-            model=model,
-        )
-        return run_stride_proxy_fit(
-            normalized_observations,
-            state_basis=resolved_basis,
-            geometry=resolved_geometry,
-            config=resolved_config,
-        )
-
-    if isinstance(data, DatasetHandle):
-        return fit_stride_proxy(
-            data.adata,
-            state_basis=state_basis,
-            geometry=geometry,
-            basis_spec=basis_spec,
-            model=model,
-            config=resolved_config,
-        )
-
-    if isinstance(data, AnnData):
-        normalized_observations, resolved_basis, resolved_geometry = _normalize_dataset_inputs(
-            data,
-            state_basis=state_basis,
-            geometry=geometry,
-            basis_spec=basis_spec,
-            model=model,
-        )
-        return run_stride_proxy_fit(
-            normalized_observations,
-            state_basis=resolved_basis,
-            geometry=resolved_geometry,
-            config=resolved_config,
-        )
-
-    raise ContractError(
-        "fit_stride_proxy expects DatasetHandle, AnnData, or a sequence of FovObservation objects"
-    )
-
-
 def fit_stride(
     data: object,
     *,
@@ -337,13 +198,7 @@ def fit_stride(
 
 
 __all__ = [
-    "BridgeConfig",
-    "ProxySTRIDEFitConfig",
-    "PatientRelationFitConfig",
     "STRIDEFitConfig",
     "build_patient_relation",
-    "bridge_observation_matches",
-    "fit_patient_relation",
     "fit_stride",
-    "fit_stride_proxy",
 ]

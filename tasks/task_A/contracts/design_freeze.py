@@ -160,11 +160,13 @@ TASK_A_SURFACE_SPECS: tuple[TaskASurfaceSpec, ...] = (
     ),
     TaskASurfaceSpec(
         name="write_task_a_descriptive_atlas",
-        owner="tasks.task_A.workflows.descriptive_atlas",
+        owner="tasks.task_A.descriptive",
         kind="runner",
         consumes=(
-            "task_a_prepare_manifest.json",
+            "task-config",
+            "stage0-h5ad",
             "output-dir",
+            "optional patient-id selectors",
             "optional max-overlay-communities",
         ),
         produces=(
@@ -173,12 +175,12 @@ TASK_A_SURFACE_SPECS: tuple[TaskASurfaceSpec, ...] = (
             "descriptive atlas tables",
             "descriptive atlas figures",
         ),
-        emitted_artifact_states=(SCAFFOLD_ACTIVE_STATE, CONTRACT_PASSED_STATE),
+        emitted_artifact_states=(),
         execution_status="executable",
         does_not_do=(
+            "Consume Step 1 prepare artifacts as hard inputs",
             "Run Block 0, Block 1, or Block 2",
             "Emit confirmatory or inferential claims",
-            "Create a new Task A data-entry surface outside Step 1 prepare",
         ),
     ),
     TaskASurfaceSpec(
@@ -341,8 +343,8 @@ TASK_A_EXECUTION_GRAPH: tuple[TaskAExecutionNode, ...] = (
         name="descriptive_atlas_context_layer",
         surface_name="write_task_a_descriptive_atlas",
         canonical_order=2,
-        canonical_predecessors=("step1_prepare_full_cohort",),
-        hard_prerequisites=("task_a_prepare_manifest.json",),
+        canonical_predecessors=("stage0_artifact_builder",),
+        hard_prerequisites=("stage0-h5ad", "task-config"),
         produced_artifacts=(
             "task_a_descriptive_atlas_manifest.json",
             "task_a_descriptive_atlas_output_index.csv",
@@ -560,7 +562,7 @@ TASK_A_ARTIFACT_SPECS: tuple[TaskAArtifactSpec, ...] = (
         filename="task_a_descriptive_atlas_manifest.json",
         producer="write_task_a_descriptive_atlas",
         purpose=(
-            "Declare descriptive-atlas provenance, descriptive-only labeling, "
+            "Declare descriptive-atlas labeling, Stage 0 field keys, counts, "
             "and the indexed output surface."
         ),
         minimum_fields=(
@@ -568,23 +570,20 @@ TASK_A_ARTIFACT_SPECS: tuple[TaskAArtifactSpec, ...] = (
             "atlas_role",
             "claim_scope",
             "scientific_interpretation_allowed",
-            "artifact_state",
-            "block0_gate_status",
-            "prepare_manifest_path",
-            "mapping_manifest_path",
             "config_path",
             "stage0_h5ad",
-            "run_scope",
             "community_id_key",
             "cell_subtype_key",
             "domain_key",
             "fov_key",
             "spatial_key",
+            "configured_community_ids",
+            "observed_community_ids",
             "output_index",
         ),
-        artifact_state_location="embedded field",
-        allowed_artifact_states=(SCAFFOLD_ACTIVE_STATE, CONTRACT_PASSED_STATE),
-        readiness_classification=CONTRACT_PASSED_STATE,
+        artifact_state_location="none",
+        allowed_artifact_states=(),
+        readiness_classification="descriptive_only",
         does_not_mean=(
             "Block 0 passage",
             "Any confirmatory claim is justified",
@@ -603,9 +602,9 @@ TASK_A_ARTIFACT_SPECS: tuple[TaskAArtifactSpec, ...] = (
             "format",
             "description",
         ),
-        artifact_state_location="task_a_descriptive_atlas_manifest.json.artifact_state",
-        allowed_artifact_states=(SCAFFOLD_ACTIVE_STATE, CONTRACT_PASSED_STATE),
-        readiness_classification=CONTRACT_PASSED_STATE,
+        artifact_state_location="none",
+        allowed_artifact_states=(),
+        readiness_classification="descriptive_only",
         does_not_mean=(
             "Every listed file is inferential",
             "The atlas may substitute for Block 0 validation",

@@ -34,8 +34,8 @@ The following validation semantics are normative now:
 - the current narrow two-group uniform patient-relation implementation path,
 - explicit separation between observation-layer diagnostics and patient-level
   outputs,
-- explicit separation between observation-layer unmatched residual diagnostics
-  and fitted biological `d/e`,
+- explicit separation between any emitted legacy observation residual
+  diagnostics and fitted biological `d/e`,
 - explicit row-substochastic `A_p` semantics,
 - explicit bounded `e_p` semantics,
 - explicit burden/composition scale separation,
@@ -97,8 +97,13 @@ Every validation scenario should first check contract-level invariants:
   composition space,
 - source/target declaration changes task input but not the identity of
   `fit_stride(...)` as the full estimator,
-- observation residual diagnostics remain distinguishable from fitted
-  biological `d/e`,
+- any emitted legacy observation residual diagnostics remain distinguishable
+  from fitted biological `d/e`,
+- state-geometry cost matrices are finite, nonnegative, symmetric on the
+  shared `K`-state basis, have diagonal `0`, and provide a positive finite
+  off-diagonal median scale before canonical fitting,
+- the geometry/locality objective acts on raw canonical `A_p` and remains a
+  soft biological-complexity cost rather than a hard support mask,
 - manuscript-level biological process language requires cohort-level
   recurrence/support/dispersion over fitted `A/d/e`,
 - domain is not encoded into state identity and then reused as a conditioning
@@ -187,6 +192,13 @@ Required behavior:
 These are execution-stage method validations for the completed end-to-end
 canonical estimators.
 
+The core STRIDE ablation vocabulary is `none`, `recurrence`, `geometry`, and
+`consistency`; Block 3C exposes the refit arms as `recurrence_ablation`,
+`geometry_ablation`, and `consistency_ablation`. No-`d/e`,
+no-open-channel, closed, balanced, and transport-style variants remain
+comparator/control vocabulary for baseline evaluation rather than core
+full-estimator ablation names.
+
 ### 5.1 No recurrence layer
 
 Remove or disable the recurrence layer while keeping patient-level objects.
@@ -208,6 +220,11 @@ Expected result:
   state geometry,
 - implausibly distant transitions should increase under the ablated fit,
 - patient-level relation recovery should degrade relative to the full fit.
+
+The full fit is not expected to erase all distant remodeling. A distant
+relation can remain when the joint objective supports it; the ablation checks
+whether removing the biological-complexity cost increases unsupported distant
+relations or destabilizes recovery.
 
 ### 5.3 No patient-consistency term
 
@@ -303,10 +320,11 @@ Validation success is defined by pipeline behavior and output contracts, not by
 | current normative layer | Contract validity | Any emitted patient-level object has `A_p`, `d_p`, and `e_p` with correct shapes and nonnegative finite values, `[A_p | d_p]` row-simplex accounting, and bounded `e_p` in `[0,1]`; invalid payloads fail explicitly rather than silently coercing values. |
 | current normative layer | `A_p` semantics | Any emitted patient relation obeys row-substochastic semantics, and docs do not substitute a pure conditional kernel for canonical `A_p`. |
 | current normative layer | Burden/composition honesty | `mu_p^-`, `mu_p^+`, `m_p^(d)`, and `m_p^(e)` remain burden-scale quantities, while normalized compositions remain derived views; burden claims are not documented as robust when comparability is weak. |
-| current normative layer | Observation-layer boundary | Observation-layer outputs remain distinguishable from patient-level outputs and remain documented as domain-stratified bag-of-FOV empirical measures rather than as the primary biological object; unmatched residual diagnostics remain observation-layer evidence rather than biological `d/e`. |
+| current normative layer | Observation-layer boundary | Observation-layer outputs remain distinguishable from patient-level outputs and remain documented as domain-stratified bag-of-FOV empirical measures rather than as the primary biological object; legacy residual diagnostics, when emitted, remain separate from fitted biological `d/e`. |
 | current normative layer | Estimator invariance | Source/target declaration changes task input and comparison eligibility, while `fit_stride(...)` remains the same task-insensitive full estimator with the canonical observation discrepancy backend. |
-| current normative layer | Claim boundary | Manuscript-level biological process language is supported only after cohort-level recurrence/support/dispersion over fitted patient-level `A/d/e`, not from a single-patient residual or open tendency alone. |
+| current normative layer | Claim boundary | Manuscript-level biological process language is supported only after cohort-level recurrence/support/dispersion over fitted patient-level `A/d/e`, not from a single-patient observation diagnostic or open tendency alone. |
 | current normative layer | State/domain separation | Canonical docs and interfaces treat domain as an observation-layer stratification variable and do not encode domain identity into the shared state basis. |
+| current normative layer | State-geometry validity | Canonical fitting validates finite, nonnegative, symmetric shared-state `C_raw/C_norm`, diagonal `0`, and a positive finite off-diagonal `s_C` scale before using geometry in the objective. |
 | current normative layer | Deferred-estimator honesty | Canonical patient-relation and recurrence namespaces may return reserved or deferred states, but they must not fabricate patient-level relations or recurrence families that the implementation has not actually estimated. |
 | current normative layer | Audit semantics | Missing biological support, numerical failure, and deferred estimator status remain explicit rather than being collapsed into apparently valid outputs. |
 | future execution layer | Consensus recurrence recovery | In the base synthetic consensus-recovery suite, recovered cohort consensus `A/d/e` and patient-level dispersion match the planted consensus/dispersion within thresholds set by the objective-formula freeze. |
