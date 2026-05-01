@@ -26,8 +26,20 @@ from .measures import (
 from .validation import validate_observation_match_inputs
 
 _LAZY_EXPORTS: dict[str, tuple[str, str]] = {
+    "BalancedSinkhornDivergenceConfig": (
+        "stride.observation.balanced_sinkhorn",
+        "BalancedSinkhornDivergenceConfig",
+    ),
+    "BalancedSinkhornDivergenceResult": (
+        "stride.observation.balanced_sinkhorn",
+        "BalancedSinkhornDivergenceResult",
+    ),
     "build_observation_kernels": ("stride.adapters.ot_sinkhorn", "build_observation_kernels"),
     "calibrate_match_penalty": ("stride.adapters.ot_sinkhorn", "calibrate_match_penalty"),
+    "compute_balanced_sinkhorn_observation_discrepancy": (
+        "stride.observation.balanced_sinkhorn",
+        "compute_balanced_sinkhorn_observation_discrepancy",
+    ),
     "compute_active_state_support": ("stride.adapters.ot_sinkhorn", "compute_active_state_support"),
     "compute_observation_discrepancy": ("stride.observation.discrepancy", "compute_observation_discrepancy"),
     "match_observation_clouds": ("stride.observation.discrepancy", "match_observation_clouds"),
@@ -47,6 +59,8 @@ def __getattr__(name: str) -> Any:
 
 
 __all__ = [
+    "BalancedSinkhornDivergenceConfig",
+    "BalancedSinkhornDivergenceResult",
     "DomainStratifiedMeasure",
     "FovObservation",
     "ObservationDiscrepancy",
@@ -56,6 +70,7 @@ __all__ = [
     "build_fov_observations",
     "build_observation_kernels",
     "calibrate_match_penalty",
+    "compute_balanced_sinkhorn_observation_discrepancy",
     "compute_active_state_support",
     "compute_fov_burden",
     "compute_fov_composition",

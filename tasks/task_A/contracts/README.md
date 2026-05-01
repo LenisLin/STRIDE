@@ -9,7 +9,7 @@ Task A keeps its contracts at the task layer so `src/stride/` stays task-insensi
   states, and non-goals for each major Task A output.
 - `execution_graph.md` freezes the canonical execution order, hard
   prerequisites, and which stages are executable.
-- `stage0_to_stride_mapping.md` freezes the required Stage 0 fields, ordered proxy rules, and adapter-side family slicing.
+- `stage0_to_stride_mapping.md` freezes the required Stage 0 fields, ordered tissue-domain adapter rules, and adapter-side family slicing.
 - `deferred_boundaries.md` records which Task A surfaces remain task-local or deferred after the Block 0 locality gate.
 - [`../block3_execution_runbook.md`](/home/lenislin/Experiment/projects/STRIDE/tasks/task_A/block3_execution_runbook.md)
   is the live operational checklist for the rewritten Block 3 execution path.
@@ -21,4 +21,4 @@ Task A keeps its contracts at the task layer so `src/stride/` stays task-insensi
   `TC` observations fixed and reassigns the `IM` group from a different
   patient in the same exact `(n_TC, n_IM)` stratum under a fixed random seed.
 
-These contracts describe Task A inputs, ordered tissue-domain proxy handling, block boundaries, and deferred surfaces. They do not redefine the STRIDE core method. Pre-Block 0 data suitability checks are allowed, but they must not be mistaken for Block 0 passage or primary evidence.
+These contracts describe Task A inputs, adapter-side tissue-domain handling, block boundaries, and deferred surfaces. They do not redefine the STRIDE core method. Pre-Block 0 data suitability checks are allowed, but they must not be mistaken for Block 0 passage or primary evidence.

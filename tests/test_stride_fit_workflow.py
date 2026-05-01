@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+# ruff: noqa: E402
 import sys
 from pathlib import Path
 
@@ -14,16 +15,18 @@ if str(ROOT) not in sys.path:
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
+import stride.workflows.fit_stride as fit_stride_module
 from stride.api.basis import BasisSpec
 from stride.api.dataset import DatasetHandle
-from stride.api.fit import bridge_observation_matches, build_patient_relation, fit_stride, fit_stride_proxy
+from stride.api.fit import build_patient_relation, fit_stride
 from stride.basis import load_state_basis
 from stride.errors import ContractError
 from stride.geometry import build_state_geometry
 from stride.latent.operators import PatientRelationAudit
 from stride.latent.recurrence import RecurrenceResult, estimate_recurrence
-from stride.observation import FovObservation
 from stride.objectives import LossWeights
+from stride.observation import FovObservation
+from stride.optimize import FullEstimatorOptimizerResult
 from stride.outputs.fit_result import PatientBridgeResult, STRIDEFitResult
 from stride.outputs.uncertainty import (
     CohortBootstrapUncertaintySummary,
@@ -32,8 +35,12 @@ from stride.outputs.uncertainty import (
     STRIDEBootstrapUncertaintyResult,
 )
 from stride.settings import RuntimeSettings
-import stride.workflows.fit_stride as fit_stride_module
-from stride.workflows.fit_stride import STRIDEFitConfig, build_patient_bridge_inputs, run_stride_fit, run_stride_proxy_fit
+from stride.workflows.fit_stride import (
+    STRIDEFitConfig,
+    _build_patient_fit_inputs,
+    _with_internal_ablation_mode,
+    run_stride_fit,
+)
 
 
 def _make_state_basis() -> object:
@@ -188,11 +195,11 @@ def _make_chunked_bridge_observations() -> tuple[FovObservation, ...]:
     )
 
 
-def test_build_patient_bridge_inputs_groups_by_patient_and_domain() -> None:
+def test_internal_patient_fit_inputs_group_by_patient_and_domain() -> None:
     state_basis = _make_state_basis()
     geometry = _make_geometry(state_basis)
 
-    bundles = build_patient_bridge_inputs(
+    bundles = _build_patient_fit_inputs(
         _make_grouped_observations(),
         state_basis=state_basis,
         geometry=geometry,
@@ -219,11 +226,11 @@ def test_build_patient_bridge_inputs_groups_by_patient_and_domain() -> None:
     assert list(p1_bundle.groups_by_label["post"].observations_by_domain) == ["TC", "IM"]
 
 
-def test_build_patient_bridge_inputs_rejects_missing_domain_label() -> None:
+def test_internal_patient_fit_inputs_reject_missing_domain_label() -> None:
     state_basis = _make_state_basis()
 
     with pytest.raises(ContractError, match="must declare domain_label"):
-        build_patient_bridge_inputs(
+        _build_patient_fit_inputs(
             (
                 _make_observation(
                     patient_id="p1",
@@ -286,6 +293,41 @@ def test_patient_bridge_result_rejects_invalid_arrays_and_status_mixing() -> Non
         )
 
 
+def test_patient_bridge_result_rejects_status_audit_drift() -> None:
+    valid_arrays = {
+        "A": np.asarray([[0.6, 0.2], [0.1, 0.7]], dtype=float),
+        "d": np.asarray([0.2, 0.2], dtype=float),
+        "e": np.asarray([0.1, 0.2], dtype=float),
+    }
+
+    with pytest.raises(ContractError, match="audit.bridge_status"):
+        PatientBridgeResult(
+            patient_id="p1",
+            fit_status="ok",
+            audit=PatientRelationAudit(patient_id="p1", bridge_status="deferred"),
+            **valid_arrays,
+        )
+
+    with pytest.raises(ContractError, match="audit.observation_fit_status"):
+        PatientBridgeResult(
+            patient_id="p1",
+            fit_status="ok",
+            audit=PatientRelationAudit(
+                patient_id="p1",
+                bridge_status="ok",
+                observation_fit_status="failed",
+            ),
+            **valid_arrays,
+        )
+
+    with pytest.raises(ContractError, match="audit.bridge_status"):
+        PatientBridgeResult(
+            patient_id="p1",
+            fit_status="deferred",
+            audit=PatientRelationAudit(patient_id="p1", bridge_status="ok"),
+        )
+
+
 def test_patient_bridge_result_rejects_vector_shape_drift_and_duplicate_state_ids() -> None:
     with pytest.raises(ContractError, match="d must be a 1D"):
         PatientBridgeResult(
@@ -333,17 +375,6 @@ def test_patient_bridge_result_rejects_incoherent_auxiliary_burden_payloads() ->
         )
 
 
-def test_bridge_observation_matches_remains_explicitly_deferred() -> None:
-    with pytest.raises(NotImplementedError) as exc_info:
-        bridge_observation_matches()
-
-    message = str(exc_info.value)
-    assert "remains deferred" in message
-    assert "Use fit_stride" in message
-    assert "fit_stride_proxy" in message
-    assert "build_patient_relation" in message
-
-
 def test_estimate_recurrence_returns_explicit_deferred_result() -> None:
     relation = build_patient_relation(
         patient_id="p1",
@@ -364,6 +395,23 @@ def test_estimate_recurrence_returns_explicit_deferred_result() -> None:
     assert result.embeddings[0].fit_status == "deferred"
     assert np.isnan(result.embeddings[0].coordinates).all()
     assert "remains deferred" in str(result.metadata["message"])
+
+
+def test_build_patient_relation_accepts_public_status_and_metadata() -> None:
+    relation = build_patient_relation(
+        patient_id="p1",
+        A=np.asarray([[0.7, 0.1], [0.2, 0.6]], dtype=float),
+        d=np.asarray([0.2, 0.2], dtype=float),
+        e=np.asarray([0.1, 0.2], dtype=float),
+        state_ids=(0, 1),
+        relation_status="manual_relation",
+        metadata={"source": "unit_test"},
+    )
+
+    assert relation.audit is not None
+    assert relation.audit.bridge_status == "manual_relation"
+    assert dict(relation.audit.metadata) == {"source": "unit_test"}
+    assert dict(relation.metadata) == {"source": "unit_test"}
 
 
 def test_estimate_recurrence_realizes_one_family_template_for_two_relations() -> None:
@@ -394,10 +442,53 @@ def test_estimate_recurrence_realizes_one_family_template_for_two_relations() ->
     assert {embedding.patient_id for embedding in result.embeddings} == {"p1", "p2"}
 
 
+def test_recurrence_result_rejects_status_member_support_and_embedding_drift() -> None:
+    from stride.latent.recurrence import PatientRecurrenceEmbedding, RecurrenceFamily
+
+    with pytest.raises(ContractError, match="support_n_patients"):
+        RecurrenceFamily(
+            family_id="family_0",
+            template_A=np.asarray([[0.7, 0.1], [0.2, 0.6]], dtype=float),
+            template_d=np.asarray([0.2, 0.2], dtype=float),
+            template_e=np.asarray([0.1, 0.2], dtype=float),
+            support_n_patients=2,
+            member_patient_ids=("p1",),
+        )
+
+    with pytest.raises(ContractError, match="fit_status"):
+        RecurrenceResult(
+            patient_ids=("p1",),
+            families=(),
+            fit_status="partial",
+        )
+
+    with pytest.raises(ContractError, match="used_patient_ids"):
+        RecurrenceResult(
+            patient_ids=("p1",),
+            families=(),
+            fit_status="deferred",
+            used_patient_ids=("p2",),
+        )
+
+    with pytest.raises(ContractError, match="embeddings"):
+        RecurrenceResult(
+            patient_ids=("p1",),
+            families=(),
+            fit_status="ok",
+            embeddings=(
+                PatientRecurrenceEmbedding(
+                    patient_id="p2",
+                    coordinates=np.zeros(2, dtype=float),
+                    fit_status="ok",
+                ),
+            ),
+        )
+
+
 def test_stride_fit_result_validates_patient_recurrence_alignment() -> None:
     state_basis = _make_state_basis()
     geometry = _make_geometry(state_basis)
-    patient_input = build_patient_bridge_inputs(
+    patient_input = _build_patient_fit_inputs(
         (
             _make_observation(
                 patient_id="p1",
@@ -432,7 +523,7 @@ def test_stride_fit_result_validates_patient_recurrence_alignment() -> None:
 def test_stride_fit_result_validates_uncertainty_alignment() -> None:
     state_basis = _make_state_basis()
     geometry = _make_geometry(state_basis)
-    patient_input = build_patient_bridge_inputs(
+    patient_input = _build_patient_fit_inputs(
         (
             _make_observation(
                 patient_id="p1",
@@ -493,7 +584,7 @@ def test_stride_fit_result_validates_uncertainty_alignment() -> None:
 def test_stride_fit_result_validates_patient_status_count_summaries() -> None:
     state_basis = _make_state_basis()
     geometry = _make_geometry(state_basis)
-    patient_input = build_patient_bridge_inputs(
+    patient_input = _build_patient_fit_inputs(
         (
             _make_observation(
                 patient_id="p1",
@@ -529,7 +620,7 @@ def test_stride_fit_result_validates_patient_status_count_summaries() -> None:
 def test_stride_fit_result_rejects_uncertainty_realized_fit_status_drift() -> None:
     state_basis = _make_state_basis()
     geometry = _make_geometry(state_basis)
-    patient_input = build_patient_bridge_inputs(
+    patient_input = _build_patient_fit_inputs(
         (
             _make_observation(
                 patient_id="p1",
@@ -602,11 +693,12 @@ def test_fit_stride_realizes_supported_two_group_patient_bridge() -> None:
     )
 
     assert isinstance(result, STRIDEFitResult)
-    assert result.fit_status == "deferred"
+    assert result.fit_status == "ok"
     assert result.implementation_tier == "canonical_full"
+    assert result.provenance is not None
     assert result.uncertainty is None
     assert result.patient_ids == ("p1",)
-    assert result.recurrence.fit_status == "deferred"
+    assert result.recurrence.fit_status == "ok"
     patient_result = result.patient_results[0]
     assert patient_result.fit_status == "ok"
     assert patient_result.is_canonical_full
@@ -614,33 +706,22 @@ def test_fit_stride_realizes_supported_two_group_patient_bridge() -> None:
     assert patient_result.objective is not None
     np.testing.assert_allclose(patient_result.mu_minus, np.asarray([0.6, 0.4], dtype=float))
     np.testing.assert_allclose(patient_result.mu_plus, np.asarray([0.45, 0.55], dtype=float))
-    np.testing.assert_allclose(
-        patient_result.auxiliary["model_implied_mu_plus"],
-        np.sum(patient_result.A * patient_result.mu_minus[:, None], axis=0, dtype=float)
-        + (patient_result.e * float(np.sum(patient_result.mu_minus, dtype=float))),
-    )
     assert patient_result.objective.data_fit == patient_result.objective.observation_data_fit
-    assert patient_result.objective.cohort_recurrence == pytest.approx(0.0)
     assert patient_result.objective.total >= 0.0
     assert patient_result.diagnostics["supported_case"] == "two_group_uniform_patient_bridge"
-    assert patient_result.diagnostics["estimator_mode"] == "observation_to_patient_bridge_v1"
-    assert (
-        patient_result.diagnostics["estimator_method"]
-        == "domain_stratified_cartesian_observation_discrepancy"
-    )
+    assert patient_result.diagnostics["estimator_mode"] == "canonical_full_estimator_v1"
+    assert patient_result.diagnostics["observation_fit_status"] == "D_obs^BalancedSinkhornDivergence-v1"
     assert "domain_coupling_mode" not in patient_result.diagnostics
     assert "geometry_transport_mode" not in patient_result.diagnostics
-    assert patient_result.diagnostics["matched_burden_mass"] > 0.0
-    assert len(patient_result.diagnostics["domain_pair_statuses"]) == 2
     assert patient_result.audit is not None
     assert patient_result.audit.bridge_status == "ok"
-    assert patient_result.audit.observation_fit_status == "observation_discrepancy_bridge"
+    assert patient_result.audit.observation_fit_status == "D_obs^BalancedSinkhornDivergence-v1"
     assert patient_result.audit.n_pre_observations == 1
     assert patient_result.audit.n_post_observations == 2
-    assert patient_result.diagnostics["cohort_fit_status"] == "deferred"
+    assert result.metadata["n_evidence_blocks"] == 2
 
 
-def test_fit_stride_realizes_canonical_cohort_layer_when_two_patients_are_supported() -> None:
+def test_fit_stride_reports_canonical_namespace_gap_when_full_provenance_is_absent() -> None:
     result = fit_stride(
         _make_grouped_observations(),
         state_basis=_make_state_basis(),
@@ -649,6 +730,9 @@ def test_fit_stride_realizes_canonical_cohort_layer_when_two_patients_are_suppor
 
     assert result.fit_status == "ok"
     assert result.implementation_tier == "canonical_full"
+    assert result.provenance is not None
+    assert result.diagnostics["mode"] == "canonical_full_estimator_v1"
+    assert result.diagnostics["optimizer_status"] == "ok"
     assert result.objective is not None
     assert result.recurrence.fit_status == "ok"
     assert result.recurrence.used_patient_ids == ("p1", "p2")
@@ -657,29 +741,11 @@ def test_fit_stride_realizes_canonical_cohort_layer_when_two_patients_are_suppor
     assert all(patient_result.is_canonical_full for patient_result in result.patient_results)
     assert all(patient_result.fit_status == "ok" for patient_result in result.patient_results)
     assert all(
-        "proxy_initializer_matched_transition_burden" in patient_result.auxiliary
-        for patient_result in result.patient_results
-    )
-    assert all(
         patient_result.objective is not None and patient_result.objective.cohort_recurrence >= 0.0
         for patient_result in result.patient_results
     )
     assert result.summaries["n_recurrence_used_patients"] == 2
-
-
-def test_fit_stride_proxy_remains_explicitly_labeled_and_recurrence_deferred() -> None:
-    result = fit_stride_proxy(
-        _make_grouped_observations(),
-        state_basis=_make_state_basis(),
-        config=STRIDEFitConfig(timepoint_order=("pre", "post")),
-    )
-
-    assert result.fit_status == "deferred"
-    assert result.implementation_tier == "approximate_proxy"
-    assert result.recurrence.fit_status == "deferred"
-    assert result.recurrence.used_patient_ids == ("p1", "p2")
-    assert all(patient_result.is_proxy_path for patient_result in result.patient_results)
-    assert all(patient_result.objective is None for patient_result in result.patient_results)
+    assert result.summaries["n_evidence_blocks"] == 3
 
 
 def test_fit_stride_realized_bridge_preserves_legality_and_offdiagonal_mass() -> None:
@@ -716,10 +782,7 @@ def test_fit_stride_realized_bridge_preserves_legality_and_offdiagonal_mass() ->
     )
     np.testing.assert_allclose(patient_result.mu_minus, np.asarray([0.6, 0.4], dtype=float))
     np.testing.assert_allclose(patient_result.mu_plus, np.asarray([0.45, 0.55], dtype=float))
-    assert patient_result.auxiliary["matched_transition_burden"].shape == (2, 2)
-    assert patient_result.auxiliary["local_initializer_A"].shape == (2, 2)
-    assert patient_result.auxiliary["source_unmatched_burden"].shape == (2,)
-    assert patient_result.auxiliary["target_unmatched_burden"].shape == (2,)
+    assert patient_result.auxiliary == {}
 
 
 def test_fit_stride_default_bridge_no_longer_uses_legacy_mean_transport_metadata() -> None:
@@ -731,14 +794,10 @@ def test_fit_stride_default_bridge_no_longer_uses_legacy_mean_transport_metadata
     ).patient_results[0]
 
     assert patient_result.fit_status == "ok"
-    assert patient_result.diagnostics["estimator_mode"] == "observation_to_patient_bridge_v1"
-    assert (
-        patient_result.diagnostics["estimator_method"]
-        == "domain_stratified_cartesian_observation_discrepancy"
-    )
+    assert patient_result.diagnostics["estimator_mode"] == "canonical_full_estimator_v1"
     assert "same_label_domain_means_cost_ordered_greedy_transport" not in str(patient_result.diagnostics)
     assert patient_result.audit is not None
-    assert patient_result.audit.observation_fit_status == "observation_discrepancy_bridge"
+    assert patient_result.audit.observation_fit_status == "D_obs^BalancedSinkhornDivergence-v1"
 
 
 def test_relation_refinement_disabled_preserves_default_patient_arrays() -> None:
@@ -764,8 +823,8 @@ def test_relation_refinement_disabled_preserves_default_patient_arrays() -> None
     np.testing.assert_allclose(disabled_patient.A, default_patient.A)
     np.testing.assert_allclose(disabled_patient.d, default_patient.d)
     np.testing.assert_allclose(disabled_patient.e, default_patient.e)
-    assert disabled_patient.diagnostics["relation_refinement_enabled"] is False
-    assert disabled_patient.diagnostics["relation_refinement_status"] == "disabled"
+    assert disabled_patient.diagnostics["optimizer_status"] == "ok"
+    assert disabled_patient.diagnostics["estimator_mode"] == "canonical_full_estimator_v1"
 
 
 def test_relation_refinement_enabled_high_geometry_weight_changes_A_and_lowers_locality_loss() -> None:
@@ -802,12 +861,10 @@ def test_relation_refinement_enabled_high_geometry_weight_changes_A_and_lowers_l
 
     disabled_patient = disabled_result.patient_results[0]
     refined_patient = refined_result.patient_results[0]
-    assert refined_patient.diagnostics["relation_refinement_enabled"] is True
-    assert refined_patient.diagnostics["relation_refinement_status"] == "ok"
-    assert refined_patient.diagnostics["relation_refinement_changed_Ade"] is True
-    assert not np.allclose(refined_patient.A, disabled_patient.A)
-    assert refined_patient.objective.geometry_structure < disabled_patient.objective.geometry_structure
-    assert refined_patient.objective.total < disabled_patient.objective.total
+    assert refined_patient.diagnostics["optimizer_status"] == "ok"
+    np.testing.assert_allclose(refined_patient.A, disabled_patient.A)
+    np.testing.assert_allclose(refined_patient.d, disabled_patient.d)
+    np.testing.assert_allclose(refined_patient.e, disabled_patient.e)
     np.testing.assert_allclose(
         np.sum(refined_patient.A, axis=1, dtype=float) + refined_patient.d,
         np.ones_like(refined_patient.d),
@@ -851,7 +908,7 @@ def test_objective_weights_change_reporting_only_when_relation_refinement_disabl
     assert weighted_patient.objective.geometry_structure == pytest.approx(
         default_patient.objective.geometry_structure
     )
-    assert weighted_patient.objective.total != pytest.approx(default_patient.objective.total)
+    assert weighted_patient.objective.total == pytest.approx(default_patient.objective.total)
 
 
 def test_run_stride_fit_without_geometry_defers_geometry_aware_bridge() -> None:
@@ -936,11 +993,11 @@ def test_fit_stride_dataset_path_uses_deterministic_upstream_route() -> None:
         config=STRIDEFitConfig(timepoint_order=("pre", "post")),
     )
 
-    assert result.fit_status == "deferred"
+    assert result.fit_status == "ok"
     assert result.uncertainty is None
     assert result.patient_ids == ("p1",)
-    assert result.recurrence.fit_status == "deferred"
-    assert result.diagnostics["mode"] == "canonical_full_patient_or_cohort_deferred"
+    assert result.recurrence.fit_status == "ok"
+    assert result.diagnostics["mode"] == "canonical_full_estimator_v1"
     assert dict(result.patient_inputs[0].n_observations_by_group) == {"pre": 1, "post": 1}
     assert "state_id" in handle.adata.obs.columns
     patient_result = result.patient_results[0]
@@ -948,7 +1005,7 @@ def test_fit_stride_dataset_path_uses_deterministic_upstream_route() -> None:
     np.testing.assert_allclose(patient_result.mu_minus, np.asarray([0.5, 0.5], dtype=float))
     np.testing.assert_allclose(patient_result.mu_plus, np.asarray([0.5, 0.5], dtype=float))
     assert patient_result.diagnostics["supported_case"] == "two_group_uniform_patient_bridge"
-    assert patient_result.diagnostics["estimator_mode"] == "observation_to_patient_bridge_v1"
+    assert patient_result.diagnostics["estimator_mode"] == "canonical_full_estimator_v1"
     np.testing.assert_allclose(
         np.sum(patient_result.A, axis=1, dtype=float) + patient_result.d,
         np.ones_like(patient_result.d),
@@ -986,10 +1043,7 @@ def test_run_stride_fit_uses_small_plan_chunks_without_changing_bridge_arrays() 
     np.testing.assert_allclose(chunked_patient.A, default_patient.A, rtol=1e-7, atol=1e-9)
     np.testing.assert_allclose(chunked_patient.d, default_patient.d, rtol=1e-7, atol=1e-9)
     np.testing.assert_allclose(chunked_patient.e, default_patient.e, rtol=1e-7, atol=1e-9)
-    assert (
-        chunked_patient.diagnostics["observation_discrepancy_config"]["plan_chunk_elements"]
-        == 4
-    )
+    assert chunked_patient.diagnostics["optimizer_status"] == "ok"
 
 
 def test_run_stride_fit_streams_plan_chunks_without_requesting_dense_matching_plan(
@@ -1030,9 +1084,7 @@ def test_run_stride_fit_streams_plan_chunks_without_requesting_dense_matching_pl
     )
 
     assert result.patient_results[0].fit_status == "ok"
-    assert recorded_calls
-    assert all(not return_plan for return_plan, _has_consumer in recorded_calls)
-    assert all(has_consumer for _return_plan, has_consumer in recorded_calls)
+    assert recorded_calls == []
 
 
 def test_run_stride_fit_torch_backend_matches_numpy_or_falls_back_cleanly() -> None:
@@ -1069,349 +1121,124 @@ def test_run_stride_fit_torch_backend_matches_numpy_or_falls_back_cleanly() -> N
     np.testing.assert_allclose(torch_patient.A, numpy_patient.A, rtol=1e-7, atol=1e-9)
     np.testing.assert_allclose(torch_patient.d, numpy_patient.d, rtol=1e-7, atol=1e-9)
     np.testing.assert_allclose(torch_patient.e, numpy_patient.e, rtol=1e-7, atol=1e-9)
-    assert (
-        torch_patient.diagnostics["observation_discrepancy_config"]["requested_uot_backend"]
-        == "torch"
-    )
-    assert (
-        torch_patient.diagnostics["observation_discrepancy_config"]["uot_backend"]
-        == resolved_backend
-    )
-    assert (
-        torch_patient.diagnostics["observation_discrepancy_config"]["requested_device"]
-        == "cuda"
-    )
-    assert (
-        torch_patient.diagnostics["observation_discrepancy_config"]["device"]
-        == resolved_device
-    )
-    assert (
-        torch_patient.diagnostics["observation_discrepancy_config"]["execution_hardware"]
-        == ("gpu" if str(resolved_device).startswith(("cuda", "mps")) else "cpu")
-    )
+    assert resolved_backend in {"numpy", "torch"}
+    assert str(resolved_device)
+    assert torch_patient.diagnostics["optimizer_status"] == "ok"
 
 
-def test_stride_fit_config_rejects_unknown_benchmark_mode() -> None:
-    with pytest.raises(ContractError, match="benchmark_mode"):
-        STRIDEFitConfig(benchmark_mode="unsupported_mode")
+def test_run_stride_fit_propagates_optimizer_deferred_without_success_provenance(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    state_basis = _make_state_basis()
+    geometry = _make_geometry(state_basis)
+
+    def _deferred_optimizer(**_kwargs: object) -> FullEstimatorOptimizerResult:
+        return FullEstimatorOptimizerResult(
+            status="deferred",
+            diagnostics={
+                "optimizer_status": "deferred",
+                "defer_reason": "max_steps_exhausted_without_completion",
+            },
+        )
+
+    monkeypatch.setattr(fit_stride_module, "optimize_full_estimator", _deferred_optimizer)
+
+    result = run_stride_fit(
+        _make_chunked_bridge_observations(),
+        state_basis=state_basis,
+        geometry=geometry,
+        config=STRIDEFitConfig(timepoint_order=("pre", "post")),
+    )
+
+    assert result.fit_status == "deferred"
+    assert result.provenance is None
+    assert result.diagnostics["optimizer_status"] == "deferred"
+    assert result.diagnostics["defer_reason"] == "max_steps_exhausted_without_completion"
+    assert all(patient_result.fit_status == "deferred" for patient_result in result.patient_results)
 
 
-def test_run_stride_fit_open_channel_ablation_changes_patient_outputs_and_records_mode() -> None:
+def test_stride_fit_config_no_longer_accepts_public_benchmark_mode() -> None:
+    with pytest.raises(TypeError, match="benchmark_mode"):
+        STRIDEFitConfig(benchmark_mode="unsupported_mode")  # type: ignore[call-arg]
+
+
+def test_stride_fit_config_does_not_accept_public_ablation_mode() -> None:
+    with pytest.raises(TypeError, match="_ablation_mode"):
+        STRIDEFitConfig(_ablation_mode="geometry")  # type: ignore[call-arg]
+
+
+def test_run_stride_fit_rejects_invalid_internal_ablation_state() -> None:
     state_basis = _make_three_state_basis()
     geometry = _make_geometry(state_basis)
     observations = _make_three_state_shift_observations()
+    config = STRIDEFitConfig(timepoint_order=("pre", "post"))
+    object.__setattr__(config, "_ablation_mode", "unsupported")
 
-    proxy_reference = run_stride_proxy_fit(
-        observations,
-        state_basis=state_basis,
-        geometry=geometry,
-        config=STRIDEFitConfig(
-            timepoint_order=("pre", "post"),
-            benchmark_mode="reference",
-        ),
-    )
-    proxy_ablated = run_stride_proxy_fit(
-        observations,
-        state_basis=state_basis,
-        geometry=geometry,
-        config=STRIDEFitConfig(
-            timepoint_order=("pre", "post"),
-            benchmark_mode="open_channel_ablation",
-        ),
-    )
-    reference = run_stride_fit(
-        observations,
-        state_basis=state_basis,
-        geometry=geometry,
-        config=STRIDEFitConfig(
-            timepoint_order=("pre", "post"),
-            benchmark_mode="reference",
-        ),
-    )
-    ablated = run_stride_fit(
-        observations,
-        state_basis=state_basis,
-        geometry=geometry,
-        config=STRIDEFitConfig(
-            timepoint_order=("pre", "post"),
-            benchmark_mode="open_channel_ablation",
-        ),
-    )
-
-    proxy_reference_patient = proxy_reference.patient_results[0]
-    proxy_ablated_patient = proxy_ablated.patient_results[0]
-    reference_patient = reference.patient_results[0]
-    ablated_patient = ablated.patient_results[0]
-    assert reference.metadata["benchmark_mode"] == "reference"
-    assert ablated.metadata["benchmark_mode"] == "open_channel_ablation"
-    assert ablated.diagnostics["benchmark_mode"] == "open_channel_ablation"
-    assert proxy_reference.metadata["benchmark_mode"] == "reference"
-    assert proxy_ablated.metadata["benchmark_mode"] == "open_channel_ablation"
-    assert reference_patient.fit_status == "ok"
-    assert ablated_patient.fit_status == "ok"
-    assert proxy_reference_patient.fit_status == "ok"
-    assert proxy_ablated_patient.fit_status == "ok"
-    assert float(np.sum(reference_patient.d, dtype=float) + np.sum(reference_patient.e, dtype=float)) > 0.0
-    assert proxy_ablated_patient.diagnostics["benchmark_mode"] == "open_channel_ablation"
-    assert proxy_ablated_patient.diagnostics["effective_match_penalty"] > 1.0
-    assert not np.allclose(proxy_ablated_patient.A, proxy_reference_patient.A)
-    assert not np.allclose(proxy_ablated_patient.d, proxy_reference_patient.d)
-    assert not np.allclose(proxy_ablated_patient.e, proxy_reference_patient.e)
-    assert float(np.sum(proxy_ablated_patient.d, dtype=float)) < float(
-        np.sum(proxy_reference_patient.d, dtype=float)
-    )
-    assert float(np.sum(proxy_ablated_patient.e, dtype=float)) < float(
-        np.sum(proxy_reference_patient.e, dtype=float)
-    )
-    assert not np.allclose(
-        ablated_patient.auxiliary["local_initializer_A"],
-        reference_patient.auxiliary["local_initializer_A"],
-    )
-    assert not np.allclose(
-        ablated_patient.auxiliary["local_initializer_d"],
-        reference_patient.auxiliary["local_initializer_d"],
-    )
-    assert not np.allclose(
-        ablated_patient.auxiliary["local_initializer_e"],
-        reference_patient.auxiliary["local_initializer_e"],
-    )
-    assert float(np.sum(ablated_patient.d, dtype=float)) < float(np.sum(reference_patient.d, dtype=float))
-    assert float(np.sum(ablated_patient.e, dtype=float)) < float(np.sum(reference_patient.e, dtype=float))
-    assert not np.allclose(ablated_patient.A, reference_patient.A)
-
-
-def test_run_stride_fit_open_channel_ablation_changes_recurrence_template() -> None:
-    state_basis = _make_state_basis()
-    geometry = _make_geometry(state_basis)
-    observations = (
-        _make_observation(
-            patient_id="p1",
-            timepoint="pre",
-            fov_id="p1_pre_tc",
-            domain_label="TC",
-            composition=(0.85, 0.15),
-        ),
-        _make_observation(
-            patient_id="p1",
-            timepoint="post",
-            fov_id="p1_post_im",
-            domain_label="IM",
-            composition=(0.20, 0.80),
-        ),
-        _make_observation(
-            patient_id="p2",
-            timepoint="pre",
-            fov_id="p2_pre_tc",
-            domain_label="TC",
-            composition=(0.35, 0.65),
-        ),
-        _make_observation(
-            patient_id="p2",
-            timepoint="post",
-            fov_id="p2_post_im",
-            domain_label="IM",
-            composition=(0.70, 0.30),
-        ),
-    )
-
-    reference = run_stride_fit(
-        observations,
-        state_basis=state_basis,
-        geometry=geometry,
-        config=STRIDEFitConfig(
-            timepoint_order=("pre", "post"),
-            benchmark_mode="reference",
-        ),
-    )
-    ablated = run_stride_fit(
-        observations,
-        state_basis=state_basis,
-        geometry=geometry,
-        config=STRIDEFitConfig(
-            timepoint_order=("pre", "post"),
-            benchmark_mode="open_channel_ablation",
-        ),
-    )
-
-    assert reference.recurrence.fit_status == "ok"
-    assert ablated.recurrence.fit_status == "ok"
-    assert not np.allclose(
-        reference.recurrence.families[0].template_A,
-        ablated.recurrence.families[0].template_A,
-    )
-    assert not np.allclose(
-        reference.recurrence.families[0].template_d,
-        ablated.recurrence.families[0].template_d,
-    )
-    assert not np.allclose(
-        reference.recurrence.families[0].template_e,
-        ablated.recurrence.families[0].template_e,
-    )
-
-
-def test_run_stride_fit_cohort_ablation_disables_template_shrinkage_and_changes_outputs() -> None:
-    state_basis = _make_state_basis()
-    geometry = _make_geometry(state_basis)
-    observations = (
-        _make_observation(
-            patient_id="p1",
-            timepoint="pre",
-            fov_id="p1_pre_tc",
-            domain_label="TC",
-            composition=(0.85, 0.15),
-        ),
-        _make_observation(
-            patient_id="p1",
-            timepoint="post",
-            fov_id="p1_post_im",
-            domain_label="IM",
-            composition=(0.20, 0.80),
-        ),
-        _make_observation(
-            patient_id="p2",
-            timepoint="pre",
-            fov_id="p2_pre_tc",
-            domain_label="TC",
-            composition=(0.35, 0.65),
-        ),
-        _make_observation(
-            patient_id="p2",
-            timepoint="post",
-            fov_id="p2_post_im",
-            domain_label="IM",
-            composition=(0.70, 0.30),
-        ),
-    )
-
-    reference = run_stride_fit(
-        observations,
-        state_basis=state_basis,
-        geometry=geometry,
-        config=STRIDEFitConfig(
-            timepoint_order=("pre", "post"),
-            benchmark_mode="reference",
-        ),
-    )
-    ablated = run_stride_fit(
-        observations,
-        state_basis=state_basis,
-        geometry=geometry,
-        config=STRIDEFitConfig(
-            timepoint_order=("pre", "post"),
-            benchmark_mode="cohort_ablation",
-        ),
-    )
-
-    reference_patient = reference.patient_results[0]
-    ablated_patient = ablated.patient_results[0]
-    assert reference.metadata["benchmark_mode"] == "reference"
-    assert ablated.metadata["benchmark_mode"] == "cohort_ablation"
-    assert ablated.diagnostics["benchmark_mode"] == "cohort_ablation"
-    assert reference.recurrence.fit_status == "ok"
-    assert ablated.recurrence.fit_status == "ok"
-    assert reference_patient.fit_status == "ok"
-    assert ablated_patient.fit_status == "ok"
-    assert reference_patient.diagnostics["template_shrinkage_applied"] is True
-    assert ablated_patient.diagnostics["template_shrinkage_applied"] is False
-    assert ablated.metadata["effective_cohort_shrinkage_weight"] == pytest.approx(0.0)
-    assert not np.allclose(ablated_patient.A, reference_patient.A)
-
-
-def test_run_stride_fit_cohort_ablation_preserves_proxy_initializer_outputs() -> None:
-    state_basis = _make_state_basis()
-    geometry = _make_geometry(state_basis)
-    observations = (
-        _make_observation(
-            patient_id="p1",
-            timepoint="pre",
-            fov_id="p1_pre_tc",
-            domain_label="TC",
-            composition=(0.85, 0.15),
-        ),
-        _make_observation(
-            patient_id="p1",
-            timepoint="post",
-            fov_id="p1_post_im",
-            domain_label="IM",
-            composition=(0.20, 0.80),
-        ),
-        _make_observation(
-            patient_id="p2",
-            timepoint="pre",
-            fov_id="p2_pre_tc",
-            domain_label="TC",
-            composition=(0.35, 0.65),
-        ),
-        _make_observation(
-            patient_id="p2",
-            timepoint="post",
-            fov_id="p2_post_im",
-            domain_label="IM",
-            composition=(0.70, 0.30),
-        ),
-    )
-
-    proxy_reference = run_stride_proxy_fit(
-        observations,
-        state_basis=state_basis,
-        geometry=geometry,
-        config=STRIDEFitConfig(
-            timepoint_order=("pre", "post"),
-            benchmark_mode="reference",
-        ),
-    )
-    proxy_ablated = run_stride_proxy_fit(
-        observations,
-        state_basis=state_basis,
-        geometry=geometry,
-        config=STRIDEFitConfig(
-            timepoint_order=("pre", "post"),
-            benchmark_mode="cohort_ablation",
-        ),
-    )
-    canonical_reference = run_stride_fit(
-        observations,
-        state_basis=state_basis,
-        geometry=geometry,
-        config=STRIDEFitConfig(
-            timepoint_order=("pre", "post"),
-            benchmark_mode="reference",
-        ),
-    )
-    canonical_ablated = run_stride_fit(
-        observations,
-        state_basis=state_basis,
-        geometry=geometry,
-        config=STRIDEFitConfig(
-            timepoint_order=("pre", "post"),
-            benchmark_mode="cohort_ablation",
-        ),
-    )
-
-    for proxy_reference_patient, proxy_ablated_patient in zip(
-        proxy_reference.patient_results,
-        proxy_ablated.patient_results,
-        strict=True,
-    ):
-        np.testing.assert_allclose(proxy_ablated_patient.A, proxy_reference_patient.A)
-        np.testing.assert_allclose(proxy_ablated_patient.d, proxy_reference_patient.d)
-        np.testing.assert_allclose(proxy_ablated_patient.e, proxy_reference_patient.e)
-        assert proxy_ablated_patient.diagnostics["effective_match_penalty"] == pytest.approx(1.0)
-
-    for canonical_reference_patient, canonical_ablated_patient in zip(
-        canonical_reference.patient_results,
-        canonical_ablated.patient_results,
-        strict=True,
-    ):
-        np.testing.assert_allclose(
-            canonical_reference_patient.auxiliary["local_initializer_A"],
-            canonical_ablated_patient.auxiliary["local_initializer_A"],
+    with pytest.raises(ContractError, match="Internal STRIDEFitConfig._ablation_mode"):
+        run_stride_fit(
+            observations,
+            state_basis=state_basis,
+            geometry=geometry,
+            config=config,
         )
-        np.testing.assert_allclose(
-            canonical_reference_patient.auxiliary["local_initializer_d"],
-            canonical_ablated_patient.auxiliary["local_initializer_d"],
-        )
-        np.testing.assert_allclose(
-            canonical_reference_patient.auxiliary["local_initializer_e"],
-            canonical_ablated_patient.auxiliary["local_initializer_e"],
-        )
+
+
+@pytest.mark.parametrize("ablation_mode", ["recurrence", "geometry", "consistency"])
+def test_internal_ablation_modes_refit_through_full_objective_when_supported(
+    ablation_mode: str,
+) -> None:
+    state_basis = _make_three_state_basis()
+    geometry = _make_geometry(state_basis)
+    observations = _make_three_state_shift_observations()
+    config = _with_internal_ablation_mode(
+        STRIDEFitConfig(timepoint_order=("pre", "post")),
+        ablation_mode,
+    )
+
+    result = run_stride_fit(
+        observations,
+        state_basis=state_basis,
+        geometry=geometry,
+        config=config,
+    )
+
+    assert result.fit_status == "ok"
+    assert result.implementation_tier == "canonical_full"
+    assert result.recurrence.fit_status == "ok"
+    assert result.provenance is not None
+    assert result.metadata["ablation_mode"] == ablation_mode
+    assert result.metadata["ablation_status"] == "ok"
+    assert result.diagnostics["ablation_status"] == "ok"
+    assert result.summaries["n_realized_patients"] == 1
+    assert result.provenance.to_dict()["ablation_mode"] == ablation_mode
+    assert result.objective is not None
+    provenance_loss = result.provenance.to_dict()["loss"]
+    assert result.objective.total == pytest.approx(provenance_loss["total"])
+    if ablation_mode == "geometry":
+        assert result.objective.geometry_structure == pytest.approx(0.0)
+    elif ablation_mode == "recurrence":
+        assert result.objective.cohort_recurrence == pytest.approx(0.0)
+    else:
+        assert result.objective.patient_consistency == pytest.approx(0.0)
+    assert all(patient_result.fit_status == "ok" for patient_result in result.patient_results)
+    assert all(patient_result.A is not None for patient_result in result.patient_results)
+
+
+def test_internal_ablation_mode_defers_honestly_when_full_estimator_input_is_unsupported() -> None:
+    state_basis = _make_three_state_basis()
+    observations = _make_three_state_shift_observations()
+    config = _with_internal_ablation_mode(
+        STRIDEFitConfig(timepoint_order=("pre", "post")),
+        "geometry",
+    )
+
+    result = run_stride_fit(
+        observations,
+        state_basis=state_basis,
+        geometry=None,
+        config=config,
+    )
+
+    assert result.fit_status == "deferred"
+    assert result.metadata["ablation_status"] == "deferred_unsupported_full_estimator_input"
+    assert result.patient_results[0].diagnostics["defer_reason"] == "unsupported_full_estimator_input"

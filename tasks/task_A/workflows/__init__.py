@@ -5,7 +5,8 @@ when only a subset of workflows is needed, and to allow individual modules
 to be invoked via ``python -m tasks.task_A.workflows.<name>``.
 
 The public surface keeps only the Stage 0 prepare path, stride adapter, and
-the descriptive atlas plus block-local workflows visible.
+block-local workflows visible. The descriptive atlas lives under
+``tasks.task_A.descriptive``.
 """
 from __future__ import annotations
 
@@ -22,7 +23,6 @@ __all__ = [
     "resolve_proxy_history_inputs",
     "validate_task_a_result_packet",
     "prepare_task_a_stage0_mapping",
-    "write_task_a_descriptive_atlas",
     "write_canonical_step3_review",
     "write_task_a_result_packet",
     "run_block0_workflow",
@@ -33,7 +33,6 @@ __all__ = [
 
 _LAZY_IMPORTS: dict[str, str] = {
     "check_task_a_pre_block0_data_suitability": ".check_data_suitability",
-    "write_task_a_descriptive_atlas": ".descriptive_atlas",
     "write_task_a_result_packet": ".package_results",
     "validate_task_a_result_packet": ".package_results",
     "resolve_canonical_step3_inputs": ".review_canonical_step3",

@@ -92,8 +92,6 @@ def _write_prepare_bundle(base: Path, *, patient_id: str = "P01") -> Path:
 
 
 def _write_atlas_bundle(base: Path) -> Path:
-    prepare_manifest_path = _write_prepare_bundle(base / "prepare")
-    prepare_payload = json.loads(prepare_manifest_path.read_text(encoding="utf-8"))
     atlas_dir = base / "atlas"
     _write_csv(
         atlas_dir / "tables" / "community_cell_subtype_row_fractions.csv",
@@ -135,14 +133,14 @@ def _write_atlas_bundle(base: Path) -> Path:
         {
             "relative_path": "task_a_descriptive_atlas_manifest.json",
             "artifact_kind": "manifest",
-            "category": "provenance",
+            "category": "atlas_metadata",
             "format": "json",
-            "description": "Task A descriptive atlas provenance manifest",
+            "description": "Task A descriptive atlas manifest",
         },
         {
             "relative_path": "task_a_descriptive_atlas_output_index.csv",
             "artifact_kind": "index",
-            "category": "provenance",
+            "category": "atlas_metadata",
             "format": "csv",
             "description": "Machine-readable index of atlas outputs",
         },
@@ -186,20 +184,16 @@ def _write_atlas_bundle(base: Path) -> Path:
             "atlas_role": "descriptive_only",
             "claim_scope": "descriptive_only",
             "scientific_interpretation_allowed": False,
-            "artifact_state": "contract_passed",
-            "block0_gate_status": "not_passed",
-            "implementation_tier": "descriptive_context",
-            "evidence_lineage": "canonical_rerun",
-            "prepare_manifest_path": str(prepare_manifest_path),
-            "mapping_manifest_path": str(prepare_payload["mapping_manifest"]),
             "config_path": str(ROOT / "tasks" / "task_A" / "config.yaml"),
-            "stage0_h5ad": str(base / "prepare" / "fixture.h5ad"),
-            "run_scope": "full_cohort_alignment_check",
+            "stage0_h5ad": str(base / "stage0.h5ad"),
             "community_id_key": "proto_id",
             "cell_subtype_key": "cell_type",
             "domain_key": "compartment",
             "fov_key": "roi_id",
+            "patient_id_key": "patient_id",
             "spatial_key": "spatial",
+            "configured_community_ids": [0],
+            "observed_community_ids": [0],
             "output_index": str(output_index_path),
         },
     )

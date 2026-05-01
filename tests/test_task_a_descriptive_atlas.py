@@ -17,44 +17,35 @@ if str(ROOT) not in sys.path:
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from stride.errors import ContractError
-
 ANNDATA_AVAILABLE = importlib.util.find_spec("anndata") is not None
 pytestmark = pytest.mark.skipif(not ANNDATA_AVAILABLE, reason="anndata not installed")
 
+TASK_CONFIG = ROOT / "tasks" / "task_A" / "config.yaml"
 
-def _write_prepare_manifest(
-    tmp_path: Path,
-    *,
-    patient_ids: tuple[str, ...] | None = None,
-) -> tuple[Path, dict[str, object]]:
-    from tasks.task_A.workflows.prepare import prepare_task_a_stage0_mapping
+
+def _write_stage0_fixture(tmp_path: Path) -> Path:
     from tests.helpers_task_a_fixture import write_task_a_fixture
 
-    stage0_path = write_task_a_fixture(tmp_path / "stage0.h5ad")
-    prepare_dir = tmp_path / "prepare"
-    manifest = prepare_task_a_stage0_mapping(
-        config_path=ROOT / "tasks" / "task_A" / "config.yaml",
-        data_path=stage0_path,
-        output_dir=prepare_dir,
-        patient_ids=patient_ids,
-    )
-    return prepare_dir / "task_a_prepare_manifest.json", manifest
+    return write_task_a_fixture(tmp_path / "stage0.h5ad")
 
 
-def test_descriptive_atlas_workflow_is_exported() -> None:
+def test_descriptive_atlas_is_stage0_entrypoint_not_workflow_export() -> None:
+    import tasks.task_A.descriptive
     import tasks.task_A.workflows
 
-    assert hasattr(tasks.task_A.workflows, "write_task_a_descriptive_atlas")
+    assert hasattr(tasks.task_A.descriptive, "write_task_a_descriptive_atlas")
+    assert not hasattr(tasks.task_A.workflows, "write_task_a_descriptive_atlas")
 
 
-def test_descriptive_atlas_writes_manifest_and_index(tmp_path: Path) -> None:
-    from tasks.task_A.workflows.descriptive_atlas import write_task_a_descriptive_atlas
+def test_descriptive_atlas_writes_manifest_and_index_from_stage0(tmp_path: Path) -> None:
+    from tests.helpers_task_a_fixture import K_FULL
+    from tasks.task_A.descriptive import write_task_a_descriptive_atlas
 
-    prepare_manifest_path, _prepare_manifest = _write_prepare_manifest(tmp_path)
+    stage0_path = _write_stage0_fixture(tmp_path)
     output_dir = tmp_path / "atlas"
     manifest = write_task_a_descriptive_atlas(
-        prepare_manifest_path=prepare_manifest_path,
+        config_path=TASK_CONFIG,
+        stage0_h5ad=stage0_path,
         output_dir=output_dir,
         max_overlay_communities=2,
     )
@@ -67,11 +58,33 @@ def test_descriptive_atlas_writes_manifest_and_index(tmp_path: Path) -> None:
     written_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     assert manifest["atlas_role"] == "descriptive_only"
     assert written_manifest["atlas_role"] == "descriptive_only"
+    assert written_manifest["claim_scope"] == "descriptive_only"
     assert written_manifest["scientific_interpretation_allowed"] is False
-    assert written_manifest["artifact_state"] == "contract_passed"
-    assert written_manifest["run_scope"] == "full_cohort_alignment_check"
+    assert written_manifest["config_path"] == str(TASK_CONFIG.resolve())
+    assert written_manifest["stage0_h5ad"] == str(stage0_path.resolve())
+    assert written_manifest["patient_id_key"] == "patient_id"
+    assert written_manifest["fov_key"] == "roi_id"
+    assert written_manifest["domain_key"] == "compartment"
+    assert written_manifest["cell_subtype_key"] == "cell_type"
+    assert written_manifest["community_id_key"] == "proto_id"
+    assert written_manifest["spatial_key"] == "spatial"
+    assert written_manifest["configured_community_ids"] == list(range(K_FULL))
+    assert written_manifest["observed_community_ids"] == list(range(8))
+    assert written_manifest["patient_ids"] == ["P01", "P02"]
     assert written_manifest["n_patients"] == 2
     assert written_manifest["n_observed_communities"] == 8
+
+    removed_manifest_fields = {
+        "artifact_state",
+        "block0_gate_status",
+        "prepare_manifest_path",
+        "mapping_manifest_path",
+        "fit_surface",
+        "core_fit_dry_run",
+        "implementation_tier",
+        "evidence_lineage",
+    }
+    assert removed_manifest_fields.isdisjoint(written_manifest)
 
     output_index = pd.read_csv(output_index_path)
     expected_paths = {
@@ -96,56 +109,25 @@ def test_descriptive_atlas_writes_manifest_and_index(tmp_path: Path) -> None:
         assert (output_dir / relative_path).exists(), f"Indexed atlas artifact missing: {relative_path}"
 
 
-def test_descriptive_atlas_rejects_missing_prepare_manifest_fields(tmp_path: Path) -> None:
-    from tasks.task_A.workflows.descriptive_atlas import write_task_a_descriptive_atlas
-
-    prepare_manifest_path, _prepare_manifest = _write_prepare_manifest(tmp_path)
-    broken_path = tmp_path / "broken_prepare_manifest.json"
-    payload = json.loads(prepare_manifest_path.read_text(encoding="utf-8"))
-    payload.pop("mapping_manifest")
-    broken_path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
-
-    with pytest.raises(ContractError, match="missing required fields"):
-        write_task_a_descriptive_atlas(
-            prepare_manifest_path=broken_path,
-            output_dir=tmp_path / "atlas_broken",
-        )
-
-
-def test_descriptive_atlas_rejects_non_descriptive_prepare_manifest(tmp_path: Path) -> None:
-    from tasks.task_A.workflows.descriptive_atlas import write_task_a_descriptive_atlas
-
-    prepare_manifest_path, _prepare_manifest = _write_prepare_manifest(tmp_path)
-    dishonest_path = tmp_path / "dishonest_prepare_manifest.json"
-    payload = json.loads(prepare_manifest_path.read_text(encoding="utf-8"))
-    payload["scientific_interpretation_allowed"] = True
-    dishonest_path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
-
-    with pytest.raises(ContractError, match="scientific_interpretation_allowed=false"):
-        write_task_a_descriptive_atlas(
-            prepare_manifest_path=dishonest_path,
-            output_dir=tmp_path / "atlas_dishonest",
-        )
-
-
 def test_descriptive_atlas_subset_and_overlay_selection_are_deterministic(tmp_path: Path) -> None:
-    from tasks.task_A.workflows.descriptive_atlas import write_task_a_descriptive_atlas
+    from tasks.task_A.descriptive import write_task_a_descriptive_atlas
 
-    subset_manifest_path, _prepare_manifest = _write_prepare_manifest(tmp_path / "subset", patient_ids=("P01",))
+    stage0_path = _write_stage0_fixture(tmp_path)
     subset_output_dir = tmp_path / "atlas_subset"
     subset_written = write_task_a_descriptive_atlas(
-        prepare_manifest_path=subset_manifest_path,
+        config_path=TASK_CONFIG,
+        stage0_h5ad=stage0_path,
         output_dir=subset_output_dir,
+        patient_ids=("P01",),
         max_overlay_communities=2,
     )
-    assert subset_written["run_scope"] == "patient_subset"
-    assert subset_written["patient_subset"] == ["P01"]
+    assert subset_written["patient_ids"] == ["P01"]
     assert subset_written["n_patients"] == 1
 
-    full_manifest_path, _prepare_manifest = _write_prepare_manifest(tmp_path / "full")
     full_output_dir = tmp_path / "atlas_full"
     write_task_a_descriptive_atlas(
-        prepare_manifest_path=full_manifest_path,
+        config_path=TASK_CONFIG,
+        stage0_h5ad=stage0_path,
         output_dir=full_output_dir,
         max_overlay_communities=2,
     )
@@ -165,3 +147,55 @@ def test_descriptive_atlas_subset_and_overlay_selection_are_deterministic(tmp_pa
     assert selection.loc[1, "domain_label"] == "IM"
     assert selection.loc[1, "fov_id"] == "P01_IM_02"
     assert selection.loc[1, "community_fraction_in_roi"] == pytest.approx(0.75)
+
+
+def test_descriptive_atlas_rejects_missing_requested_patient_ids(tmp_path: Path) -> None:
+    from tasks.task_A.descriptive import DescriptiveAtlasContractError, write_task_a_descriptive_atlas
+
+    stage0_path = _write_stage0_fixture(tmp_path)
+    with pytest.raises(DescriptiveAtlasContractError, match="missing.*MISSING"):
+        write_task_a_descriptive_atlas(
+            config_path=TASK_CONFIG,
+            stage0_h5ad=stage0_path,
+            output_dir=tmp_path / "atlas_missing_patient",
+            patient_ids=("P01", "MISSING"),
+            max_overlay_communities=1,
+        )
+
+
+def test_descriptive_atlas_rejects_unconfigured_stage0_community_ids(tmp_path: Path) -> None:
+    import anndata as ad
+    from tests.helpers_task_a_fixture import K_FULL
+    from tasks.task_A.descriptive import DescriptiveAtlasContractError, write_task_a_descriptive_atlas
+
+    stage0_path = _write_stage0_fixture(tmp_path)
+    adata = ad.read_h5ad(stage0_path)
+    adata.obs.loc[adata.obs.index[0], "proto_id"] = K_FULL
+    invalid_stage0_path = tmp_path / "stage0_invalid_community.h5ad"
+    adata.write_h5ad(invalid_stage0_path)
+
+    with pytest.raises(DescriptiveAtlasContractError, match="unconfigured.*community.*25"):
+        write_task_a_descriptive_atlas(
+            config_path=TASK_CONFIG,
+            stage0_h5ad=invalid_stage0_path,
+            output_dir=tmp_path / "atlas_invalid_community",
+            max_overlay_communities=1,
+        )
+
+
+def test_descriptive_package_has_no_stride_or_prepare_import_boundary() -> None:
+    package_root = ROOT / "tasks" / "task_A" / "descriptive"
+    combined = "\n".join(
+        path.read_text(encoding="utf-8")
+        for path in sorted(package_root.glob("*.py"))
+    )
+    forbidden_tokens = {
+        "from stride",
+        "import stride",
+        "fit_stride",
+        "prepare_task_a_stage0_mapping",
+        "core_fit_dry_run",
+        "load_task_a_dataset_handle",
+    }
+    for token in forbidden_tokens:
+        assert token not in combined

@@ -43,7 +43,16 @@ def test_design_freeze_surface_registry_freezes_task_a_entrypoints() -> None:
 
     atlas_surface = TASK_A_SURFACE_SPEC_BY_NAME["write_task_a_descriptive_atlas"]
     assert atlas_surface.execution_status == "executable"
-    assert atlas_surface.emitted_artifact_states == ("scaffold_active", "contract_passed")
+    assert atlas_surface.owner == "tasks.task_A.descriptive"
+    assert atlas_surface.consumes == (
+        "task-config",
+        "stage0-h5ad",
+        "output-dir",
+        "optional patient-id selectors",
+        "optional max-overlay-communities",
+    )
+    assert atlas_surface.emitted_artifact_states == ()
+    assert "Consume Step 1 prepare artifacts as hard inputs" in atlas_surface.does_not_do
     assert "Emit confirmatory or inferential claims" in atlas_surface.does_not_do
 
     block0_surface = TASK_A_SURFACE_SPEC_BY_NAME["run_block0_workflow"]
@@ -105,8 +114,8 @@ def test_design_freeze_execution_graph_freezes_canonical_order_and_blockers() ->
 
     atlas_node = TASK_A_EXECUTION_NODE_BY_NAME["descriptive_atlas_context_layer"]
     assert atlas_node.execution_status == "executable"
-    assert atlas_node.hard_prerequisites == ("task_a_prepare_manifest.json",)
-    assert atlas_node.canonical_predecessors == ("step1_prepare_full_cohort",)
+    assert atlas_node.hard_prerequisites == ("stage0-h5ad", "task-config")
+    assert atlas_node.canonical_predecessors == ("stage0_artifact_builder",)
 
     block0_node = TASK_A_EXECUTION_NODE_BY_NAME["block0_locality_gate"]
     assert block0_node.execution_status == "executable"
@@ -171,13 +180,17 @@ def test_design_freeze_artifact_registry_freezes_state_sources() -> None:
     assert step1_mapping.readiness_classification == "contract_passed"
 
     atlas_manifest = TASK_A_ARTIFACT_SPEC_BY_NAME["descriptive_atlas_manifest"]
-    assert atlas_manifest.artifact_state_location == "embedded field"
-    assert atlas_manifest.allowed_artifact_states == ("scaffold_active", "contract_passed")
+    assert atlas_manifest.artifact_state_location == "none"
+    assert atlas_manifest.allowed_artifact_states == ()
+    assert atlas_manifest.readiness_classification == "descriptive_only"
     assert "atlas_role" in atlas_manifest.minimum_fields
+    assert "configured_community_ids" in atlas_manifest.minimum_fields
+    assert "observed_community_ids" in atlas_manifest.minimum_fields
 
     atlas_index = TASK_A_ARTIFACT_SPEC_BY_NAME["descriptive_atlas_output_index"]
-    assert atlas_index.artifact_state_location == "task_a_descriptive_atlas_manifest.json.artifact_state"
-    assert atlas_index.allowed_artifact_states == ("scaffold_active", "contract_passed")
+    assert atlas_index.artifact_state_location == "none"
+    assert atlas_index.allowed_artifact_states == ()
+    assert atlas_index.readiness_classification == "descriptive_only"
 
     block2_summary = TASK_A_ARTIFACT_SPEC_BY_NAME["block2_summary"]
     assert block2_summary.allowed_artifact_states == ("evidence_ready",)

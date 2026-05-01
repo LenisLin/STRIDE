@@ -60,8 +60,6 @@ raises instead of silently mixing semantics.
 - Task A may wrap frozen Stage 0 artifacts in `DatasetHandle`.
 - Task A may load or rebuild the shared basis with `BasisSpec`.
 - Task A calls canonical `fit_stride(...)` on these two-group family slices.
-- The preserved `fit_stride_proxy(...)` surface remains compatibility code only
-  and is not the authoritative Task A rerun path.
 - Task A consumes `STRIDEFitResult`, `PatientBridgeResult`, cohort-level
   recurrence exports, and optional bootstrap uncertainty only through
   task-local adapters and summaries.

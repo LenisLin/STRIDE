@@ -6,13 +6,16 @@ This file records the current live STRIDE repository state.
 
 - STRIDE is the live project and scientific identity.
 - `src/stride/` is the canonical task-insensitive core package and live
-  first-pass implementation surface.
+  first-pass full-estimator implementation surface.
 - `tasks/` owns task-specific workflows, benchmark helpers, and operational
   task documentation.
 - Current uncertainty means bootstrap/sampling-variance uncertainty over
   fitted patient relation outputs.
 - `stride.api.fit.fit_stride(...)` is the formal full-estimator contract
   surface for manuscript-level STRIDE.
+- The current `fit_stride(...)` code path contains a bounded PyTorch/AdamW
+  full-estimator implementation for supported inputs, with explicit
+  optimizer/status surfaces for unsupported or numerically incomplete fits.
 - Source/target declaration is a task-layer input; the estimator remains
   task-insensitive once explicit comparison inputs are passed.
 
@@ -31,19 +34,45 @@ The active STRIDE story is stable at the design level:
 - the canonical observation layer is domain-stratified bag-of-FOV comparison,
 - domain remains an observation-layer stratum,
 - `L_obs` is fixed at object/scalar-role level as task-resolved source/target
-  evidence-block comparison with the canonical `D_obs^UOT-v1` observation
-  discrepancy operator and `C_norm = C_raw / s_C`,
+  evidence-block comparison with the canonical
+  `D_obs^BalancedSinkhornDivergence-v1` observation discrepancy operator,
+  `C_norm = C_raw / s_C`, and fixed `G_norm = G / s_G_init`,
+- `D_obs` is the fixed operator inside `L_obs`, not a sixth loss term or an
+  independently weighted component,
+- `y_hat_f = normalize(v_source_f @ A_p + e_p)` defines the predicted
+  target-side FOV vector before FOV-bag comparison,
+- canonical `L_obs` is torch-native, `float64`, log-domain, differentiable,
+  balanced, and debiased; open behavior is expressed only by fitted `d/e`,
 - the frozen full-estimator objective skeleton is
   `L_total = (1 - alpha) * L_local + alpha * L_regularization`,
+- the frozen group-internal means are
+  `L_local = mean(normalized_L_obs, normalized_L_open, normalized_L_geometry)`
+  and
+  `L_regularization = mean(normalized_L_consistency, normalized_L_recurrence)`,
 - default `alpha = 0.5`,
 - `alpha` sensitivity grids are optional diagnostics,
-- component losses are normalized by baseline scales from deterministic
-  identity-plus-small-open initialization with
+- `L_geometry` is a fixed normalized component over raw canonical `A_p` using
+  `L_geometry_raw(p) = (1 / K) * sum_i sum_j A_p[i,j] * C_norm[i,j]`, all
+  `K` source rows, simple mean over valid fitted patients, and no separate
+  geometry weight,
+- `C_raw/C_norm` must be finite, nonnegative, symmetric `[K, K]` state
+  geometry with diagonal `0`; `s_C` is the median of positive finite
+  off-diagonal `C_raw` entries and invalid scale fails the contract,
+- except for open, component losses are normalized by
+  `scale_c = max(raw_L_c(theta_init), epsilon_norm)` and
+  `normalized_L_c = raw_L_c(theta) / scale_c`, where
+  `theta_init` is deterministic identity-plus-small-open initialization with
   `delta_init = min(0.05, 1 / (K + 1))`, `A_init = (1 - delta_init) * I_K`,
   `d_init = delta_init * 1_K`, and
-  `e_init = (delta_init / K) * 1_K`, with epsilon floors for near-zero scales,
+  `e_init = (delta_init / K) * 1_K`; `epsilon_norm = 1e-2` is a
+  dimensionless `float64` full-estimator loss-normalization floor,
 - `L_open` is fixed-scale L1 open-channel usage complexity over fitted `d_p`
   and `e_p`: `mean(d)+mean(e)` with scale `1`,
+- full-estimator ablations keep fixed group denominators and do not re-average
+  active terms; geometry ablation uses
+  `(normalized_L_obs + normalized_L_open + 0) / 3`, recurrence ablation uses
+  `(normalized_L_consistency + 0) / 2`, and consistency ablation uses
+  `(0 + normalized_L_recurrence) / 2`,
 - `L_consistency` measures block-level support dispersion across resolved
   evidence blocks and returns `consistency_status = "insufficient_blocks"`
   with zero raw loss when fewer than two blocks are available,
@@ -66,76 +95,66 @@ Supporting core method docs are:
 
 ## Live Implementation Surface
 
-- Frozen next implementation target: `fit_stride(...)` is the manuscript-level
-  full STRIDE estimator surface for objective-driven fitting of `A_p`, `d_p`,
-  and `e_p` with compact provenance.
-- The current first-pass patient-relation implementation covers a narrower
-  supported configuration: uniform-mass inputs with exactly two ordered groups
-  and explicit deferred status for unsupported configurations.
-- The current recurrence implementation is a conservative first-pass
-  consensus-template estimator with explicit deferred status when patient
-  support is insufficient.
-- Next implementation targets include feasible parameterization for
-  `[A_i,* , d_i]` simplex rows with bounded `e`, deterministic
-  identity-plus-small-open initialization, composition-scale post
-  reconstruction, a single global objective fit, compact provenance, and
-  cohort consensus recurrence feedback.
+- `fit_stride(...)` is the manuscript-level full STRIDE estimator surface for
+  objective-driven fitting of `A_p`, `d_p`, and `e_p` with compact
+  successful-fit provenance.
+- The supported first-pass full-estimator path uses PyTorch/AdamW over a
+  constrained parameterization of source-row `[A_i,* , d_i]` simplexes and
+  bounded `e`, deterministic identity-plus-small-open initialization,
+  composition-scale post reconstruction, fixed component normalization, and the
+  canonical `D_obs^BalancedSinkhornDivergence-v1` observation discrepancy
+  operator.
+- The supported first-pass input configuration is uniform-mass patient inputs
+  with exactly two ordered groups per patient and valid shared-state geometry.
+  Unsupported full-estimator requests receive explicit non-`ok` status, and
+  non-ablation compatibility routes that fall back to the local initializer are
+  not evidence that the full objective path successfully fit.
+- Successful full-estimator fits emit compact `stride_fit_provenance.v1`
+  records with loss raw/scale/normalized/floor values, optimizer protocol,
+  observation backend configuration, state-geometry normalization, recurrence
+  support/dispersion, and initialization metadata.
+- Internal full-estimator ablations are recurrence, geometry, and consistency
+  refits. They use fixed group denominators and do not reweight retained
+  objective terms.
+- The current recurrence implementation provides single cohort consensus
+  recurrence outputs and explicit deferred status when patient support is
+  insufficient.
 - Task A Block 0-2 workflows may call `fit_stride(...)` as part of first-pass
-  validation. Full-estimator completion is tracked by the implementation
-  targets above.
+  validation. Historical outputs that predate this implementation remain
+  proxy/history unless rerun through the current contract.
 - The Task A internal Block 3 rebuild package is the current method-validation
   implementation carrier for semisynthetic generator validation, baseline
   comparison, and ablation studies. Its `stride_reference` target is the
   formal `fit_stride(...)` frozen reference configuration, with task adapters
   limited to input conversion and comparison-plan instantiation.
 
-## Deferred Work
+## Remaining Engineering Work
 
-- Implementation of canonical `L_obs` scalar/provenance and tests for
-  observation diagnostics, including cost normalization, backend version, and
-  Sinkhorn/UOT status handling recorded in provenance.
-- Implementation of deterministic identity-plus-small-open initialization with
-  the fixed `delta_init = min(0.05, 1 / (K + 1))` formula.
-- Implementation of the canonical PyTorch/AdamW optimizer protocol,
-  `weight_decay = 0.0`, optional fixed scheduler provenance, and convergence
-  criteria.
-- Alignment of the dependency/runtime surface with the PyTorch/AdamW optimizer
-  contract, including explicit optimizer availability, status, and failure
-  provenance when the canonical optimizer cannot be executed.
-- Implementation of single cohort consensus recurrence outputs, dispersion,
-  and fit status.
-- Implementation of bounded `e_p` parameterization.
-- Implementation of the composition-scale post reconstruction form.
-- Implementation of open-channel provenance fields, including `e_bounds`,
-  `post_reconstruction_form`, and `open_channel_normalization_scale`.
-- Full objective implementation for objective-driven fitted `A_p`, `d_p`, and
-  `e_p` under the frozen objective grouping and normalization policy.
-- Compact provenance schema covering default `alpha`, any `alpha` sensitivity
-  grid, loss decomposition, normalization scales, epsilon-floor flags,
-  initialization policy, `e_bounds`, `post_reconstruction_form`,
-  `observation_comparison_plan`, `observation_discrepancy_backend`, operator
-  version, cost normalization, Sinkhorn/UOT status handling, observation
-  diagnostics when emitted, `open_channel_complexity_form`,
-  `open_channel_normalization_scale`, optimizer framework/protocol/status,
-  scheduler policy/status when used, recurrence consensus
-  support/dispersion/status, ablation mode, random seed, and convergence or
-  failure reason.
-- Task A wiring validation showing that `stride_reference` calls the formal
-  `fit_stride(...)` reference configuration and that Task A adapters only
-  convert inputs and instantiate declared comparison plans.
-- Task-pipeline expansions beyond the documented Task A operational surfaces.
-- Additional public Block 3 workflow and packet integration surfaces.
+- Broaden the full-estimator supported-input envelope beyond the first-pass
+  uniform-mass, exactly-two-ordered-group configuration.
+- Calibrate optimizer stopping criteria and runtime packaging at production
+  scale while preserving explicit non-`ok` status for numerical
+  non-completion.
+- Maintain optional detailed optimizer traces as diagnostics rather than
+  required compact provenance fields.
+- Retire or further isolate local-initializer compatibility routes after all
+  live task workflows have migrated to supported full-estimator inputs.
+- Rerun approved Task A validation surfaces and refresh result packets only
+  through the documented workflow, because historical packets remain proxy
+  history until regenerated.
+- Continue narrow tests for the public import surface, full-estimator objective,
+  optimizer/provenance, observation backend, and Task A Block 3 method wiring.
 
 ## Non-Blocking Open Points
 
-- The formal full-estimator path is frozen in the contract, but implementation
-  completion remains an open engineering item.
-- The full estimator v1 optimizer target is PyTorch/AdamW; current
-  implementation and runtime packaging still need an explicit alignment pass
-  before optimizer availability can be treated as guaranteed.
+- The supported full-estimator path is an implemented numerical optimizer path,
+  not a claim of global optimum for the non-convex objective.
+- The full estimator v1 optimizer requires PyTorch availability at runtime;
+  missing optimizer dependencies surface as explicit failures rather than
+  successful compact provenance.
 - Namespace direction and estimator completeness remain separate questions:
-  `stride` is the target architecture even when some estimators are still
-  deferred.
+  `stride` is the target architecture while input-support expansion and
+  historical-workflow migration continue.
 - Some current implementation terms still use `prototype` language where the
   design uses the broader term "shared `K`-state basis".
 - The longitudinal validator still accepts implementation-era aliases for input

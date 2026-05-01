@@ -31,11 +31,32 @@ class StateGeometry:
         return self.cost_matrix
 
 
-def build_similarity_graph(cost_matrix: np.ndarray, *, n_neighbors: int = 5) -> np.ndarray:
-    """Construct a symmetric nearest-neighbor graph on the shared state axis."""
+def _validate_geometry_cost_matrix(cost_matrix: np.ndarray) -> np.ndarray:
+    """Return a validated geometry cost matrix aligned to the shared state axis."""
     C = np.asarray(cost_matrix, dtype=float)
     if C.ndim != 2 or C.shape[0] != C.shape[1]:
         raise ContractError("cost_matrix must be square")
+    if C.shape[0] == 0:
+        raise ContractError("cost_matrix must contain at least one state")
+    if not np.isfinite(C).all():
+        raise ContractError("cost_matrix must contain only finite values")
+    if np.any(C < 0.0):
+        raise ContractError("cost_matrix must be nonnegative")
+    if not np.allclose(C, C.T, rtol=0.0, atol=1e-12):
+        raise ContractError("cost_matrix must be symmetric")
+    if not np.allclose(np.diag(C), 0.0, rtol=0.0, atol=1e-12):
+        raise ContractError("cost_matrix diagonal must be zero")
+    return C
+
+
+def _positive_off_diagonal_costs(cost_matrix: np.ndarray) -> np.ndarray:
+    off_diagonal_mask = ~np.eye(cost_matrix.shape[0], dtype=bool)
+    return cost_matrix[off_diagonal_mask & (cost_matrix > 0.0)]
+
+
+def build_similarity_graph(cost_matrix: np.ndarray, *, n_neighbors: int = 5) -> np.ndarray:
+    """Construct a symmetric nearest-neighbor graph on the shared state axis."""
+    C = _validate_geometry_cost_matrix(cost_matrix)
     if n_neighbors <= 0:
         raise ContractError("n_neighbors must be strictly positive")
 
@@ -69,24 +90,27 @@ def build_state_geometry(
         centroids_arr = np.asarray(centroids, dtype=float)
         if centroids_arr.ndim != 2:
             raise ContractError("centroids must be a 2D array")
+        if not np.isfinite(centroids_arr).all():
+            raise ContractError("centroids must contain only finite values")
         C = cdist(centroids_arr, centroids_arr, metric="euclidean").astype(float, copy=False)
     else:
         C = np.asarray(cost_matrix, dtype=float)
-        if C.ndim != 2 or C.shape[0] != C.shape[1]:
-            raise ContractError("cost_matrix must be square")
 
-    positive_costs = C[C > 0.0]
-    scale = (
-        float(cost_scale)
-        if cost_scale is not None
-        else (float(np.median(positive_costs)) if positive_costs.size > 0 else 1.0)
-    )
+    C = _validate_geometry_cost_matrix(C)
+
+    positive_costs = _positive_off_diagonal_costs(C)
+    if positive_costs.size == 0:
+        raise ContractError("cost_matrix must contain a positive off-diagonal cost")
+
+    scale = float(cost_scale) if cost_scale is not None else float(np.median(positive_costs))
     if not np.isfinite(scale) or scale <= 0.0:
         raise ContractError("cost_scale must be finite and strictly positive")
 
     adjacency = build_similarity_graph(C, n_neighbors=n_neighbors)
     similarity = np.exp(-C / scale, dtype=float) * adjacency
     resolved_state_ids = state_ids or tuple(range(C.shape[0]))
+    if len(resolved_state_ids) != C.shape[0]:
+        raise ContractError("state_ids must align to the shared K-state axis")
     return StateGeometry(
         cost_matrix=C,
         cost_scale=scale,

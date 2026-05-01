@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import importlib
+import inspect
 import subprocess
 import sys
 from pathlib import Path
+
+import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src"
@@ -20,19 +23,22 @@ def test_stride_adapter_imports_succeed_in_clean_interpreter() -> None:
             "importlib.import_module('stride.adapters.ot_sinkhorn'); "
             "observation = importlib.import_module('stride.observation'); "
             "fit_module = importlib.import_module('stride.api.fit'); "
-            "proxy_module = importlib.import_module('stride.api.proxy'); "
+            "api_module = importlib.import_module('stride.api'); "
             "workflow_module = importlib.import_module('stride.workflows.fit_stride'); "
-            "proxy_workflow_module = importlib.import_module('stride.workflows.fit_proxy'); "
             "fit_result_module = importlib.import_module('stride.outputs.fit_result'); "
             "uncertainty_module = importlib.import_module('stride.outputs.uncertainty'); "
             "assert hasattr(observation, 'build_observation_kernels'); "
             "assert hasattr(observation, 'match_observation_clouds'); "
+            "assert hasattr(api_module, 'fit_stride'); "
             "assert hasattr(fit_module, 'fit_stride'); "
-            "assert hasattr(fit_module, 'fit_stride_proxy'); "
-            "assert hasattr(proxy_module, 'fit_stride_proxy'); "
-            "assert hasattr(workflow_module, 'build_patient_bridge_inputs'); "
-            "assert hasattr(workflow_module, 'run_stride_proxy_fit'); "
-            "assert hasattr(proxy_workflow_module, 'run_stride_proxy_fit'); "
+            "assert hasattr(fit_module, 'build_patient_relation'); "
+            "assert not hasattr(fit_module, 'fit_stride_proxy'); "
+            "assert not hasattr(fit_module, 'bridge_observation_matches'); "
+            "assert hasattr(workflow_module, 'run_stride_fit'); "
+            "assert not hasattr(workflow_module, 'build_patient_bridge_inputs'); "
+            "assert not hasattr(workflow_module, 'PatientBridgeInput'); "
+            "assert not hasattr(workflow_module, 'BridgeObservationGroup'); "
+            "assert not hasattr(workflow_module, 'run_stride_proxy_fit'); "
             "assert hasattr(fit_result_module, 'PatientBridgeResult'); "
             "assert hasattr(fit_result_module, 'STRIDEFitResult'); "
             "assert hasattr(uncertainty_module, 'PatientBootstrapConfig'); "
@@ -48,7 +54,8 @@ def test_stride_package_roots_expose_only_stable_first_pass_surfaces() -> None:
     api_module = importlib.import_module("stride.api")
     outputs_module = importlib.import_module("stride.outputs")
     fit_module = importlib.import_module("stride.api.fit")
-    proxy_module = importlib.import_module("stride.api.proxy")
+    workflow_module = importlib.import_module("stride.workflows")
+    workflow_fit_module = importlib.import_module("stride.workflows.fit_stride")
     uncertainty_module = importlib.import_module("stride.outputs.uncertainty")
 
     assert set(stride_module.__all__) == {
@@ -67,7 +74,6 @@ def test_stride_package_roots_expose_only_stable_first_pass_surfaces() -> None:
 
     assert set(api_module.__all__) == {
         "BasisSpec",
-        "BridgeConfig",
         "DatasetHandle",
         "STRIDEFitConfig",
         "build_patient_relation",
@@ -78,12 +84,37 @@ def test_stride_package_roots_expose_only_stable_first_pass_surfaces() -> None:
     assert hasattr(api_module, "build_patient_relation")
     assert not hasattr(api_module, "bridge_observation_matches")
     assert not hasattr(api_module, "fit_patient_relation")
+    assert not hasattr(api_module, "fit_stride_proxy")
+    assert not hasattr(api_module, "ProxySTRIDEFitConfig")
+    assert not hasattr(api_module, "BridgeConfig")
     assert not hasattr(api_module, "PatientBridgeResult")
     assert not hasattr(api_module, "STRIDEModel")
-    assert hasattr(fit_module, "bridge_observation_matches")
-    assert hasattr(fit_module, "fit_stride_proxy")
-    assert set(proxy_module.__all__) == {"ProxySTRIDEFitConfig", "fit_stride_proxy"}
-    assert hasattr(proxy_module, "fit_stride_proxy")
+    assert set(fit_module.__all__) == {
+        "STRIDEFitConfig",
+        "build_patient_relation",
+        "fit_stride",
+    }
+    assert not hasattr(fit_module, "bridge_observation_matches")
+    assert not hasattr(fit_module, "fit_patient_relation")
+    assert not hasattr(fit_module, "fit_stride_proxy")
+    assert not hasattr(fit_module, "ProxySTRIDEFitConfig")
+    fit_signature = inspect.signature(fit_module.build_patient_relation)
+    assert "config" not in fit_signature.parameters
+    assert "relation_status" in fit_signature.parameters
+    assert "metadata" in fit_signature.parameters
+    assert "_PatientRelationAssemblyConfig" not in str(fit_signature)
+    assert set(workflow_module.__all__) == {"STRIDEFitConfig", "run_stride_fit"}
+    assert set(workflow_fit_module.__all__) == {"STRIDEFitConfig", "run_stride_fit"}
+    assert not hasattr(workflow_fit_module, "build_patient_bridge_inputs")
+    assert not hasattr(workflow_fit_module, "PatientBridgeInput")
+    assert not hasattr(workflow_fit_module, "BridgeObservationGroup")
+    assert not hasattr(workflow_fit_module, "validate_patient_bridge_input")
+    assert not hasattr(workflow_fit_module, "validate_bridge_observation_group")
+
+    with pytest.raises(ModuleNotFoundError):
+        importlib.import_module("stride.api.proxy")
+    with pytest.raises(ModuleNotFoundError):
+        importlib.import_module("stride.workflows.fit_proxy")
 
     assert set(outputs_module.__all__) == {
         "BootstrapArraySummary",
@@ -97,12 +128,18 @@ def test_stride_package_roots_expose_only_stable_first_pass_surfaces() -> None:
         "PatientBootstrapUncertaintyResult",
         "PatientRelationFitResult",
         "STRIDEBootstrapUncertaintyResult",
+        "STRIDEFitProvenance",
         "STRIDEFitResult",
+        "STRIDE_FIT_PROVENANCE_SCHEMA_VERSION",
+        "build_stride_fit_provenance",
         "validate_patient_bridge_result",
+        "validate_stride_fit_provenance",
         "validate_stride_fit_result",
         "write_r_handover",
     }
     assert hasattr(outputs_module, "PatientBridgeResult")
+    assert hasattr(outputs_module, "STRIDEFitProvenance")
+    assert hasattr(outputs_module, "build_stride_fit_provenance")
     assert hasattr(outputs_module, "STRIDEBootstrapUncertaintyResult")
     assert not hasattr(outputs_module, "bootstrap_observation_unit")
     assert not hasattr(outputs_module, "estimate_log_measurement_error")

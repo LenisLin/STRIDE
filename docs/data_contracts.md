@@ -152,7 +152,8 @@ Additional route requirements are stage-conditional:
 - `state_id` or `proto_id` are required once the route expects a realized
   shared-state assignment,
 - `cost_matrix` and an accepted `cost_scale` alias are required once the route
-  enters observation-layer matching.
+  enters observation-layer matching or full-estimator geometry/locality
+  fitting.
 
 Current first-pass canonical route:
 
@@ -231,16 +232,42 @@ where:
 Contract boundary:
 
 - domain-stratified bag-of-FOV comparison is the canonical observation layer,
-- UOT / Sinkhorn is the canonical v1 backend for the fixed, versioned,
-  auditable `D_obs^UOT-v1` operator comparing these empirical measures under
-  partial and uneven FOV coverage,
-- `L_obs_pair_raw = D_obs^UOT-v1(predicted target-side bag-of-FOV, observed target-side bag-of-FOV; C_norm)`,
-- `C_norm = C_raw / s_C`,
-- cost normalization, backend version, Sinkhorn/UOT status handling, and
-  observation diagnostics such as `D_pos/B_pos` belong to the observation-layer
-  provenance,
-- `D_pos/B_pos` are not biological `d/e` and are not independently weighted
-  loss components,
+- canonical v1 `L_obs` uses the fixed, versioned, auditable
+  `D_obs^BalancedSinkhornDivergence-v1` operator comparing predicted and
+  observed target-side FOV bags,
+- `D_obs` is a fixed operator inside `L_obs`, not a sixth loss term and not an
+  independently weighted component,
+- source-side FOV vectors are reconstructed as
+  `y_hat_f = normalize(v_source_f @ A_p + e_p)`,
+- `L_obs_pair_raw = D_obs^BalancedSinkhornDivergence-v1(predicted target FOV bag, observed target FOV bag; C_norm)`,
+- `C_norm = C_raw / s_C` remains the state/community-level cost,
+- the FOV-level ground cost is
+  `G[f,g] = debiased balanced Sinkhorn composition distance(y_hat_f, y_true_g; C_norm)`,
+- the outer loss is the debiased balanced Sinkhorn divergence between the
+  predicted target FOV bag and observed target FOV bag under
+  `G_norm = G / s_G_init`,
+- `s_G_init` is a fixed evidence-block scale computed at deterministic
+  identity-plus-small-open initialization from positive finite
+  initialization-time FOV-level costs; if no positive finite costs exist,
+  `s_G_init = 1.0` and floor usage is recorded,
+- `s_G_init` is not recomputed dynamically during optimization,
+- compact successful-fit provenance records backend `torch`, dtype `float64`,
+  log-domain balanced/debiased Sinkhorn settings, inner and outer epsilon
+  schedules `(0.5, 0.2, 0.1)`, `max_iter = 1000` per epsilon stage,
+  `tol = 1e-6`, `warning_tol = 1e-4`, and the state-geometry normalization
+  used by the fit,
+- tiny negative inner composition-distance values in `[-1e-10, 0)` are clamped
+  to `0` with provenance; values below `-1e-10` are numerical failures,
+- empty source or target FOV bags, invalid simplexes, negative entries,
+  NaN/Inf values, invalid cost matrices, or unavailable `torch` for the
+  canonical full estimator fail explicitly; padding is not allowed,
+- reaching `max_iter` with finite values and final update `<= warning_tol` is
+  usable with warning; final update above `warning_tol` is numerical failure,
+- canonical `L_obs` has no observation-layer unbalanced unmatched residual;
+  open behavior is expressed only by fitted biological `d/e`,
+- legacy UOT, `D_pos/B_pos`, and unbalanced observation residual diagnostics
+  may be emitted only as diagnostic or comparator fields; Task A Block 3
+  preserves `uot_baseline` as an external comparator name,
 - docs should not promote raw histogram collapse as the default canonical
   observation object,
 - docs should not leave the observation layer as an abstract placeholder `P`.
@@ -261,13 +288,46 @@ the canonical first-pass observation contract before reusable fitting.
 
 Optional priors or side inputs may include:
 
-- observation-layer cost geometry,
+- shared-state cost geometry for observation comparison and geometry/locality,
 - shared-basis construction metadata,
 - drift vectors,
 - support masks,
 - uncertainty mode and resampling settings.
 
 These are optional priors. They do not replace the observation-vector contract.
+
+### 4.6 Shared-state geometry cost matrix
+
+When a route provides the state-geometry cost for canonical observation
+comparison or full-estimator geometry/locality fitting, the contract is:
+
+- `C_norm = C_raw / s_C`,
+- `C_raw` and `C_norm` have shape `[K, K]` on the same shared state basis as
+  `A_p`, `d_p`, `e_p`, and the observation vectors,
+- entries must be finite and nonnegative,
+- matrices must be symmetric within declared numerical tolerance,
+- diagonal entries must be `0` within declared numerical tolerance,
+- the default `s_C` is the median of positive finite off-diagonal entries of
+  `C_raw`,
+- at least one positive finite off-diagonal entry must exist,
+- absence of a valid positive off-diagonal scale is a contract failure,
+- the route must not fall back to `s_C = 1.0` or automatically disable
+  geometry for an invalid state-geometry cost matrix,
+- `C` encodes symmetric state-identity distance, while `A_p` encodes directed
+  remodeling relation mass.
+
+For the full estimator,
+`L_geometry_raw(p) = (1 / K) * sum_i sum_j A_p[i,j] * C_norm[i,j]`.
+All `K` source rows are included. Diagonal self-retention pays no geometry cost
+because `C_norm[i,i] = 0`. The objective-level raw value is the simple mean
+over valid fitted patients. Geometry normalization uses
+`scale_geometry = max(raw_L_geometry(theta_init), 1e-2)`, where `theta_init`
+is the deterministic identity-plus-small-open initialization. The `1e-2` floor
+is the full-estimator `epsilon_norm` loss-normalization floor. When
+`raw_L_geometry(theta_init)` is valid and finite but zero or near zero, floor
+use is provenance-only and records
+`loss.components.geometry.floor_used = true` rather than changing
+`fit_status` or creating a warning/failure.
 
 ## 5. Patient-Level Output Contract
 
@@ -300,12 +360,13 @@ Fitted-output reconstruction semantics:
 - `raw_post = q_minus @ A + e`,
 - `predicted_q_plus = normalize(raw_post)`,
 - for source-side FOV vectors,
-  `predicted_v_target = normalize(v_source @ A_p + e_p)`,
+  `y_hat_f = normalize(v_source_f @ A_p + e_p)`,
 - predicted target-side FOV vectors induce the predicted target-side
   bag-of-FOV empirical measure used by `L_obs`,
-- `D_pos/B_pos` and other unmatched residual diagnostics are
-  observation-layer diagnostics, not fitted biological `d/e` and not
-  independently weighted fitted-output components.
+- legacy `D_pos/B_pos` and other residual diagnostics may be emitted only as
+  diagnostic or comparator fields. They are not canonical `L_obs` outputs, not
+  fitted biological `d/e`, and not independently weighted fitted-output
+  components.
 
 ### 5.2 Burden-scale auxiliary objects
 
@@ -356,6 +417,13 @@ Implementation-tier rule:
 - assembled explicit array payloads may report
   `implementation_tier="assembled_relation"` where appropriate.
 
+`implementation_tier="canonical_full"` is a current container/lineage label for
+the canonical workflow tier. It is not by itself evidence that the frozen
+PyTorch/AdamW full-objective estimator has been implemented. Bridge-named
+containers such as `PatientBridgeResult` remain implementation containers and
+compatibility lineage surfaces; they do not define a live public bridge-method
+contract.
+
 The minimum patient-audit surface should be able to report:
 
 | Audit field | Meaning |
@@ -390,7 +458,8 @@ Derived summaries may include:
 - burden-scale summaries from `mu_p^-`, `mu_p^+`, `m_p^(d)`, or `m_p^(e)`,
 - derived composition summaries from `q_p^-` or `q_p^+`.
 
-These summaries do not replace the primary object.
+These summaries do not replace the primary object. The primary relation
+contract remains the full `A_p` matrix rather than a selected derived subset.
 
 ## 6. Cohort-Level Output Contract
 
@@ -465,7 +534,24 @@ The data contract requires explicit auditability:
 - explicit deferred status where patient or cohort support remains
   insufficient,
 - explicit distinction between canonical full-method and approximate/proxy
-  workflow tiers.
+  workflow tiers, without treating tier labels alone as proof that a supported
+  full-objective optimizer run completed successfully.
+- explicit state-geometry cost validation, `s_C`, and the geometry component
+  provenance floor flag for full-estimator fits that use the
+  geometry/locality component.
+- normalization floors do not rescue invalid raw losses or invalid inputs;
+  NaN/Inf values, illegal negative raw losses, empty observation bags, invalid
+  simplexes, invalid cost matrices, unavailable `torch`, and related contract
+  violations still fail explicitly.
+- Compact successful-fit provenance does not replace fail-fast validation.
+  Invalid observation vectors, invalid simplexes, invalid source or target FOV
+  bags, invalid shared-state cost matrices, invalid configuration, and
+  unavailable canonical dependencies remain explicit errors under canonical
+  `ContractError` semantics where they are low-level contract violations.
+- Compact successful-fit provenance is not required to contain per-patient
+  records, per-evidence-block records, per-evidence-block status, status
+  counts, `failure_reason`, or `optimizer_failure_reason`. Existing result
+  containers may continue to carry their own status fields.
 
 Observation-layer implementations expose explicit fit-status fields as audit
 payloads.

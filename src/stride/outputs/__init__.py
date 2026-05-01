@@ -12,6 +12,12 @@ from .fit_result import (
     validate_patient_bridge_result,
     validate_stride_fit_result,
 )
+from .provenance import (
+    STRIDE_FIT_PROVENANCE_SCHEMA_VERSION,
+    STRIDEFitProvenance,
+    build_stride_fit_provenance,
+    validate_stride_fit_provenance,
+)
 from .r_export import EVENTS_FILENAME, META_FILENAME, METRICS_FILENAME, write_r_handover
 from .uncertainty import (
     BootstrapArraySummary,
@@ -34,8 +40,12 @@ __all__ = [
     "PatientBootstrapUncertaintyResult",
     "PatientRelationFitResult",
     "STRIDEBootstrapUncertaintyResult",
+    "STRIDEFitProvenance",
     "STRIDEFitResult",
+    "STRIDE_FIT_PROVENANCE_SCHEMA_VERSION",
+    "build_stride_fit_provenance",
     "validate_patient_bridge_result",
+    "validate_stride_fit_provenance",
     "validate_stride_fit_result",
     "write_r_handover",
 ]
