@@ -49,8 +49,9 @@ data:
 
 block0:
   # Block 0 reuses the stable STRIDE fit path on the task-local `TC-IM` family
-  # and builds a seeded exact-count null by reassigning IM targets across
-  # different patients in the same `(n_TC, n_IM)` stratum.
+  # and builds a seeded within-patient exact-count TC/IM FOV/ROI domain-label
+  # permutation null. Identity permutations are allowed; cross-patient
+  # borrowing and relaxed fallback are disallowed.
   random_seed: 7
 
 block1:

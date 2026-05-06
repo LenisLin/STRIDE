@@ -20,11 +20,20 @@ from typing import Any
 import pandas as pd
 from stride.errors import ContractError
 
-from .block0.review import (
-    is_current_block0_bundle_payload,
-    is_current_block0_pair_metrics_columns,
-    write_block0_review_surface,
+from .block0.schemas import (
+    BLOCK0_ANALYSIS_SPEC_VERSION,
+    CALIBRATION_MANIFEST_FILENAME,
+    CALIBRATION_READY_STATUS,
+    DIAGNOSTIC_READINESS_STATUS,
+    MANIFEST_REQUIRED_FIELDS as BLOCK0_CALIBRATION_MANIFEST_REQUIRED_FIELDS,
+    METRIC_SUMMARY_COLUMNS as BLOCK0_METRIC_SUMMARY_COLUMNS,
+    METRIC_SUMMARY_FILENAME,
+    NULL_FAMILY as BLOCK0_NULL_FAMILY,
+    PATIENT_CALIBRATION_COLUMNS as BLOCK0_PATIENT_CALIBRATION_COLUMNS,
+    PATIENT_CALIBRATION_FILENAME,
+    REAL_FAMILY as BLOCK0_REAL_FAMILY,
 )
+from .block0.writers import validate_block0_frame_columns
 from .block2.review import write_block2_review_surface
 
 
@@ -37,6 +46,20 @@ BLOCK1_CONTRACT_PATH = Path(__file__).resolve().parent / "contracts" / "artifact
 BLOCK2_CONTRACT_PATH = BLOCK1_CONTRACT_PATH
 BLOCK3_PACKET_DEFERRED_MESSAGE = (
     "Block 3 packet integration is deferred / non-authority / pending clean bridge spec"
+)
+BLOCK0_CALIBRATION_CONTEXT = "calibration_context"
+BLOCK0_ALLOWED_READINESS_STATUSES = {
+    CALIBRATION_READY_STATUS,
+    DIAGNOSTIC_READINESS_STATUS,
+}
+BLOCK0_NONEMPTY_SOURCE_FIELDS = (
+    "source_execution_manifest_path",
+    "source_fit_cache_path",
+    "source_fit_cache_index_path",
+    "source_fit_cache_sha256",
+    "source_fit_cache_index_sha256",
+    "patient_calibration_path",
+    "metric_summary_path",
 )
 
 INDEX_COLUMNS: tuple[str, ...] = (
@@ -121,24 +144,13 @@ def _surface_lineage_summary(
     *,
     atlas_manifest: Path,
     prepare_manifest: Path,
-    block0_bundle: Path,
+    block0_calibration_manifest: Path,
     block1_bundle: Path | None,
     block2_manifest: Path | None,
 ) -> dict[str, dict[str, Any]]:
     atlas_payload = _load_json_dict(atlas_manifest, label="Task A atlas manifest")
     prepare_payload = _load_json_dict(prepare_manifest, label="Task A prepare manifest")
-    block0_payload = _load_json_dict(block0_bundle, label="Task A Block 0 bundle")
-    block0_fit_surface = str(
-        dict(block0_payload.get("inputs", {}))
-        .get("real_family_definition", {})
-        .get("fit_surface", "")
-    )
-    block0_implementation_tier = str(block0_payload.get("implementation_tier", ""))
-    block0_evidence_lineage = str(block0_payload.get("evidence_lineage", ""))
-    if block0_implementation_tier == "":
-        block0_implementation_tier = "legacy_live_run"
-    if block0_evidence_lineage == "":
-        block0_evidence_lineage = "proxy_history"
+    block0_payload = _load_block0_calibration_manifest(block0_calibration_manifest)
     lineage: dict[str, dict[str, Any]] = {
         "atlas": {
             "atlas_role": str(atlas_payload.get("atlas_role", "")),
@@ -152,9 +164,13 @@ def _surface_lineage_summary(
             "fit_surface": str(prepare_payload.get("fit_surface", "")),
         },
         "block0": {
-            "implementation_tier": block0_implementation_tier,
-            "evidence_lineage": block0_evidence_lineage,
-            "fit_surface": block0_fit_surface,
+            "implementation_tier": "canonical_full",
+            "evidence_lineage": BLOCK0_CALIBRATION_CONTEXT,
+            "fit_surface": "fit_stride",
+            "analysis_spec_version": str(block0_payload["analysis_spec_version"]),
+            "readiness_status": str(block0_payload["readiness_status"]),
+            "real_family": str(block0_payload["real_family"]),
+            "null_family": str(block0_payload["null_family"]),
         },
     }
     if block1_bundle is not None:
@@ -248,6 +264,60 @@ def _require_fields(payload: dict[str, Any], *, required_fields: tuple[str, ...]
     missing = [field for field in required_fields if field not in payload]
     if missing:
         raise ContractError(f"{label} is missing required fields: {missing}")
+
+
+def _require_nonempty_fields(payload: dict[str, Any], *, fields: tuple[str, ...], label: str) -> None:
+    empty = [field for field in fields if str(payload.get(field, "")).strip() == ""]
+    if empty:
+        raise ContractError(f"{label} has empty required provenance fields: {empty}")
+
+
+def _load_block0_calibration_manifest(path: Path) -> dict[str, Any]:
+    payload = _load_json_dict(path, label="Block 0 calibration manifest")
+    _require_fields(
+        payload,
+        required_fields=BLOCK0_CALIBRATION_MANIFEST_REQUIRED_FIELDS,
+        label="Block 0 calibration manifest",
+    )
+    _require_nonempty_fields(
+        payload,
+        fields=BLOCK0_NONEMPTY_SOURCE_FIELDS,
+        label="Block 0 calibration manifest",
+    )
+
+    expected_values = {
+        "analysis_spec_version": BLOCK0_ANALYSIS_SPEC_VERSION,
+        "real_family": BLOCK0_REAL_FAMILY,
+        "null_family": BLOCK0_NULL_FAMILY,
+    }
+    for field_name, expected_value in expected_values.items():
+        observed_value = str(payload.get(field_name, ""))
+        if observed_value != expected_value:
+            raise ContractError(
+                "Block 0 calibration manifest has incompatible "
+                f"{field_name}: expected {expected_value!r}, got {observed_value!r}"
+            )
+
+    readiness_status = str(payload.get("readiness_status", ""))
+    if readiness_status not in BLOCK0_ALLOWED_READINESS_STATUSES:
+        raise ContractError(
+            "Block 0 calibration manifest has incompatible readiness_status: "
+            f"expected one of {sorted(BLOCK0_ALLOWED_READINESS_STATUSES)}, got {readiness_status!r}"
+        )
+    return payload
+
+
+def _validate_block0_calibration_table(
+    path: Path,
+    *,
+    expected_columns: tuple[str, ...],
+    label: str,
+) -> None:
+    validate_block0_frame_columns(
+        pd.read_csv(path, nrows=0),
+        expected_columns,
+        label=label,
+    )
 
 
 def _hash_file(path: str | Path) -> str:
@@ -571,171 +641,125 @@ def _collect_atlas_plans(atlas_manifest_path: Path) -> list[ArtifactPlan]:
 
     return plans
 
-def _collect_block0_plans(
+def _collect_block0_calibration_plans(
     *,
-    block0_bundle_path: Path,
+    block0_calibration_manifest_path: Path,
     prepare_manifest_path: Path,
-    block0_suitability_report_path: Path | None,
 ) -> list[ArtifactPlan]:
-    payload = _load_json_dict(block0_bundle_path, label="Task A Block 0 bundle")
-    pair_metrics_path = _resolve_path(payload.get("pair_metrics_path", block0_bundle_path.parent / "block0_pair_metrics.csv"))
-    pair_rows, pair_cols, pair_columns = _observe_artifact(pair_metrics_path)
-    pair_field_names = [column for column in str(pair_columns).split("|") if column]
-    bundle_alignment = "current_contract_available" if is_current_block0_bundle_payload(payload) else "legacy_live_run"
-    pair_alignment = (
-        "current_contract_available"
-        if is_current_block0_pair_metrics_columns(pair_field_names)
-        else "legacy_live_run"
+    payload = _load_block0_calibration_manifest(block0_calibration_manifest_path)
+    patient_calibration_path = _resolve_path(payload["patient_calibration_path"])
+    metric_summary_path = _resolve_path(payload["metric_summary_path"])
+    source_execution_manifest_path = str(payload["source_execution_manifest_path"])
+    source_fit_cache_path = str(payload["source_fit_cache_path"])
+    source_fit_cache_index_path = str(payload["source_fit_cache_index_path"])
+    source_fit_cache_sha256 = str(payload["source_fit_cache_sha256"])
+    source_fit_cache_index_sha256 = str(payload["source_fit_cache_index_sha256"])
+    _validate_block0_calibration_table(
+        patient_calibration_path,
+        expected_columns=BLOCK0_PATIENT_CALIBRATION_COLUMNS,
+        label=PATIENT_CALIBRATION_FILENAME,
     )
-
-    bundle_notes = (
-        f"Observed Block 0 status={payload.get('status', 'unknown')} "
-        f"artifact_state={payload.get('artifact_state', 'unknown')} "
-        f"block0_passed={payload.get('block0_passed', 'unknown')} "
-        f"implementation_tier={payload.get('implementation_tier', 'unspecified')} "
-        f"evidence_lineage={payload.get('evidence_lineage', 'unspecified')}."
+    _validate_block0_calibration_table(
+        metric_summary_path,
+        expected_columns=BLOCK0_METRIC_SUMMARY_COLUMNS,
+        label=METRIC_SUMMARY_FILENAME,
     )
-    pair_notes = (
-        "Legacy live Block 0 pair-metrics schema detected; rows are preserved without normalization."
-        if pair_alignment == "legacy_live_run"
-        else "Current Block 0 pair-metrics schema detected."
+    common_notes = (
+        "Cache-derived Block 0 calibration context. Source execution/cache paths and hashes "
+        "are recorded in the calibration manifest for provenance; raw fit cache artifacts are "
+        "not mirrored into the result packet by default. "
+        f"source_execution_manifest_path={source_execution_manifest_path}; "
+        f"source_fit_cache_path={source_fit_cache_path}; "
+        f"source_fit_cache_index_path={source_fit_cache_index_path}; "
+        f"source_fit_cache_sha256={source_fit_cache_sha256}; "
+        f"source_fit_cache_index_sha256={source_fit_cache_index_sha256}."
     )
 
     plans = [
         ArtifactPlan(
             layer="block0",
-            artifact_name="block0_bundle.json",
-            expected_relative_path="block0_bundle.json",
-            packet_relative_path="block0/bundle/block0_bundle.json",
-            source_path=block0_bundle_path,
-            artifact_kind="bundle",
+            artifact_name=CALIBRATION_MANIFEST_FILENAME,
+            expected_relative_path=CALIBRATION_MANIFEST_FILENAME,
+            packet_relative_path=f"block0/calibration/{CALIBRATION_MANIFEST_FILENAME}",
+            source_path=block0_calibration_manifest_path,
+            artifact_kind="manifest",
             artifact_status="available",
-            contract_alignment=bundle_alignment,
+            contract_alignment="current_calibration_manifest",
             format="json",
-            rows_represent="Single JSON object for one Block 0 run.",
-            columns_represent="Top-level keys record Block 0 gate status, provenance, inputs, failure reasons, gate checks, and metrics summaries.",
-            claim_scope="supportive",
+            rows_represent="Single JSON object for one Block 0 cache-derived calibration analysis.",
+            columns_represent=(
+                "Top-level keys record calibration provenance, fixed family-summary analysis spec, "
+                "real/null families, readiness status, derived table paths, and source cache paths/hashes."
+            ),
+            claim_scope=BLOCK0_CALIBRATION_CONTEXT,
             proof_carrying_status="none",
-            source_workflow="run_block0_workflow",
-            source_manifest_or_bundle=str(block0_bundle_path),
-            notes=bundle_notes,
+            source_workflow="tasks.task_A.block0.analyze",
+            source_manifest_or_bundle=str(block0_calibration_manifest_path),
+            notes=common_notes,
             review_rank=10,
-            review_role="provenance",
+            review_role="calibration",
             analysis_level="run_level",
-            family_surface_role="comparison_surface",
+            family_surface_role=BLOCK0_CALIBRATION_CONTEXT,
         ),
         ArtifactPlan(
             layer="block0",
-            artifact_name="block0_pair_metrics.csv",
-            expected_relative_path="block0_pair_metrics.csv",
-            packet_relative_path="block0/bundle/block0_pair_metrics.csv",
-            source_path=pair_metrics_path,
+            artifact_name=PATIENT_CALIBRATION_FILENAME,
+            expected_relative_path=PATIENT_CALIBRATION_FILENAME,
+            packet_relative_path=f"block0/calibration/{PATIENT_CALIBRATION_FILENAME}",
+            source_path=patient_calibration_path,
             artifact_kind="table",
             artifact_status="available",
-            contract_alignment=pair_alignment,
+            contract_alignment="current_calibration_manifest",
             format="csv",
-            rows_represent="Rows represent Block 0 comparison slots from the live run's paired anchor/control surface.",
-            columns_represent=(
-                "Columns record anchor-patient real/null pairing metadata, fit-status fields, and STRIDE-native summary totals/deltas."
-                if pair_alignment == "current_contract_available"
-                else "Columns record anchor and partner ROI identities, pairing metadata, legacy summary quantities, and fit-status fields."
+            rows_represent=(
+                "Rows represent patient_id x summary_name x scale x reference_stat "
+                "family-summary calibration records derived from the fit cache."
             ),
-            claim_scope="supportive",
-            proof_carrying_status="all" if pair_alignment == "current_contract_available" else "none",
-            source_workflow="run_block0_workflow",
-            source_manifest_or_bundle=str(block0_bundle_path),
-            notes=f"{pair_notes} Observed rows={pair_rows}, columns={pair_cols}.",
+            columns_represent=(
+                "Columns record patient identity, family-summary name/role, eligible axis, scale, "
+                "expected tail, real/null reference values, empirical p-values, opposite-tail diagnostic fraction, "
+                "effect sizes, and readiness."
+            ),
+            claim_scope=BLOCK0_CALIBRATION_CONTEXT,
+            proof_carrying_status="none",
+            source_workflow="tasks.task_A.block0.analyze",
+            source_manifest_or_bundle=str(block0_calibration_manifest_path),
+            notes="Mirrored from patient_calibration_path in the Block 0 calibration manifest.",
             review_rank=11,
-            review_role="proof_carrying" if pair_alignment == "current_contract_available" else "supportive",
+            review_role="calibration",
             analysis_level="patient_level",
-            family_surface_role="comparison_surface",
+            family_surface_role=BLOCK0_CALIBRATION_CONTEXT,
+        ),
+        ArtifactPlan(
+            layer="block0",
+            artifact_name=METRIC_SUMMARY_FILENAME,
+            expected_relative_path=METRIC_SUMMARY_FILENAME,
+            packet_relative_path=f"block0/calibration/{METRIC_SUMMARY_FILENAME}",
+            source_path=metric_summary_path,
+            artifact_kind="table",
+            artifact_status="available",
+            contract_alignment="current_calibration_manifest",
+            format="csv",
+            rows_represent=(
+                "Rows represent summary_name x scale x cohort_stat cohort-level "
+                "family-summary calibration departures derived from the fit cache."
+            ),
+            columns_represent=(
+                "Columns record family-summary identity and role, eligible axis, expected tail, "
+                "real/null reference values, empirical p-values, opposite-tail diagnostic fraction, "
+                "patient delta direction counts, effect sizes, and readiness."
+            ),
+            claim_scope=BLOCK0_CALIBRATION_CONTEXT,
+            proof_carrying_status="none",
+            source_workflow="tasks.task_A.block0.analyze",
+            source_manifest_or_bundle=str(block0_calibration_manifest_path),
+            notes="Mirrored from metric_summary_path in the Block 0 calibration manifest.",
+            review_rank=12,
+            review_role="calibration",
+            analysis_level="cohort_level",
+            family_surface_role=BLOCK0_CALIBRATION_CONTEXT,
         ),
     ]
-
-    collocated_suitability = block0_bundle_path.parent / "task_a_pre_block0_data_suitability.json"
-    if collocated_suitability.exists():
-        plans.append(
-            ArtifactPlan(
-                layer="block0",
-                artifact_name="task_a_pre_block0_data_suitability.json",
-                expected_relative_path="task_a_pre_block0_data_suitability.json",
-                packet_relative_path="block0/bundle/task_a_pre_block0_data_suitability.json",
-                source_path=collocated_suitability.resolve(),
-                artifact_kind="report",
-                artifact_status="available",
-                contract_alignment="current_contract_available",
-                format="json",
-                rows_represent="Single JSON object for one pre-Block 0 suitability report.",
-                columns_represent="Top-level keys record readiness, mapping summary availability, Stage 0 validation, and pair-family context.",
-                claim_scope="supportive",
-                proof_carrying_status="none",
-                source_workflow="check_task_a_pre_block0_data_suitability",
-                source_manifest_or_bundle=str(collocated_suitability.resolve()),
-                notes="Suitability report collocated with the mirrored Block 0 run.",
-                review_rank=12,
-                review_role="supportive",
-                analysis_level="cohort_level",
-            )
-        )
-
-    if block0_suitability_report_path is not None:
-        extra_suitability = _resolve_path(block0_suitability_report_path)
-        if not collocated_suitability.exists() or extra_suitability != collocated_suitability.resolve():
-            plans.append(
-                ArtifactPlan(
-                    layer="block0",
-                    artifact_name="task_a_pre_block0_data_suitability.json",
-                    expected_relative_path="task_a_pre_block0_data_suitability.json",
-                    packet_relative_path="block0/provenance/p0_suitability/task_a_pre_block0_data_suitability.json",
-                    source_path=extra_suitability,
-                    artifact_kind="report",
-                    artifact_status="available",
-                    contract_alignment="current_contract_available",
-                    format="json",
-                    rows_represent="Single JSON object for one pre-Block 0 suitability report.",
-                    columns_represent="Top-level keys record readiness, mapping summary availability, Stage 0 validation, and pair-family context.",
-                    claim_scope="supportive",
-                    proof_carrying_status="none",
-                    source_workflow="check_task_a_pre_block0_data_suitability",
-                    source_manifest_or_bundle=str(extra_suitability),
-                    notes="Separate full-cohort suitability report mirrored for provenance.",
-                    review_rank=13,
-                    review_role="supportive",
-                    analysis_level="cohort_level",
-                )
-            )
-
-    run_root = block0_bundle_path.parent.parent
-    for name, review_rank in (("execution_status.json", 14), ("engineering_execution_report.md", 15)):
-        candidate = run_root / name
-        if candidate.exists():
-            plans.append(
-                ArtifactPlan(
-                    layer="block0",
-                    artifact_name=name,
-                    expected_relative_path=name,
-                    packet_relative_path=f"block0/provenance/run_status/{name}",
-                    source_path=candidate.resolve(),
-                    artifact_kind="report" if candidate.suffix == ".md" else "manifest",
-                    artifact_status="available",
-                    contract_alignment="run_provenance",
-                    format=candidate.suffix.lstrip("."),
-                    rows_represent="Single run-level execution status artifact.",
-                    columns_represent=(
-                        "Markdown prose summary of executed phases and blockers."
-                        if candidate.suffix == ".md"
-                        else "Top-level keys record executed phases, blocked phases, and next engineering actions."
-                    ),
-                    claim_scope="provenance",
-                    proof_carrying_status="none",
-                    source_workflow="Task A engineering phased execution",
-                    source_manifest_or_bundle=str(candidate.resolve()),
-                    notes="Run-level provenance explaining why downstream Block 1 was not executed.",
-                    review_rank=review_rank,
-                    review_role="provenance",
-                    analysis_level="run_level",
-                )
-            )
 
     plans.extend(
         _prepare_provenance_plans(
@@ -1563,9 +1587,10 @@ def _write_layer_manifests(
                 {str(value) for value in layer_df["contract_alignment"].astype(str).tolist()}
             )
             payload["notes"] = (
-                "Available Block 0 files are mirrored exactly and augmented with packet-local review tables. "
+                "Available Block 0 calibration files are mirrored exactly from the cache-derived analysis surface. "
                 f"Observed Block 0 schema/alignment states: {schema_variants}. "
-                "This layer records the canonical-full rerun rather than proxy-history outputs."
+                "This layer records calibration context only; raw fit cache artifacts are referenced by source "
+                "paths and hashes in the mirrored manifest rather than copied into the packet."
             )
         elif layer == "block1":
             payload["notes"] = (
@@ -1614,11 +1639,9 @@ def _write_human_index(
         "atlas/bundle/tables/community_cell_subtype_row_fractions.csv",
         "atlas/bundle/tables/community_domain_distribution.csv",
         "atlas/bundle/tables/community_patient_occurrence_summary.csv",
-        "block0/bundle/block0_bundle.json",
-        "block0/review/block0_gate_summary.csv",
-        "block0/review/block0_patient_review_table.csv",
-        "block0/bundle/block0_pair_metrics.csv",
-        "block0/BLOCK0_RESULTS_INDEX.md",
+        "block0/calibration/block0_calibration_manifest.json",
+        "block0/calibration/block0_patient_calibration.csv",
+        "block0/calibration/block0_metric_summary.csv",
         "block1/block1_review_index.csv",
         "block2/BLOCK2_RESULTS_INDEX.md",
         "block2/review/block2_primary_finding_review_table.csv",
@@ -1631,7 +1654,7 @@ def _write_human_index(
         "",
         "This packet mirrors the canonical Task A rerun surface through Block 2 without biological interpretation.",
         "Block 3 is explicitly deferred from this packet because the active Block 3 engineering surface has been removed pending rebuild.",
-        "Prior proxy-era outputs are preserved outside this packet as historical artifacts and are not relabeled here.",
+        "Proxy-era Block 0 outputs are not accepted or repackaged here.",
         "",
         "## Current Surface Status",
         f"- Included layers: {', '.join(layers)}",
@@ -1788,9 +1811,8 @@ def write_task_a_result_packet(
     *,
     atlas_manifest_path: str | Path,
     prepare_manifest_path: str | Path,
-    block0_bundle_path: str | Path,
+    block0_calibration_manifest_path: str | Path,
     output_dir: str | Path,
-    block0_suitability_report_path: str | Path | None = None,
     block1_bundle_path: str | Path | None = None,
     block2_manifest_path: str | Path | None = None,
     block3_manifest_path: str | Path | None = None,
@@ -1800,8 +1822,7 @@ def write_task_a_result_packet(
 
     atlas_manifest = _resolve_path(atlas_manifest_path)
     prepare_manifest = _resolve_path(prepare_manifest_path)
-    block0_bundle = _resolve_path(block0_bundle_path)
-    block0_suitability = None if block0_suitability_report_path is None else _resolve_path(block0_suitability_report_path)
+    block0_calibration_manifest = _resolve_path(block0_calibration_manifest_path)
     block1_bundle = None if block1_bundle_path is None else _resolve_path(block1_bundle_path)
     block2_manifest = None if block2_manifest_path is None else _resolve_path(block2_manifest_path)
     layers = _included_layers(include_block3=False)
@@ -1811,7 +1832,7 @@ def write_task_a_result_packet(
     surface_lineage = _surface_lineage_summary(
         atlas_manifest=atlas_manifest,
         prepare_manifest=prepare_manifest,
-        block0_bundle=block0_bundle,
+        block0_calibration_manifest=block0_calibration_manifest,
         block1_bundle=block1_bundle,
         block2_manifest=block2_manifest,
     )
@@ -1819,10 +1840,9 @@ def write_task_a_result_packet(
     plans: list[ArtifactPlan] = []
     plans.extend(_collect_atlas_plans(atlas_manifest))
     plans.extend(
-        _collect_block0_plans(
-            block0_bundle_path=block0_bundle,
+        _collect_block0_calibration_plans(
+            block0_calibration_manifest_path=block0_calibration_manifest,
             prepare_manifest_path=prepare_manifest,
-            block0_suitability_report_path=block0_suitability,
         )
     )
     block1_plans = _collect_block1_plans(block1_bundle)
@@ -1840,37 +1860,6 @@ def write_task_a_result_packet(
         )
         for plan in plans
     ]
-    block0_review_surface = write_block0_review_surface(
-        block0_bundle_path=block0_bundle,
-        output_dir=packet_root / "block0",
-    )
-    records.extend(
-        [
-            _record_existing_packet_artifact(
-                packet_root=packet_root,
-                layer="block0",
-                artifact_name=artifact.artifact_name,
-                expected_relative_path=artifact.packet_relative_path.removeprefix("block0/"),
-                packet_relative_path=artifact.packet_relative_path,
-                artifact_kind=artifact.artifact_kind,
-                contract_alignment=block0_review_surface.schema_variant,
-                format_name=artifact.format,
-                rows_represent=artifact.rows_represent,
-                columns_represent=artifact.columns_represent,
-                claim_scope=artifact.claim_scope,
-                review_role=artifact.review_role,
-                analysis_level=artifact.analysis_level,
-                family_surface_role=artifact.family_surface_role,
-                proof_carrying_status=artifact.proof_carrying_status,
-                source_workflow=artifact.source_workflow,
-                source_manifest_or_bundle=artifact.source_manifest_or_bundle,
-                notes=artifact.notes,
-                review_rank=artifact.review_rank,
-                surface_lineage=surface_lineage,
-            )
-            for artifact in block0_review_surface.artifacts
-        ]
-    )
     block2_review_surface = None
     if block2_manifest is not None and all(plan.artifact_status == "available" for plan in block2_plans):
         block2_review_surface = write_block2_review_surface(
@@ -1955,8 +1944,7 @@ def write_task_a_result_packet(
         "input_sources": {
             "atlas_manifest_path": str(atlas_manifest),
             "prepare_manifest_path": str(prepare_manifest),
-            "block0_bundle_path": str(block0_bundle),
-            "block0_suitability_report_path": str(block0_suitability) if block0_suitability is not None else None,
+            "block0_calibration_manifest_path": str(block0_calibration_manifest),
             "block1_bundle_path": str(block1_bundle) if block1_bundle is not None else None,
             "block2_manifest_path": str(block2_manifest) if block2_manifest is not None else None,
             "block3_manifest_path": None,
@@ -1965,7 +1953,7 @@ def write_task_a_result_packet(
         "block2_surface_policy": "faithful_current_state",
         "block3_surface_policy": "deferred_non_authority_pending_clean_bridge_spec",
         "historical_proxy_output_policy": (
-            "proxy-history artifacts are preserved outside this packet and must not be relabeled as canonical rerun evidence"
+            "proxy-history Block 0 artifacts are rejected and must not be relabeled as canonical rerun evidence"
         ),
         "artifact_counts": {
             "total": int(len(index_df)),
