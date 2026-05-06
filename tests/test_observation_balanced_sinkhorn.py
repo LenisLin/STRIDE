@@ -11,7 +11,11 @@ from stride.observation import (
     BalancedSinkhornDivergenceConfig,
     compute_balanced_sinkhorn_observation_discrepancy,
 )
-from stride.observation.balanced_sinkhorn import _apply_small_negative_rule
+from stride.observation.balanced_sinkhorn import _apply_small_negative_rule, _sinkhorn_transport_cost
+from stride.observation.balanced_sinkhorn import (
+    _pairwise_composition_ground_cost_batched,
+    _pairwise_composition_ground_cost_loop,
+)
 
 
 def _geometry() -> StateGeometry:
@@ -188,6 +192,71 @@ def test_balanced_sinkhorn_gradient_backpropagates_through_predicted_distributio
     assert float(torch.linalg.vector_norm(raw_prediction.grad).detach().cpu()) > 0.0
 
 
+def test_batched_pairwise_ground_cost_matches_loop_value_and_gradient() -> None:
+    config = BalancedSinkhornDivergenceConfig()
+    C_norm = torch.tensor(
+        [
+            [0.0, 0.5, 1.0],
+            [0.5, 0.0, 0.75],
+            [1.0, 0.75, 0.0],
+        ],
+        dtype=torch.float64,
+    )
+    left_base = torch.tensor(
+        [[0.70, 0.20, 0.10], [0.15, 0.65, 0.20]],
+        dtype=torch.float64,
+    )
+    right = torch.tensor(
+        [[0.20, 0.30, 0.50], [0.50, 0.25, 0.25], [0.10, 0.80, 0.10]],
+        dtype=torch.float64,
+    )
+
+    left_loop = left_base.clone().detach().requires_grad_(True)
+    loop = _pairwise_composition_ground_cost_loop(
+        left_loop,
+        right,
+        C_norm,
+        config=config,
+        label="equivalence.loop",
+    )
+    loop.value.sum().backward()
+
+    left_batched = left_base.clone().detach().requires_grad_(True)
+    batched = _pairwise_composition_ground_cost_batched(
+        left_batched,
+        right,
+        C_norm,
+        config=config,
+        label="equivalence.batched",
+    )
+    batched.value.sum().backward()
+
+    torch.testing.assert_close(batched.value, loop.value, rtol=1e-8, atol=1e-10)
+    torch.testing.assert_close(left_batched.grad, left_loop.grad, rtol=1e-7, atol=1e-9)
+    assert len(batched.final_updates) == len(loop.final_updates)
+    assert len(batched.iterations) == len(loop.iterations)
+    assert len(batched.max_iter_reached) == len(loop.max_iter_reached)
+
+
+def test_batched_pairwise_ground_cost_handles_exact_zero_support() -> None:
+    config = BalancedSinkhornDivergenceConfig()
+    C_norm = torch.tensor([[0.0, 1.0], [1.0, 0.0]], dtype=torch.float64)
+    left = torch.tensor([[1.0, 0.0], [0.25, 0.75]], dtype=torch.float64, requires_grad=True)
+    right = torch.tensor([[0.0, 1.0], [0.80, 0.20]], dtype=torch.float64)
+
+    batched = _pairwise_composition_ground_cost_batched(
+        left,
+        right,
+        C_norm,
+        config=config,
+        label="zero_support.batched",
+    )
+    assert torch.isfinite(batched.value).all()
+    batched.value.sum().backward()
+    assert left.grad is not None
+    assert torch.isfinite(left.grad).all()
+
+
 def test_balanced_sinkhorn_backward_is_finite_with_exact_zero_support() -> None:
     geometry = _two_state_geometry()
     predicted = torch.tensor(
@@ -210,6 +279,47 @@ def test_balanced_sinkhorn_backward_is_finite_with_exact_zero_support() -> None:
 
     assert predicted.grad is not None
     assert torch.isfinite(predicted.grad).all()
+
+
+def test_sinkhorn_transport_uses_bounded_envelope_autograd_graph() -> None:
+    def count_autograd_nodes(value: torch.Tensor) -> int:
+        seen: set[object] = set()
+        stack = [value.grad_fn]
+        while stack:
+            node = stack.pop()
+            if node is None or node in seen:
+                continue
+            seen.add(node)
+            stack.extend(next_fn for next_fn, _index in node.next_functions)
+        return len(seen)
+
+    raw_left = torch.tensor([0.6, 0.3, 0.1], dtype=torch.float64, requires_grad=True)
+    left = torch.softmax(raw_left, dim=0)
+    right = torch.tensor([0.2, 0.5, 0.3], dtype=torch.float64)
+    cost = torch.tensor(
+        [
+            [0.0, 0.5, 1.0],
+            [0.5, 0.0, 0.75],
+            [1.0, 0.75, 0.0],
+        ],
+        dtype=torch.float64,
+    )
+
+    result = _sinkhorn_transport_cost(
+        left,
+        right,
+        cost,
+        epsilon_schedule=BalancedSinkhornDivergenceConfig().inner_epsilon_schedule,
+        config=BalancedSinkhornDivergenceConfig(),
+        label="bounded_graph_regression",
+    )
+
+    assert result.value.requires_grad
+    assert count_autograd_nodes(result.value) < 40
+    result.value.backward()
+    assert raw_left.grad is not None
+    assert torch.isfinite(raw_left.grad).all()
+    assert float(torch.linalg.vector_norm(raw_left.grad).detach().cpu()) > 0.0
 
 
 @pytest.mark.parametrize(

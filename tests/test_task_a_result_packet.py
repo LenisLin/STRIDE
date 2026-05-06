@@ -199,292 +199,130 @@ def _write_atlas_bundle(base: Path) -> Path:
     )
 
 
-def _write_block0_run(base: Path) -> tuple[Path, Path, Path]:
+def _write_invalid_block0_payload(base: Path) -> tuple[Path, Path]:
     prepare_manifest_path = _write_prepare_bundle(base / "p0_prepare_full")
-    p0_suitability_path = _write_json(
-        base / "p0_suitability_full" / "task_a_pre_block0_data_suitability.json",
+    invalid_payload_path = _write_json(
+        base / "retired_block0_payload.json",
         {
-            "task_name": "Task A test suitability",
-            "config_path": str(ROOT / "tasks" / "task_A" / "config.yaml"),
-            "stage0_h5ad": str(base / "fixture.h5ad"),
-            "report_scope": "pre_block0_data_suitability",
-            "run_scope": "full_cohort_alignment_check",
-            "artifact_state": "contract_passed",
-            "block0_gate_status": "not_passed",
-            "scientific_interpretation_allowed": False,
-            "mass_mode": "uniform",
-            "fit_surface": "fit_stride",
-            "implementation_tier": "canonical_full",
-            "evidence_lineage": "canonical_rerun",
-            "confirmatory_pair_families": ["TC-IM", "TC-PT"],
-            "audit_pair_families": ["IM-PT"],
-            "stage0_validation": {"artifact_state": "contract_passed"},
+            "block": "retired_block0_payload",
+            "status": "retired",
         },
     )
-    block0_dir = base / "p3_block0_full"
-    pair_metrics_path = _write_csv(
-        block0_dir / "block0_pair_metrics.csv",
+    return prepare_manifest_path, invalid_payload_path
+
+
+def _write_block0_calibration_run(base: Path) -> tuple[Path, Path]:
+    prepare_manifest_path = _write_prepare_bundle(base / "p0_prepare_full")
+    block0_dir = base / "block0_calibration"
+    execution_manifest_path = _write_json(
+        block0_dir / "block0_execution_manifest.json",
+        {
+            "task_name": "block0_execution_cache",
+            "fit_cache_path": str(block0_dir / "block0_fit_cache.npz"),
+            "fit_cache_index_path": str(block0_dir / "block0_fit_cache_index.csv"),
+            "fit_cache_sha256": "fixture-cache-sha256",
+            "fit_cache_index_sha256": "fixture-index-sha256",
+        },
+    )
+    _write_text(block0_dir / "block0_fit_cache.npz", "fixture cache is not mirrored\n")
+    _write_csv(
+        block0_dir / "block0_fit_cache_index.csv",
         [
             {
-                "comparison_id": "legacy-001",
-                "pair_family": "locality_anchor",
-                "control_family": "cross_patient_pseudopair",
-                "draw_number": 1,
-                "draw_label": "draw_0001",
-                "slot_index": 1,
-                "run_scope": "full_cohort",
-                "anchor_patient_id": "P01",
-                "anchor_compartment": "TC",
-                "anchor_roi_id": "ROI_01",
-                "partner_patient_id": "P02",
-                "partner_compartment": "IM",
-                "partner_roi_id": "ROI_02",
-                "same_patient": False,
-                "same_compartment": False,
-                "pair_type": "TC-IM",
-                "partner_match_l1": 0.0,
-                "match_penalty": 1.0,
-                "retention_threshold": 0.5,
-                "T": 1.0,
-                "D_pos": 0.1,
-                "B_pos": 0.2,
-                "d_rel": 0.1,
-                "b_rel": 0.2,
-                "M": 0.3,
-                "R": 0.7,
-                "tau": 0.5,
-                "observation_fit_status": "ok",
+                "record_id": 0,
+                "fit_label": "real",
+                "permutation_index": "",
+                "patient_id": "P01",
+                "fit_status": "ok",
             }
         ],
     )
-    _write_json(
-        block0_dir / "task_a_pre_block0_data_suitability.json",
-        {
-            "task_name": "Task A block0 suitability",
-            "config_path": str(ROOT / "tasks" / "task_A" / "config.yaml"),
-            "stage0_h5ad": str(base / "fixture.h5ad"),
-            "report_scope": "pre_block0_data_suitability",
-            "run_scope": "full_cohort_alignment_check",
-            "artifact_state": "contract_passed",
-            "block0_gate_status": "not_passed",
-            "scientific_interpretation_allowed": False,
-            "mass_mode": "uniform",
-            "fit_surface": "fit_stride",
-            "implementation_tier": "canonical_full",
-            "evidence_lineage": "canonical_rerun",
-        },
-    )
-    _write_json(
-        base / "execution_status.json",
-        {
-            "run_id": "test_run",
-            "executed_phases": {"P3": {"status": "completed", "bundle_status": "failed"}},
-            "blocked_phases": {"P4": "blocked"},
-        },
-    )
-    _write_text(base / "engineering_execution_report.md", "# Task A execution report\n")
-    block0_bundle_path = _write_json(
-        block0_dir / "block0_bundle.json",
-        {
-            "block": "block0_locality_gate",
-            "status": "failed",
-            "artifact_state": "scaffold_active",
-            "block0_passed": False,
-            "config_path": str(ROOT / "tasks" / "task_A" / "config.yaml"),
-            "stage0_h5ad": str(base / "fixture.h5ad"),
-            "output_dir": str(block0_dir),
-            "bundle_path": str(block0_dir / "block0_bundle.json"),
-            "pair_metrics_path": str(pair_metrics_path),
-            "confirmatory_pair_families": ["locality_anchor"],
-            "control_families": ["cross_patient_pseudopair"],
-            "gate_checks": {"paired_control_checks": {}},
-            "metrics_summary": {"paired_support": 1},
-            "failure_reasons": ["legacy_test_failure"],
-            "inputs": {"run_scope": "full_cohort"},
-        },
-    )
-    return prepare_manifest_path, block0_bundle_path, p0_suitability_path
-
-
-def _write_current_contract_block0_run(base: Path) -> tuple[Path, Path, Path]:
-    prepare_manifest_path = _write_prepare_bundle(base / "p0_prepare_full")
-    block0_dir = base / "p3_block0_full_current_contract"
-    suitability_payload = {
-        "task_name": "Task A current-contract suitability",
-        "config_path": str(ROOT / "tasks" / "task_A" / "config.yaml"),
-        "stage0_h5ad": str(base / "fixture.h5ad"),
-        "report_scope": "pre_block0_data_suitability",
-        "run_scope": "full_cohort",
-        "artifact_state": "contract_passed",
-        "block0_gate_status": "not_passed",
-        "scientific_interpretation_allowed": False,
-        "mass_mode": "uniform",
-        "confirmatory_pair_families": ["TC-IM", "TC-PT"],
-        "audit_pair_families": ["IM-PT"],
-        "stage0_validation": {"artifact_state": "contract_passed"},
-    }
-    suitability_path = _write_json(
-        block0_dir / "task_a_pre_block0_data_suitability.json",
-        suitability_payload,
-    )
-    pair_metrics_path = _write_csv(
-        block0_dir / "block0_pair_metrics.csv",
+    patient_calibration_path = _write_csv(
+        block0_dir / "block0_patient_calibration.csv",
         [
             {
-                "comparison_id": "block0_locality_gate::TC-IM::P01",
-                "run_scope": "full_cohort",
-                "pair_family": "TC-IM",
-                "null_family": "TC-IM_randomized_target",
-                "anchor_patient_id": "P01",
-                "null_target_donor_patient_id": "P02",
-                "source_domain": "TC",
-                "target_domain": "IM",
-                "n_source_observations": 2,
-                "n_target_observations": 2,
-                "count_stratum_key": "TC:2|IM:2",
-                "selection_seed": 7,
-                "null_assignment_status": "assigned",
-                "null_assignment_reason": "",
+                "patient_id": "P01",
+                "run_scope": "demo_subset",
+                "real_family": "TC-IM",
+                "null_family": "TC-IM_within_patient_domain_label_permutation_null",
+                "n_permutations": 2,
                 "real_fit_status": "ok",
                 "null_fit_status": "ok",
-                "real_defer_reason": "",
-                "null_defer_reason": "",
-                "real_total_continuity_mass": 19.0,
-                "null_total_continuity_mass": 17.5,
-                "delta_total_continuity_mass": 1.5,
-                "real_total_depletion_mass": 6.0,
-                "null_total_depletion_mass": 7.5,
-                "delta_total_depletion_mass": -1.5,
-                "real_total_emergence_mass": 0.2,
-                "null_total_emergence_mass": 0.5,
-                "delta_total_emergence_mass": -0.3,
+                "summary_name": "self_retention",
+                "summary_role": "proof_carrying",
+                "eligible_entity_axis": "source",
+                "scale": "burden_weighted",
+                "reference_stat": "median",
+                "expected_tail": "left",
+                "real_value": 0.96,
+                "null_reference": 0.962,
+                "empirical_p_value": 0.3333333333,
+                "primary_tail_fraction": 0.0,
+                "opposite_tail_fraction": 1.0,
+                "effect_delta": -0.002,
+                "effect_ratio": 0.9979209979,
+                "effect_ratio_status": "estimable",
+                "readiness_status": "diagnostic",
             }
         ],
     )
-    block0_bundle_path = _write_json(
-        block0_dir / "block0_bundle.json",
+    metric_summary_path = _write_csv(
+        block0_dir / "block0_metric_summary.csv",
+        [
+            {
+                "summary_name": "self_retention",
+                "summary_role": "proof_carrying",
+                "eligible_entity_axis": "source",
+                "scale": "burden_weighted",
+                "cohort_stat": "median",
+                "expected_tail": "left",
+                "real_value": 0.96,
+                "null_reference": 0.962,
+                "empirical_p_value": 0.3333333333,
+                "primary_tail_fraction": 0.0,
+                "opposite_tail_fraction": 1.0,
+                "effect_delta": -0.002,
+                "effect_ratio": 0.9979209979,
+                "effect_ratio_status": "estimable",
+                "n_patient_delta_positive": 0,
+                "n_patient_delta_negative": 1,
+                "n_patient_delta_zero": 0,
+                "readiness_status": "diagnostic",
+            }
+        ],
+    )
+    calibration_manifest_path = _write_json(
+        block0_dir / "block0_calibration_manifest.json",
         {
-            "block": "block0_locality_gate",
-            "status": "passed",
-            "artifact_state": "contract_passed",
-            "implementation_tier": "canonical_full",
-            "evidence_lineage": "canonical_rerun",
-            "run_scope": "full_cohort",
-            "block0_passed": True,
-            "config_fingerprint": "fixture-current-contract",
+            "task_name": "block0_calibration",
             "config_path": str(ROOT / "tasks" / "task_A" / "config.yaml"),
             "stage0_h5ad": str(base / "fixture.h5ad"),
-            "output_dir": str(block0_dir),
-            "bundle_path": str(block0_dir / "block0_bundle.json"),
-            "pair_metrics_path": str(pair_metrics_path),
-            "real_families": ["TC-IM"],
-            "null_families": ["TC-IM_randomized_target"],
-            "pre_block0_data_suitability": suitability_payload,
-            "gate_checks": {
-                "eligible_patients_positive": {"observed": 1, "passed": True},
-                "fraction_real_total_continuity_mass_gt_null_above_half": {
-                    "observed": 1.0,
-                    "passed": True,
-                    "threshold": 0.5,
-                },
-                "fraction_real_total_emergence_mass_lt_null_above_half": {
-                    "observed": 1.0,
-                    "passed": True,
-                    "threshold": 0.5,
-                },
-                "full_cohort_scope_required_for_pass": {
-                    "observed_run_scope": "full_cohort",
-                    "passed": True,
-                },
-                "median_delta_total_continuity_mass_positive": {
-                    "observed": 1.5,
-                    "passed": True,
-                    "threshold": 0.0,
-                },
-                "median_delta_total_emergence_mass_negative": {
-                    "observed": -0.3,
-                    "passed": True,
-                    "threshold": 0.0,
-                },
-                "paired_support": {"observed": 1, "passed": True, "threshold": 1},
-                "pre_block0_data_suitability_contract_passed": {
-                    "observed_artifact_state": "contract_passed",
-                    "passed": True,
-                },
+            "run_scope": "full_cohort",
+            "n_permutations": 2,
+            "master_seed": 7,
+            "seed_derivation_policy": "sha256(namespace|master_seed|patient_id|permutation_index)",
+            "real_family": "TC-IM",
+            "null_family": "TC-IM_within_patient_domain_label_permutation_null",
+            "permutation_policy": "within-patient TC/IM domain-label permutation",
+            "summary_roles": {
+                "self_retention": "proof_carrying",
+                "depletion": "proof_carrying",
+                "off_diagonal_remodeling": "diagnostic_supportive",
+                "emergence": "supportive",
             },
-            "metrics_summary": {
-                "eligible_patients": 1,
-                "required_support": 1,
-                "gate_summary_quantities": [
-                    "delta_total_continuity_mass",
-                    "delta_total_emergence_mass",
-                ],
-                "real_family": {
-                    "family_name": "TC-IM",
-                    "fit_status_counts": {"ok": 1, "deferred": 0, "failed": 0},
-                    "median_total_continuity_mass": 19.0,
-                    "median_total_depletion_mass": 6.0,
-                    "median_total_emergence_mass": 0.2,
-                    "n_patients": 1,
-                },
-                "null_family": {
-                    "family_name": "TC-IM_randomized_target",
-                    "fit_status_counts": {"ok": 1, "deferred": 0, "failed": 0},
-                    "median_total_continuity_mass": 17.5,
-                    "median_total_depletion_mass": 7.5,
-                    "median_total_emergence_mass": 0.5,
-                    "n_patients": 1,
-                },
-                "paired_comparisons": {
-                    "fraction_real_total_continuity_mass_gt_null": 1.0,
-                    "fraction_real_total_depletion_mass_lt_null": 1.0,
-                    "fraction_real_total_emergence_mass_lt_null": 1.0,
-                    "median_delta_total_continuity_mass": 1.5,
-                    "median_delta_total_depletion_mass": -1.5,
-                    "median_delta_total_emergence_mass": -0.3,
-                    "paired_support": 1,
-                    "required_support": 1,
-                },
-            },
-            "failure_reasons": [],
-            "inputs": {
-                "task_config": str(ROOT / "tasks" / "task_A" / "config.yaml"),
-                "stage0_h5ad": str(base / "fixture.h5ad"),
-                "run_scope": "full_cohort",
-                "random_seed": 7,
-                "real_family_definition": {
-                    "pair_family": "TC-IM",
-                    "source_domain": "TC",
-                    "target_domain": "IM",
-                    "construction": "task_a_stride_adapter_family_slice",
-                    "fit_surface": "fit_stride",
-                },
-                "null_family_definition": {
-                    "pair_family": "TC-IM_randomized_target",
-                    "source_domain": "TC",
-                    "target_domain": "IM",
-                    "construction": "same_anchor_source_with_target_group_reassigned_from_different_patient",
-                    "stratification_fields": [
-                        "n_source_observations",
-                        "n_target_observations",
-                    ],
-                    "donor_policy": "seeded_derangement_within_exact_count_strata",
-                    "singleton_stratum_policy": "emit_null_fit_status_deferred_for_anchor_patient",
-                },
-                "gate_summary_quantities": {
-                    "delta_total_continuity_mass": {
-                        "definition": "sum(A_real) - sum(A_null)",
-                        "decision_rule": "median > 0 and fraction_real_total_continuity_mass_gt_null > 0.5",
-                    },
-                    "delta_total_emergence_mass": {
-                        "definition": "sum(e_real) - sum(e_null)",
-                        "decision_rule": "median < 0 and fraction_real_total_emergence_mass_lt_null > 0.5",
-                    },
-                },
-            },
+            "fit_status": "ok",
+            "readiness_status": "diagnostic",
+            "analysis_spec_version": "block1_family_summary_calibration_v1",
+            "source_execution_manifest_path": str(execution_manifest_path),
+            "source_fit_cache_path": str(block0_dir / "block0_fit_cache.npz"),
+            "source_fit_cache_index_path": str(block0_dir / "block0_fit_cache_index.csv"),
+            "source_fit_cache_sha256": "fixture-cache-sha256",
+            "source_fit_cache_index_sha256": "fixture-index-sha256",
+            "patient_calibration_path": str(patient_calibration_path),
+            "metric_summary_path": str(metric_summary_path),
         },
     )
-    return prepare_manifest_path, block0_bundle_path, suitability_path
+    return prepare_manifest_path, calibration_manifest_path
 
 
 def _write_block1_bundle(base: Path) -> Path:
@@ -1129,12 +967,6 @@ def test_result_packet_workflow_is_exported() -> None:
     assert hasattr(tasks.task_A.workflows, "validate_task_a_result_packet")
 
 
-def test_block0_review_helper_imports() -> None:
-    from tasks.task_A.block0.review import write_block0_review_surface
-
-    assert callable(write_block0_review_surface)
-
-
 def test_block2_review_helper_imports() -> None:
     from tasks.task_A.block2.review import write_block2_review_surface
 
@@ -1145,13 +977,14 @@ def test_result_packet_packages_available_atlas_block0_and_missing_block1(tmp_pa
     from tasks.task_A.result_packet import write_task_a_result_packet
 
     atlas_manifest_path = _write_atlas_bundle(tmp_path / "atlas_source")
-    prepare_manifest_path, block0_bundle_path, suitability_path = _write_block0_run(tmp_path / "block0_run")
+    prepare_manifest_path, block0_calibration_manifest_path = _write_block0_calibration_run(
+        tmp_path / "block0_run"
+    )
 
     packet = write_task_a_result_packet(
         atlas_manifest_path=atlas_manifest_path,
         prepare_manifest_path=prepare_manifest_path,
-        block0_bundle_path=block0_bundle_path,
-        block0_suitability_report_path=suitability_path,
+        block0_calibration_manifest_path=block0_calibration_manifest_path,
         output_dir=tmp_path / "packet",
     )
 
@@ -1164,35 +997,64 @@ def test_result_packet_packages_available_atlas_block0_and_missing_block1(tmp_pa
     assert (packet.packet_root / "block2" / "block2_layer_manifest.json").exists()
     assert not (packet.packet_root / "block3").exists()
     assert (packet.packet_root / "atlas" / "bundle" / "task_a_descriptive_atlas_manifest.json").exists()
-    assert (packet.packet_root / "block0" / "bundle" / "block0_bundle.json").exists()
-    assert (packet.packet_root / "block0" / "provenance" / "p0_suitability" / "task_a_pre_block0_data_suitability.json").exists()
-    assert (packet.packet_root / "block0" / "review" / "block0_objective_review_manifest.json").exists()
-    assert (packet.packet_root / "block0" / "BLOCK0_RESULTS_INDEX.md").exists()
+    assert (
+        packet.packet_root
+        / "block0"
+        / "calibration"
+        / "block0_calibration_manifest.json"
+    ).exists()
+    assert (
+        packet.packet_root
+        / "block0"
+        / "calibration"
+        / "block0_patient_calibration.csv"
+    ).exists()
+    assert (
+        packet.packet_root
+        / "block0"
+        / "calibration"
+        / "block0_metric_summary.csv"
+    ).exists()
+    assert not (packet.packet_root / "block0" / "bundle" / "block0_bundle.json").exists()
+    assert not (packet.packet_root / "block0" / "bundle" / "block0_pair_metrics.csv").exists()
+    assert not (packet.packet_root / "block0" / "review" / "block0_gate_summary.csv").exists()
+    assert not (packet.packet_root / "block0" / "BLOCK0_RESULTS_INDEX.md").exists()
 
     index_df = pd.read_csv(packet.index_path, keep_default_na=False)
     manifest_payload = json.loads(packet.manifest_path.read_text(encoding="utf-8"))
     assert manifest_payload["included_layers"] == ["atlas", "block0", "block1", "block2"]
     assert manifest_payload["deferred_layers"] == ["block3"]
-    assert manifest_payload["surface_lineage"]["block0"]["implementation_tier"] == "legacy_live_run"
-    assert manifest_payload["surface_lineage"]["block0"]["evidence_lineage"] == "proxy_history"
-    assert {"implementation_tier", "evidence_lineage"}.issubset(index_df.columns)
-    block0_bundle_row = index_df.loc[index_df["packet_relative_path"] == "block0/bundle/block0_bundle.json"].iloc[0]
-    assert block0_bundle_row["contract_alignment"] == "legacy_live_run"
-    assert block0_bundle_row["implementation_tier"] == "legacy_live_run"
-    assert block0_bundle_row["evidence_lineage"] == "proxy_history"
-    suitability_row = index_df.loc[
-        index_df["packet_relative_path"]
-        == "block0/provenance/p0_suitability/task_a_pre_block0_data_suitability.json"
-    ].iloc[0]
-    assert suitability_row["implementation_tier"] == "canonical_full"
-    assert suitability_row["evidence_lineage"] == "canonical_rerun"
-    legacy_review_manifest = json.loads(
-        (packet.packet_root / "block0" / "review" / "block0_objective_review_manifest.json").read_text(encoding="utf-8")
+    assert manifest_payload["surface_lineage"]["block0"]["implementation_tier"] == "canonical_full"
+    assert manifest_payload["surface_lineage"]["block0"]["evidence_lineage"] == "calibration_context"
+    assert (
+        manifest_payload["surface_lineage"]["block0"]["analysis_spec_version"]
+        == "block1_family_summary_calibration_v1"
     )
-    assert legacy_review_manifest["schema_variant"] == "legacy_live_run"
-    missing_names = {row["artifact_name"] for row in legacy_review_manifest["missing_artifacts"]}
-    assert "block0_patient_review_table.csv" in missing_names
-    assert "block0_gate_summary.csv" in missing_names
+    assert (
+        manifest_payload["input_sources"]["block0_calibration_manifest_path"]
+        == str(block0_calibration_manifest_path.resolve())
+    )
+    assert "block0_bundle_path" not in manifest_payload["input_sources"]
+    assert {"implementation_tier", "evidence_lineage"}.issubset(index_df.columns)
+    calibration_manifest_row = index_df.loc[
+        index_df["packet_relative_path"]
+        == "block0/calibration/block0_calibration_manifest.json"
+    ].iloc[0]
+    assert calibration_manifest_row["contract_alignment"] == "current_calibration_manifest"
+    assert calibration_manifest_row["claim_scope"] == "calibration_context"
+    assert calibration_manifest_row["proof_carrying_status"] == "none"
+    assert calibration_manifest_row["implementation_tier"] == "canonical_full"
+    assert calibration_manifest_row["evidence_lineage"] == "calibration_context"
+    packet_relative_paths = "\n".join(index_df["packet_relative_path"].astype(str).tolist())
+    for retired_token in (
+        "block0_bundle.json",
+        "block0_pair_metrics.csv",
+        "TC-IM_randomized_target",
+        "gate_checks",
+        "block0_passed",
+        "block0_fit_cache.npz",
+    ):
+        assert retired_token not in packet_relative_paths
 
     missing_block1_row = index_df.loc[index_df["expected_relative_path"] == "block1_bundle.json"].iloc[0]
     assert missing_block1_row["artifact_status"] == "missing_on_disk"
@@ -1204,82 +1066,156 @@ def test_result_packet_packages_available_atlas_block0_and_missing_block1(tmp_pa
     assert missing_block2_row["packet_relative_path"] == ""
 
 
-def test_result_packet_generates_current_contract_block0_review_tables(tmp_path: Path) -> None:
+def test_result_packet_rejects_legacy_proxy_block0_schema(tmp_path: Path) -> None:
     from tasks.task_A.result_packet import write_task_a_result_packet
 
     atlas_manifest_path = _write_atlas_bundle(tmp_path / "atlas_source")
-    prepare_manifest_path, block0_bundle_path, suitability_path = _write_current_contract_block0_run(
+    prepare_manifest_path, invalid_block0_payload_path = _write_invalid_block0_payload(
+        tmp_path / "legacy_block0_run"
+    )
+
+    with pytest.raises(ContractError, match="Block 0 calibration manifest is missing required fields"):
+        write_task_a_result_packet(
+            atlas_manifest_path=atlas_manifest_path,
+            prepare_manifest_path=prepare_manifest_path,
+            block0_calibration_manifest_path=invalid_block0_payload_path,
+            output_dir=tmp_path / "packet",
+        )
+
+
+def test_result_packet_rejects_block0_calibration_manifest_with_wrong_analysis_spec(
+    tmp_path: Path,
+) -> None:
+    from tasks.task_A.result_packet import write_task_a_result_packet
+
+    atlas_manifest_path = _write_atlas_bundle(tmp_path / "atlas_source")
+    prepare_manifest_path, block0_calibration_manifest_path = _write_block0_calibration_run(
+        tmp_path / "block0_run_wrong_spec"
+    )
+    manifest_payload = json.loads(block0_calibration_manifest_path.read_text(encoding="utf-8"))
+    manifest_payload["analysis_spec_version"] = "legacy_a_d_e_distance_v1"
+    _write_json(block0_calibration_manifest_path, manifest_payload)
+
+    with pytest.raises(ContractError, match="analysis_spec_version"):
+        write_task_a_result_packet(
+            atlas_manifest_path=atlas_manifest_path,
+            prepare_manifest_path=prepare_manifest_path,
+            block0_calibration_manifest_path=block0_calibration_manifest_path,
+            output_dir=tmp_path / "packet_wrong_spec",
+        )
+
+
+def test_result_packet_rejects_block0_patient_calibration_with_legacy_columns(
+    tmp_path: Path,
+) -> None:
+    from tasks.task_A.result_packet import write_task_a_result_packet
+
+    atlas_manifest_path = _write_atlas_bundle(tmp_path / "atlas_source")
+    prepare_manifest_path, block0_calibration_manifest_path = _write_block0_calibration_run(
+        tmp_path / "block0_run_legacy_patient"
+    )
+    manifest_payload = json.loads(block0_calibration_manifest_path.read_text(encoding="utf-8"))
+    _write_csv(
+        Path(manifest_payload["patient_calibration_path"]),
+        [
+            {
+                "patient_id": "P01",
+                "metric_name": "A",
+                "typical_distance_stat": "median",
+                "A_real_vs_null_median_distance": 0.01,
+            }
+        ],
+    )
+
+    with pytest.raises(ContractError, match="block0_patient_calibration.csv columns do not match"):
+        write_task_a_result_packet(
+            atlas_manifest_path=atlas_manifest_path,
+            prepare_manifest_path=prepare_manifest_path,
+            block0_calibration_manifest_path=block0_calibration_manifest_path,
+            output_dir=tmp_path / "packet_legacy_patient",
+        )
+
+
+def test_result_packet_rejects_block0_metric_summary_with_legacy_columns(
+    tmp_path: Path,
+) -> None:
+    from tasks.task_A.result_packet import write_task_a_result_packet
+
+    atlas_manifest_path = _write_atlas_bundle(tmp_path / "atlas_source")
+    prepare_manifest_path, block0_calibration_manifest_path = _write_block0_calibration_run(
+        tmp_path / "block0_run_legacy_metric"
+    )
+    manifest_payload = json.loads(block0_calibration_manifest_path.read_text(encoding="utf-8"))
+    _write_csv(
+        Path(manifest_payload["metric_summary_path"]),
+        [
+            {
+                "metric_name": "A",
+                "metric_role": "proof_carrying",
+                "typical_distance_stat": "median",
+                "p_value_tail": "right",
+                "right_tail_null_fraction": 0.5,
+            }
+        ],
+    )
+
+    with pytest.raises(ContractError, match="block0_metric_summary.csv columns do not match"):
+        write_task_a_result_packet(
+            atlas_manifest_path=atlas_manifest_path,
+            prepare_manifest_path=prepare_manifest_path,
+            block0_calibration_manifest_path=block0_calibration_manifest_path,
+            output_dir=tmp_path / "packet_legacy_metric",
+        )
+
+
+def test_result_packet_does_not_generate_block0_gate_review_tables(tmp_path: Path) -> None:
+    from tasks.task_A.result_packet import write_task_a_result_packet
+
+    atlas_manifest_path = _write_atlas_bundle(tmp_path / "atlas_source")
+    prepare_manifest_path, block0_calibration_manifest_path = _write_block0_calibration_run(
         tmp_path / "block0_run_current"
     )
 
     packet = write_task_a_result_packet(
         atlas_manifest_path=atlas_manifest_path,
         prepare_manifest_path=prepare_manifest_path,
-        block0_bundle_path=block0_bundle_path,
-        block0_suitability_report_path=suitability_path,
+        block0_calibration_manifest_path=block0_calibration_manifest_path,
         output_dir=tmp_path / "packet_current",
     )
 
-    patient_review_path = packet.packet_root / "block0" / "review" / "block0_patient_review_table.csv"
-    family_summary_path = packet.packet_root / "block0" / "review" / "block0_family_summary.csv"
-    gate_summary_path = packet.packet_root / "block0" / "review" / "block0_gate_summary.csv"
-    null_provenance_path = packet.packet_root / "block0" / "review" / "block0_null_provenance.csv"
-    repro_path = packet.packet_root / "block0" / "review" / "block0_reproducibility_metadata.json"
-    block0_human_index_path = packet.packet_root / "block0" / "BLOCK0_RESULTS_INDEX.md"
-
-    assert patient_review_path.exists()
-    assert family_summary_path.exists()
-    assert gate_summary_path.exists()
-    assert null_provenance_path.exists()
-    assert repro_path.exists()
-    assert block0_human_index_path.exists()
-
-    patient_df = pd.read_csv(patient_review_path)
-    assert patient_df["anchor_patient_id"].tolist() == ["P01"]
-    assert patient_df["real_total_continuity_mass_gt_null"].tolist() == [True]
-    assert patient_df["real_total_emergence_mass_lt_null"].tolist() == [True]
-
-    gate_df = pd.read_csv(gate_summary_path)
-    assert set(gate_df["quantity_name"]) == {
-        "delta_total_continuity_mass",
-        "delta_total_depletion_mass",
-        "delta_total_emergence_mass",
-    }
-    continuity_row = gate_df.loc[gate_df["quantity_name"] == "delta_total_continuity_mass"].iloc[0]
-    assert bool(continuity_row["participates_in_pass_decision"]) is True
-    assert float(continuity_row["median_delta_value"]) == pytest.approx(1.5)
+    assert not (packet.packet_root / "block0" / "review").exists()
+    assert not (packet.packet_root / "block0" / "BLOCK0_RESULTS_INDEX.md").exists()
 
     index_df = pd.read_csv(packet.index_path, keep_default_na=False)
-    gate_row = index_df.loc[
-        index_df["packet_relative_path"] == "block0/review/block0_gate_summary.csv"
-    ].iloc[0]
-    assert gate_row["review_role"] == "proof_carrying"
-    assert gate_row["analysis_level"] == "cohort_level"
-    assert gate_row["family_surface_role"] == "comparison_surface"
-    assert gate_row["proof_carrying_status"] == "all"
-
-    block0_review_index = pd.read_csv(packet.packet_root / "block0" / "block0_review_index.csv", keep_default_na=False)
-    assert {"review_role", "analysis_level", "family_surface_role"}.issubset(block0_review_index.columns)
-
-    review_manifest = json.loads(
-        (packet.packet_root / "block0" / "review" / "block0_objective_review_manifest.json").read_text(encoding="utf-8")
+    block0_rows = index_df.loc[index_df["layer"] == "block0"].copy()
+    assert set(block0_rows["proof_carrying_status"].astype(str)) == {"none"}
+    assert "comparison_surface" not in set(block0_rows["family_surface_role"].astype(str))
+    calibration_rows = block0_rows.loc[
+        block0_rows["packet_relative_path"].astype(str).str.startswith("block0/calibration/")
+    ]
+    assert set(calibration_rows["claim_scope"].astype(str)) == {"calibration_context"}
+    assert set(calibration_rows["review_role"].astype(str)) == {"calibration"}
+    assert set(calibration_rows["family_surface_role"].astype(str)) == {"calibration_context"}
+    block0_review_index = pd.read_csv(
+        packet.packet_root / "block0" / "block0_review_index.csv",
+        keep_default_na=False,
     )
-    assert review_manifest["schema_variant"] == "current_contract_available"
-    assert review_manifest["missing_artifacts"] == []
+    assert "gate_checks" not in block0_review_index.to_csv(index=False)
 
 
 def test_result_packet_can_mirror_optional_block1_bundle(tmp_path: Path) -> None:
     from tasks.task_A.result_packet import write_task_a_result_packet
 
     atlas_manifest_path = _write_atlas_bundle(tmp_path / "atlas_source")
-    prepare_manifest_path, block0_bundle_path, suitability_path = _write_block0_run(tmp_path / "block0_run")
+    prepare_manifest_path, block0_calibration_manifest_path = _write_block0_calibration_run(
+        tmp_path / "block0_run"
+    )
     block1_bundle_path = _write_block1_bundle(tmp_path / "block1_run")
 
     packet = write_task_a_result_packet(
         atlas_manifest_path=atlas_manifest_path,
         prepare_manifest_path=prepare_manifest_path,
-        block0_bundle_path=block0_bundle_path,
-        block0_suitability_report_path=suitability_path,
+        block0_calibration_manifest_path=block0_calibration_manifest_path,
         block1_bundle_path=block1_bundle_path,
         output_dir=tmp_path / "packet",
     )
@@ -1313,7 +1249,9 @@ def test_result_packet_can_mirror_optional_block2_manifest(tmp_path: Path) -> No
     from tasks.task_A.result_packet import write_task_a_result_packet
 
     atlas_manifest_path = _write_atlas_bundle(tmp_path / "atlas_source")
-    prepare_manifest_path, block0_bundle_path, suitability_path = _write_block0_run(tmp_path / "block0_run")
+    prepare_manifest_path, block0_calibration_manifest_path = _write_block0_calibration_run(
+        tmp_path / "block0_run"
+    )
     block1_bundle_path = _write_block1_bundle(tmp_path / "block1_run")
     block2_manifest_path = _write_block2_manifest(
         tmp_path / "block2_run",
@@ -1323,8 +1261,7 @@ def test_result_packet_can_mirror_optional_block2_manifest(tmp_path: Path) -> No
     packet = write_task_a_result_packet(
         atlas_manifest_path=atlas_manifest_path,
         prepare_manifest_path=prepare_manifest_path,
-        block0_bundle_path=block0_bundle_path,
-        block0_suitability_report_path=suitability_path,
+        block0_calibration_manifest_path=block0_calibration_manifest_path,
         block1_bundle_path=block1_bundle_path,
         block2_manifest_path=block2_manifest_path,
         output_dir=tmp_path / "packet",
@@ -1391,7 +1328,9 @@ def test_result_packet_workflow_main_writes_manifest(tmp_path: Path) -> None:
     from tasks.task_A.workflows.package_results import main
 
     atlas_manifest_path = _write_atlas_bundle(tmp_path / "atlas_source")
-    prepare_manifest_path, block0_bundle_path, suitability_path = _write_block0_run(tmp_path / "block0_run")
+    prepare_manifest_path, block0_calibration_manifest_path = _write_block0_calibration_run(
+        tmp_path / "block0_run"
+    )
     output_dir = tmp_path / "packet"
 
     main(
@@ -1400,10 +1339,8 @@ def test_result_packet_workflow_main_writes_manifest(tmp_path: Path) -> None:
             str(atlas_manifest_path),
             "--prepare-manifest",
             str(prepare_manifest_path),
-            "--block0-bundle",
-            str(block0_bundle_path),
-            "--block0-suitability-report",
-            str(suitability_path),
+            "--block0-calibration-manifest",
+            str(block0_calibration_manifest_path),
             "--output-dir",
             str(output_dir),
         ]
@@ -1416,7 +1353,9 @@ def test_result_packet_workflow_rejects_block3_manifest_until_clean_bridge_exist
     from tasks.task_A.workflows.package_results import write_task_a_result_packet
 
     atlas_manifest_path = _write_atlas_bundle(tmp_path / "atlas_source")
-    prepare_manifest_path, block0_bundle_path, suitability_path = _write_block0_run(tmp_path / "block0_run")
+    prepare_manifest_path, block0_calibration_manifest_path = _write_block0_calibration_run(
+        tmp_path / "block0_run"
+    )
     block3_manifest_path = _write_json(
         tmp_path / "block3" / "block3_method_validation_manifest.json",
         {"block": "block3_method_validation", "artifact_state": "evidence_ready"},
@@ -1429,8 +1368,7 @@ def test_result_packet_workflow_rejects_block3_manifest_until_clean_bridge_exist
         write_task_a_result_packet(
             atlas_manifest_path=atlas_manifest_path,
             prepare_manifest_path=prepare_manifest_path,
-            block0_bundle_path=block0_bundle_path,
-            block0_suitability_report_path=suitability_path,
+            block0_calibration_manifest_path=block0_calibration_manifest_path,
             block3_manifest_path=block3_manifest_path,
             output_dir=tmp_path / "packet",
         )
@@ -1440,18 +1378,24 @@ def test_result_packet_validation_fails_when_mirrored_file_is_removed(tmp_path: 
     from tasks.task_A.result_packet import validate_task_a_result_packet, write_task_a_result_packet
 
     atlas_manifest_path = _write_atlas_bundle(tmp_path / "atlas_source")
-    prepare_manifest_path, block0_bundle_path, suitability_path = _write_block0_run(tmp_path / "block0_run")
+    prepare_manifest_path, block0_calibration_manifest_path = _write_block0_calibration_run(
+        tmp_path / "block0_run"
+    )
 
     packet = write_task_a_result_packet(
         atlas_manifest_path=atlas_manifest_path,
         prepare_manifest_path=prepare_manifest_path,
-        block0_bundle_path=block0_bundle_path,
-        block0_suitability_report_path=suitability_path,
+        block0_calibration_manifest_path=block0_calibration_manifest_path,
         output_dir=tmp_path / "packet",
     )
 
-    mirrored_block0_bundle = packet.packet_root / "block0" / "bundle" / "block0_bundle.json"
-    mirrored_block0_bundle.unlink()
+    mirrored_calibration_manifest = (
+        packet.packet_root
+        / "block0"
+        / "calibration"
+        / "block0_calibration_manifest.json"
+    )
+    mirrored_calibration_manifest.unlink()
 
     with pytest.raises(ContractError, match="Referenced packet artifact is missing"):
         validate_task_a_result_packet(packet.manifest_path)

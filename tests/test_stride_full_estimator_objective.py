@@ -7,6 +7,7 @@ import torch
 from stride.errors import ContractError
 from stride.geometry import build_state_geometry
 from stride.objectives import (
+    FullEstimatorObjectiveFixedCache,
     FullEstimatorEvidenceBlock,
     FullEstimatorParameters,
     assemble_full_estimator_totals,
@@ -381,3 +382,107 @@ def test_objective_ledger_carries_canonical_D_obs_metadata() -> None:
     assert ledger.metadata["state_geometry"]["normalization"] == "C_norm = C_raw / s_C"
     assert ledger.metadata["state_geometry"]["s_C"] == pytest.approx(1.0)
     assert ledger.observation_blocks[0].metadata["operator_version"] == metadata["operator_version"]
+
+
+def test_cached_and_uncached_objective_ledgers_are_equivalent_on_tiny_fixture() -> None:
+    params = parameters_from_unconstrained(unconstrained_from_initialization(("p1",), 2))
+    blocks = (
+        FullEstimatorEvidenceBlock(
+            patient_id="p1",
+            source_bag=torch.tensor([[0.75, 0.25], [0.25, 0.75]], dtype=torch.float64),
+            target_bag=torch.tensor([[0.20, 0.80], [0.40, 0.60]], dtype=torch.float64),
+            block_id="p1:fixture",
+        ),
+    )
+
+    uncached = compute_full_estimator_objective(params, blocks, _geometry())
+    cache = FullEstimatorObjectiveFixedCache.build(
+        params=params,
+        evidence_blocks=blocks,
+        geometry=_geometry(),
+    )
+    assert len(cache.observation_ground_cost_cache) == 1
+    cached = compute_full_estimator_objective(
+        params,
+        blocks,
+        _geometry(),
+        fixed_cache=cache,
+    )
+    assert len(cache.observation_ground_cost_cache) == 1
+
+    torch.testing.assert_close(cached.total, uncached.total)
+    torch.testing.assert_close(cached.local, uncached.local)
+    torch.testing.assert_close(cached.regularization, uncached.regularization)
+    assert cached.metadata == uncached.metadata
+    assert tuple(cached.components) == tuple(uncached.components)
+    for name in cached.components:
+        torch.testing.assert_close(cached.components[name].raw, uncached.components[name].raw)
+        torch.testing.assert_close(cached.components[name].scale, uncached.components[name].scale)
+        torch.testing.assert_close(
+            cached.components[name].normalized,
+            uncached.components[name].normalized,
+        )
+        assert cached.components[name].floor_used is uncached.components[name].floor_used
+    for cached_record, uncached_record in zip(
+        cached.observation_blocks,
+        uncached.observation_blocks,
+        strict=True,
+    ):
+        torch.testing.assert_close(cached_record.raw, uncached_record.raw)
+        torch.testing.assert_close(cached_record.normalized, uncached_record.normalized)
+        assert cached_record.metadata == uncached_record.metadata
+
+
+def test_objective_fixed_cache_rejects_obvious_mismatches() -> None:
+    params = parameters_from_unconstrained(unconstrained_from_initialization(("p1",), 2))
+    blocks = (
+        FullEstimatorEvidenceBlock(
+            patient_id="p1",
+            source_bag=torch.tensor([[0.75, 0.25]], dtype=torch.float64),
+            target_bag=torch.tensor([[0.20, 0.80]], dtype=torch.float64),
+            block_id="p1:fixture",
+        ),
+    )
+    cache = FullEstimatorObjectiveFixedCache.build(
+        params=params,
+        evidence_blocks=blocks,
+        geometry=_geometry(),
+    )
+    wrong_params = parameters_from_unconstrained(unconstrained_from_initialization(("p2",), 2))
+
+    with pytest.raises(ContractError, match="fixed_cache.*patient_ids"):
+        compute_full_estimator_objective(
+            wrong_params,
+            blocks,
+            _geometry(),
+            fixed_cache=cache,
+        )
+
+
+def test_objective_fixed_cache_rejects_in_place_evidence_mutation() -> None:
+    params = parameters_from_unconstrained(unconstrained_from_initialization(("p1",), 2))
+    source_bag = torch.tensor([[0.75, 0.25]], dtype=torch.float64)
+    target_bag = torch.tensor([[0.20, 0.80]], dtype=torch.float64)
+    blocks = (
+        FullEstimatorEvidenceBlock(
+            patient_id="p1",
+            source_bag=source_bag,
+            target_bag=target_bag,
+            block_id="p1:fixture",
+        ),
+    )
+    cache = FullEstimatorObjectiveFixedCache.build(
+        params=params,
+        evidence_blocks=blocks,
+        geometry=_geometry(),
+    )
+
+    source_bag.copy_(torch.tensor([[0.25, 0.75]], dtype=torch.float64))
+
+    with pytest.raises(ContractError, match="fixed_cache evidence_blocks"):
+        compute_full_estimator_objective(
+            params,
+            blocks,
+            _geometry(),
+            fixed_cache=cache,
+        )

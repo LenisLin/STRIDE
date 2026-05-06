@@ -22,9 +22,8 @@ def write_task_a_result_packet(
     *,
     atlas_manifest_path: str | Path,
     prepare_manifest_path: str | Path,
-    block0_bundle_path: str | Path,
+    block0_calibration_manifest_path: str | Path,
     output_dir: str | Path,
-    block0_suitability_report_path: str | Path | None = None,
     block1_bundle_path: str | Path | None = None,
     block2_manifest_path: str | Path | None = None,
     block3_manifest_path: str | Path | None = None,
@@ -41,9 +40,8 @@ def write_task_a_result_packet(
     packet = _write_task_a_result_packet(
         atlas_manifest_path=atlas_manifest_path,
         prepare_manifest_path=prepare_manifest_path,
-        block0_bundle_path=block0_bundle_path,
+        block0_calibration_manifest_path=block0_calibration_manifest_path,
         output_dir=output_dir,
-        block0_suitability_report_path=block0_suitability_report_path,
         block1_bundle_path=block1_bundle_path,
         block2_manifest_path=block2_manifest_path,
         block3_manifest_path=block3_manifest_path,
@@ -60,9 +58,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument("--atlas-manifest", required=True)
     parser.add_argument("--prepare-manifest", required=True)
-    parser.add_argument("--block0-bundle", required=True)
+    parser.add_argument("--block0-calibration-manifest", required=True)
     parser.add_argument("--output-dir", required=True)
-    parser.add_argument("--block0-suitability-report")
     parser.add_argument("--block1-bundle")
     parser.add_argument("--block2-manifest")
     parser.add_argument("--block3-manifest")
@@ -75,9 +72,8 @@ def main(argv: list[str] | None = None) -> None:
         manifest_path = write_task_a_result_packet(
             atlas_manifest_path=args.atlas_manifest,
             prepare_manifest_path=args.prepare_manifest,
-            block0_bundle_path=args.block0_bundle,
+            block0_calibration_manifest_path=args.block0_calibration_manifest,
             output_dir=args.output_dir,
-            block0_suitability_report_path=args.block0_suitability_report,
             block1_bundle_path=args.block1_bundle,
             block2_manifest_path=args.block2_manifest,
             block3_manifest_path=args.block3_manifest,
