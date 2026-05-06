@@ -9,21 +9,22 @@ Local boundary:
     - This module owns input validation, full-estimator fitting, local
       compatibility initialization, and the cohort recurrence layer used by
       `fit_stride`.
-    - It does not define Task A routing, semisynthetic generation, or Block 3
-      scoring rules.
-    - It exposes Task A core ablations only through the private internal refit
-      hook used by validation surfaces.
+    - It does not define task-specific routing, semisynthetic generation, or
+      external validation scoring rules.
+    - It exposes core ablations only through the private internal refit hook
+      used by validation surfaces.
 
 Primary contents:
     - Canonical input dataclasses and validators.
     - Full-estimator objective/optimizer orchestration.
     - Local patient initialization compatibility path.
-    - Internal Task A ablation refit hooks.
+    - Internal validation ablation refit hooks.
 
 Why this module exists:
-    The Python API needs one audited path for `fit_stride(...)`. Task A may ask
-    this layer for core STRIDE ablation refits through a private hook, keeping
-    experiment controls out of the ordinary public configuration surface.
+    The Python API needs one audited path for `fit_stride(...)`. Validation
+    surfaces may ask this layer for core STRIDE ablation refits through a
+    private hook, keeping experiment controls out of the ordinary public
+    configuration surface.
 """
 from __future__ import annotations
 
@@ -1698,7 +1699,7 @@ class STRIDEFitConfig:
 
     Fields:
         objective_weights: Canonical loss weights for the current reference
-            path. These do not expose Task A ablation controls to normal users.
+            path. These do not expose internal ablation controls to normal users.
         cohort_shrinkage_weight: Canonical shrinkage strength for the current
             reference path.
         enable_relation_refinement: Whether to run the active constrained
@@ -1768,7 +1769,7 @@ def _with_internal_ablation_mode(
     config: STRIDEFitConfig | None,
     ablation_mode: str,
 ) -> STRIDEFitConfig:
-    """Return a config carrying a Task A-only core ablation request.
+    """Return a config carrying an internal core ablation request.
 
     The hook is intentionally private so recurrence/geometry/consistency refits
     remain experiment provenance rather than ordinary user-level fit controls.
@@ -1947,7 +1948,7 @@ def _build_deferred_ablation_fit(
         config=config,
     )
     message = (
-        "Internal Task A core STRIDE ablation refit is deferred because this input "
+        "Internal core STRIDE ablation refit is deferred because this input "
         "does not satisfy the supported two-timepoint geometry-present full-estimator path."
     )
     patient_results = tuple(
@@ -2174,6 +2175,11 @@ def _build_full_optimizer_patient_results(
         pre_group, post_group = patient_input.groups
         mu_minus = _mean_group_composition(pre_group)
         mu_plus = _mean_group_composition(post_group)
+        patient_A = A_all[patient_index]
+        patient_d = d_all[patient_index]
+        patient_e = e_all[patient_index]
+        transition_burden = np.asarray(patient_A, dtype=float) * mu_minus[:, None]
+        emergence_scale = float(np.sum(mu_minus, dtype=float))
         audit = PatientRelationAudit(
             patient_id=patient_input.patient_id,
             timepoint_order=patient_input.ordered_group_labels,
@@ -2193,9 +2199,9 @@ def _build_full_optimizer_patient_results(
             PatientBridgeResult(
                 patient_id=patient_input.patient_id,
                 fit_status="ok",
-                A=A_all[patient_index],
-                d=d_all[patient_index],
-                e=e_all[patient_index],
+                A=patient_A,
+                d=patient_d,
+                e=patient_e,
                 mu_minus=mu_minus,
                 mu_plus=mu_plus,
                 state_ids=_resolve_patient_state_ids(patient_input),
@@ -2211,6 +2217,17 @@ def _build_full_optimizer_patient_results(
                     "message": (
                         "Fitted A, d, and e through the canonical PyTorch/AdamW "
                         "full-estimator objective."
+                    ),
+                },
+                auxiliary={
+                    "matched_transition_burden": transition_burden,
+                    "raw_matched_transition_burden": transition_burden,
+                    "source_unmatched_burden": np.asarray(patient_d, dtype=float) * mu_minus,
+                    "target_unmatched_burden": np.asarray(patient_e, dtype=float) * emergence_scale,
+                    "model_implied_mu_plus": _reconstruct_post_burden(
+                        patient_A,
+                        patient_e,
+                        mu_minus,
                     ),
                 },
                 implementation_tier="canonical_full",

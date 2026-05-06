@@ -158,6 +158,46 @@ def test_optimizer_does_not_complete_from_positive_improvement_alone() -> None:
     }
 
 
+def test_optimizer_reuses_fixed_objective_cache_across_steps(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import stride.objectives.full_estimator as objective_module
+
+    call_count = 0
+    original = objective_module.compute_init_fov_cost_scale
+
+    def counting_compute_init_fov_cost_scale(*args, **kwargs):  # type: ignore[no-untyped-def]
+        nonlocal call_count
+        call_count += 1
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(
+        objective_module,
+        "compute_init_fov_cost_scale",
+        counting_compute_init_fov_cost_scale,
+    )
+
+    result = optimize_full_estimator(
+        patient_ids=("p1",),
+        K=2,
+        evidence_blocks=_blocks(),
+        geometry=_geometry(),
+        config=FullEstimatorOptimizerConfig(
+            max_steps=3,
+            min_steps=3,
+            learning_rate=0.01,
+            min_relative_improvement=0.0,
+            convergence_tol=0.0,
+            gradient_norm_tol=0.0,
+            patience=10,
+        ),
+    )
+
+    assert result.status in {"ok", "deferred"}
+    assert result.diagnostics["n_steps"] >= 3
+    assert call_count == len(_blocks())
+
+
 def test_optimizer_rejects_invalid_scheduler_policy() -> None:
     with pytest.raises(ContractError, match="scheduler_policy"):
         optimize_full_estimator(

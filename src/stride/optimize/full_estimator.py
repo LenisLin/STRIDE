@@ -12,6 +12,7 @@ from ..objectives.full_estimator import (
     ABLATION_TERM_HANDLING,
     EPSILON_NORM,
     FullEstimatorEvidenceBlock,
+    FullEstimatorObjectiveFixedCache,
     FullEstimatorObjectiveLedger,
     FullEstimatorParameters,
     FullEstimatorUnconstrainedParameters,
@@ -316,6 +317,13 @@ def optimize_full_estimator(
         lr=float(resolved_config.learning_rate),
         weight_decay=0.0,
     )
+    fixed_cache = FullEstimatorObjectiveFixedCache.build(
+        params=parameters_from_unconstrained(unconstrained),
+        evidence_blocks=evidence_blocks,
+        geometry=geometry,
+        epsilon_norm=float(resolved_config.epsilon_norm),
+        config=resolved_config.observation_config,
+    )
     scheduler = None
     if resolved_config.scheduler_policy == "ReduceLROnPlateau_on_total_objective":
         scheduler = torch_module.optim.lr_scheduler.ReduceLROnPlateau(
@@ -340,6 +348,7 @@ def optimize_full_estimator(
                 epsilon_norm=float(resolved_config.epsilon_norm),
                 ablation_mode=str(resolved_config.ablation_mode),
                 config=resolved_config.observation_config,
+                fixed_cache=fixed_cache,
             )
             if not _finite_loss(ledger.total):
                 return FullEstimatorOptimizerResult(

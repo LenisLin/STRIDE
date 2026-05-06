@@ -113,6 +113,95 @@ class FullEstimatorTotals:
 
 
 @dataclass(frozen=True)
+class FullEstimatorObjectiveFixedCache:
+    """Fixed full-estimator baseline quantities for one objective input surface."""
+
+    patient_ids: tuple[str, ...]
+    K: int
+    device: str
+    evidence_block_keys: tuple[tuple[object, ...], ...]
+    geometry_cost_scale: float
+    geometry_cost_matrix: Any
+    observation_config: BalancedSinkhornDivergenceConfig
+    epsilon_norm: float
+    initialization: FullEstimatorInitialization
+    init_params: FullEstimatorParameters
+    fov_cost_scales: tuple[FullEstimatorFovCostScale, ...]
+    observation_ground_cost_cache: dict[tuple[object, ...], Any]
+    baseline_obs: _ObservationRawResult
+    obs_scale: Any
+    baseline_consistency_raw: Any
+    baseline_recurrence: FullEstimatorRecurrenceLedger
+    baseline_geometry_raw: Any
+
+    @classmethod
+    def build(
+        cls,
+        *,
+        params: FullEstimatorParameters,
+        evidence_blocks: Sequence[FullEstimatorEvidenceBlock],
+        geometry: StateGeometry,
+        epsilon_norm: float = EPSILON_NORM,
+        config: BalancedSinkhornDivergenceConfig | None = None,
+    ) -> "FullEstimatorObjectiveFixedCache":
+        """Compute fixed baseline quantities for repeated objective evaluations."""
+        _, _, _, patient_ids = _validate_parameters(params)
+        init, init_params = _initial_parameters_for(params)
+        resolved_config = _resolve_observation_config(config)
+        resolved_epsilon = _validate_epsilon_norm(epsilon_norm)
+        fov_cost_scales = tuple(
+            _resolve_block_fov_cost_scale(block, geometry, K=init.K, config=resolved_config)
+            for block in evidence_blocks
+        )
+        observation_ground_cost_cache: dict[tuple[object, ...], Any] = {}
+        baseline_obs = _compute_observation_raw(
+            init_params,
+            evidence_blocks,
+            geometry,
+            fov_cost_scales=fov_cost_scales,
+            config=resolved_config,
+            observed_self_ground_cost_cache=observation_ground_cost_cache,
+        )
+        obs_scale, _ = _scale_from_baseline(
+            baseline_obs.raw,
+            epsilon_norm=resolved_epsilon,
+            name="L_obs",
+        )
+        block_patient_ids = tuple(block.patient_id for block in evidence_blocks)
+        baseline_normalized_block_losses = baseline_obs.block_values / obs_scale
+        baseline_consistency_raw, _ = compute_consistency_raw_from_block_losses(
+            patient_ids=patient_ids,
+            block_patient_ids=block_patient_ids,
+            normalized_block_losses=baseline_normalized_block_losses,
+        )
+        baseline_recurrence = compute_recurrence_raw(init_params)
+        baseline_geometry_raw = compute_geometry_raw(init_params, geometry)
+        return cls(
+            patient_ids=patient_ids,
+            K=init.K,
+            device=_device_key(init.A.device),
+            evidence_block_keys=_evidence_block_keys(evidence_blocks),
+            geometry_cost_scale=float(geometry.cost_scale),
+            geometry_cost_matrix=_as_float64_tensor(
+                geometry.cost_matrix,
+                name="StateGeometry.cost_matrix",
+                device=init.A.device,
+            ).detach().clone(),
+            observation_config=resolved_config,
+            epsilon_norm=resolved_epsilon,
+            initialization=init,
+            init_params=init_params,
+            fov_cost_scales=fov_cost_scales,
+            observation_ground_cost_cache=observation_ground_cost_cache,
+            baseline_obs=baseline_obs,
+            obs_scale=obs_scale,
+            baseline_consistency_raw=baseline_consistency_raw,
+            baseline_recurrence=baseline_recurrence,
+            baseline_geometry_raw=baseline_geometry_raw,
+        )
+
+
+@dataclass(frozen=True)
 class FullEstimatorObservationBlockLedger:
     """Per-evidence-block observation loss record."""
 
@@ -182,6 +271,25 @@ def _require_torch() -> Any:
     if torch is None:  # pragma: no cover - depends on optional runtime
         raise ContractError("canonical full-estimator objective requires torch")
     return torch
+
+
+def _device_key(device: Any) -> str:
+    return str(device)
+
+
+def _tensor_data_ptr(value: Any) -> int | None:
+    torch_module = _require_torch()
+    if not torch_module.is_tensor(value):
+        return None
+    return int(value.data_ptr())
+
+
+def _tensor_mutation_version(value: Any) -> int | None:
+    torch_module = _require_torch()
+    if not torch_module.is_tensor(value):
+        return None
+    version = getattr(value, "_version", None)
+    return None if version is None else int(version)
 
 
 def _require_positive_int(value: Any, *, name: str) -> int:
@@ -285,6 +393,37 @@ def _component_tensor(value: Any, *, name: str, device: Any | None = None) -> An
     if tensor.ndim != 0:
         raise ContractError(f"{name} must be scalar")
     return tensor
+
+
+def _evidence_block_keys(
+    evidence_blocks: Sequence[FullEstimatorEvidenceBlock],
+) -> tuple[tuple[object, ...], ...]:
+    keys: list[tuple[object, ...]] = []
+    for block in evidence_blocks:
+        if not isinstance(block, FullEstimatorEvidenceBlock):
+            raise ContractError("evidence_blocks must contain FullEstimatorEvidenceBlock objects")
+        source = _as_float64_tensor(block.source_bag, name="source_bag")
+        target = _as_float64_tensor(block.target_bag, name="target_bag", device=source.device)
+        fov_cost_scale = (
+            None if block.fov_cost_scale is None else float(block.fov_cost_scale)
+        )
+        keys.append(
+            (
+                str(block.patient_id).strip(),
+                block.block_id,
+                id(block.source_bag),
+                id(block.target_bag),
+                _tensor_data_ptr(block.source_bag),
+                _tensor_data_ptr(block.target_bag),
+                _tensor_mutation_version(block.source_bag),
+                _tensor_mutation_version(block.target_bag),
+                tuple(int(item) for item in source.shape),
+                tuple(int(item) for item in target.shape),
+                fov_cost_scale,
+                bool(block.fov_cost_scale_floor_used),
+            )
+        )
+    return tuple(keys)
 
 
 def identity_plus_small_open_initialization(
@@ -730,6 +869,7 @@ def _compute_observation_raw(
     *,
     fov_cost_scales: Sequence[FullEstimatorFovCostScale],
     config: BalancedSinkhornDivergenceConfig | None,
+    observed_self_ground_cost_cache: dict[tuple[object, ...], Any] | None = None,
 ) -> _ObservationRawResult:
     torch_module = _require_torch()
     A, _, e, patient_ids = _validate_parameters(params)
@@ -760,6 +900,7 @@ def _compute_observation_raw(
             fov_cost_scale=fov_cost_scale.value,
             fov_cost_scale_floor_used=fov_cost_scale.floor_used,
             config=config,
+            observed_self_ground_cost_cache=observed_self_ground_cost_cache,
         )
         value = result.value
         _validate_raw_loss(value, name="L_obs_pair_raw")
@@ -913,6 +1054,51 @@ def _initial_parameters_for(params: FullEstimatorParameters) -> tuple[FullEstima
     return init, init_params
 
 
+def _validate_fixed_cache(
+    fixed_cache: FullEstimatorObjectiveFixedCache,
+    *,
+    params: FullEstimatorParameters,
+    evidence_blocks: Sequence[FullEstimatorEvidenceBlock],
+    geometry: StateGeometry,
+    epsilon_norm: float,
+    config: BalancedSinkhornDivergenceConfig | None,
+) -> None:
+    torch_module = _require_torch()
+    A, _, _, patient_ids = _validate_parameter_shapes(params)
+    if not isinstance(fixed_cache, FullEstimatorObjectiveFixedCache):
+        raise ContractError("fixed_cache must be a FullEstimatorObjectiveFixedCache object")
+    if fixed_cache.patient_ids != patient_ids:
+        raise ContractError("fixed_cache patient_ids do not match current objective parameters")
+    if int(fixed_cache.K) != int(A.shape[1]):
+        raise ContractError("fixed_cache K does not match current objective parameters")
+    if fixed_cache.device != _device_key(A.device):
+        raise ContractError("fixed_cache device does not match current objective parameters")
+    if fixed_cache.evidence_block_keys != _evidence_block_keys(evidence_blocks):
+        raise ContractError("fixed_cache evidence_blocks do not match current objective inputs")
+    if float(fixed_cache.geometry_cost_scale) != float(geometry.cost_scale):
+        raise ContractError("fixed_cache geometry does not match current objective inputs")
+    current_geometry = _as_float64_tensor(
+        geometry.cost_matrix,
+        name="StateGeometry.cost_matrix",
+        device=A.device,
+    )
+    cached_geometry = _as_float64_tensor(
+        fixed_cache.geometry_cost_matrix,
+        name="fixed_cache.geometry_cost_matrix",
+        device=A.device,
+    )
+    if current_geometry.shape != cached_geometry.shape or not _finite_scalar_bool(
+        torch_module.allclose(current_geometry, cached_geometry, rtol=0.0, atol=0.0)
+    ):
+        raise ContractError("fixed_cache geometry does not match current objective inputs")
+    if fixed_cache.observation_config != _resolve_observation_config(config):
+        raise ContractError(
+            "fixed_cache observation_config does not match current objective inputs"
+        )
+    if float(fixed_cache.epsilon_norm) != _validate_epsilon_norm(epsilon_norm):
+        raise ContractError("fixed_cache epsilon_norm does not match current objective inputs")
+
+
 def compute_full_estimator_objective(
     params: FullEstimatorParameters,
     evidence_blocks: Sequence[FullEstimatorEvidenceBlock],
@@ -922,14 +1108,29 @@ def compute_full_estimator_objective(
     epsilon_norm: float = EPSILON_NORM,
     ablation_mode: str = "none",
     config: BalancedSinkhornDivergenceConfig | None = None,
+    fixed_cache: FullEstimatorObjectiveFixedCache | None = None,
 ) -> FullEstimatorObjectiveLedger:
     """Evaluate the canonical full-estimator objective and normalization ledger."""
     _, _, _, patient_ids = _validate_parameters(params)
-    init, init_params = _initial_parameters_for(params)
-    fov_cost_scales = tuple(
-        _resolve_block_fov_cost_scale(block, geometry, K=init.K, config=config)
-        for block in evidence_blocks
-    )
+    if fixed_cache is None:
+        fixed_cache = FullEstimatorObjectiveFixedCache.build(
+            params=params,
+            evidence_blocks=evidence_blocks,
+            geometry=geometry,
+            epsilon_norm=epsilon_norm,
+            config=config,
+        )
+    else:
+        _validate_fixed_cache(
+            fixed_cache,
+            params=params,
+            evidence_blocks=evidence_blocks,
+            geometry=geometry,
+            epsilon_norm=epsilon_norm,
+            config=config,
+        )
+    init = fixed_cache.initialization
+    fov_cost_scales = fixed_cache.fov_cost_scales
 
     current_obs = _compute_observation_raw(
         params,
@@ -937,35 +1138,19 @@ def compute_full_estimator_objective(
         geometry,
         fov_cost_scales=fov_cost_scales,
         config=config,
+        observed_self_ground_cost_cache=fixed_cache.observation_ground_cost_cache,
     )
-    baseline_obs = _compute_observation_raw(
-        init_params,
-        evidence_blocks,
-        geometry,
-        fov_cost_scales=fov_cost_scales,
-        config=config,
-    )
-    obs_scale, _ = _scale_from_baseline(
-        baseline_obs.raw,
-        epsilon_norm=_validate_epsilon_norm(epsilon_norm),
-        name="L_obs",
-    )
+    baseline_obs = fixed_cache.baseline_obs
+    obs_scale = fixed_cache.obs_scale
     current_normalized_block_losses = current_obs.block_values / obs_scale
-    baseline_normalized_block_losses = baseline_obs.block_values / obs_scale
     block_patient_ids = tuple(block.patient_id for block in evidence_blocks)
     consistency_raw, consistency_records = compute_consistency_raw_from_block_losses(
         patient_ids=patient_ids,
         block_patient_ids=block_patient_ids,
         normalized_block_losses=current_normalized_block_losses,
     )
-    baseline_consistency_raw, _ = compute_consistency_raw_from_block_losses(
-        patient_ids=patient_ids,
-        block_patient_ids=block_patient_ids,
-        normalized_block_losses=baseline_normalized_block_losses,
-    )
 
     recurrence = compute_recurrence_raw(params)
-    baseline_recurrence = compute_recurrence_raw(init_params)
     totals = assemble_full_estimator_totals(
         raw_components={
             "obs": current_obs.raw,
@@ -976,9 +1161,9 @@ def compute_full_estimator_objective(
         },
         baseline_components={
             "obs": baseline_obs.raw,
-            "geometry": compute_geometry_raw(init_params, geometry),
-            "consistency": baseline_consistency_raw,
-            "recurrence": baseline_recurrence.raw,
+            "geometry": fixed_cache.baseline_geometry_raw,
+            "consistency": fixed_cache.baseline_consistency_raw,
+            "recurrence": fixed_cache.baseline_recurrence.raw,
         },
         alpha=alpha,
         epsilon_norm=epsilon_norm,
