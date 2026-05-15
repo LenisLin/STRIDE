@@ -1,15 +1,11 @@
-"""Validation helpers for semi-public tabular export artifacts.
-
-These checks support compatibility-oriented reporting and export layers. They do
-not define the primary STRIDE model API.
-"""
+"""Validation helpers for semi-public tabular export artifacts."""
 from __future__ import annotations
 
 from collections.abc import Sequence
 
 import pandas as pd
 
-from ..errors import ContractError, DataContractError
+from ..errors import ContractError
 
 CANONICAL_UOT_STATUSES: tuple[str, ...] = (
     "ok",
@@ -34,7 +30,7 @@ def _require_columns(df: pd.DataFrame, cols: Sequence[str], *, where: str) -> No
 
 
 def validate_metrics_table(df: pd.DataFrame) -> None:
-    """Validate the narrow metrics-table schema used by compatibility exports."""
+    """Validate the narrow metrics-table schema used by tabular exports."""
     _require_columns(df, ("patient_group_id", "uot_status"), where="metrics table")
 
     if df["patient_group_id"].isna().any():
@@ -64,7 +60,7 @@ def validate_metrics_table(df: pd.DataFrame) -> None:
 
 
 def validate_events_table(df: pd.DataFrame) -> None:
-    """Validate the minimal event-table schema used by compatibility exports."""
+    """Validate the minimal event-table schema used by tabular exports."""
     _require_columns(df, ("patient_group_id", "event_type"), where="events table")
     if df["patient_group_id"].isna().any():
         raise ContractError("events table: patient_group_id contains NA")
@@ -74,7 +70,6 @@ __all__ = [
     "CANONICAL_BYPASS_REASONS",
     "CANONICAL_UOT_STATUSES",
     "ContractError",
-    "DataContractError",
     "MICRO_METRICS",
     "validate_events_table",
     "validate_metrics_table",

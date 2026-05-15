@@ -1,12 +1,11 @@
 """Stage 0 observation surface for Task A Block 0 calibration.
 
 Block 0 asks whether real `TC-IM` STRIDE relation structure departs from a
-within-patient count-preserving FOV domain-label permutation null. Its hard inputs are limited to
-Task A config, Stage 0 h5ad, output dir, permutation count, master seed, and
-optional selectors. Observation construction must not consume prepare outputs,
-descriptive-atlas artifacts, old suitability outputs, or passed bundles.
-Outputs remain calibration statistics, not biological interpretation or
-downstream execution decisions. See `tasks/task_A/README.md`,
+within-patient count-preserving FOV domain-label permutation null. Its hard
+inputs are Task A config, Stage 0 h5ad, output dir, permutation count, master
+seed, and optional selectors. Outputs remain calibration statistics, not
+biological interpretation or downstream execution decisions. See
+`tasks/task_A/README.md`,
 `tasks/task_A/contracts/artifact_contracts.md`, and
 `tasks/task_A/contracts/design_freeze.py`.
 """
@@ -20,8 +19,8 @@ from stride import DatasetHandle
 from stride.errors import ContractError
 from stride.observation.contracts import FovObservation
 
-from ..config import TaskAConfigBundle
-from ..workflows.stride_adapter import (
+from ...config import TaskAConfigBundle
+from ...workflows.stride_adapter import (
     build_task_a_family_observations,
     resolve_task_a_state_basis,
 )

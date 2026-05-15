@@ -20,7 +20,7 @@ except ImportError:  # pragma: no cover
 
 BALANCED_SINKHORN_OPERATOR_VERSION = "D_obs^BalancedSinkhornDivergence-v1"
 CANONICAL_EPSILON_SCHEDULE = (0.5, 0.2, 0.1)
-CANONICAL_MAX_ITER = 1000
+CANONICAL_MAX_ITER = 100
 CANONICAL_TOL = 1e-6
 CANONICAL_WARNING_TOL = 1e-4
 SMALL_NEGATIVE_TOL = 1e-10
@@ -383,139 +383,27 @@ def _sinkhorn_transport_cost(
     config: BalancedSinkhornDivergenceConfig,
     label: str,
 ) -> _SinkhornCostComputation:
-    """Return balanced entropic OT under the final epsilon stage.
-
-    Convention: this implementation reports the primal regularized objective
-    ``<P, C> + epsilon * sum_ij P_ij * (log(P_ij) - 1)`` for the final
-    epsilon in the schedule. The additive ``-epsilon`` term cancels in the
-    debiased Sinkhorn divergence, but keeping the full convention here makes
-    the low-level OT value explicit and auditable.
-    """
-    torch_module = _require_torch()
+    """Return balanced entropic OT under the final epsilon stage."""
     if left_mass.ndim != 1 or right_mass.ndim != 1:
         raise ContractError(f"{label} Sinkhorn masses must be 1D")
     if cost_matrix.shape != (left_mass.shape[0], right_mass.shape[0]):
         raise ContractError(f"{label} cost matrix shape must match Sinkhorn masses")
-
-    left_value = left_mass.detach()
-    right_value = right_mass.detach()
-    cost_value = cost_matrix.detach()
-    log_left = _safe_log_distribution(left_value)
-    log_right = _safe_log_distribution(right_value)
-    left_positive = left_value > 0.0
-    right_positive = right_value > 0.0
-    neg_inf_left = torch_module.full_like(left_value, -torch_module.inf)
-    neg_inf_right = torch_module.full_like(right_value, -torch_module.inf)
-
-    f = torch_module.zeros_like(left_value)
-    g = torch_module.zeros_like(right_value)
-    warnings: list[str] = []
-    final_updates: list[float] = []
-    iterations: list[int] = []
-    max_iter_reached: list[bool] = []
-
-    with torch_module.no_grad():
-        for epsilon in epsilon_schedule:
-            eps = float(epsilon)
-            stage_reached_max_iter = True
-            final_update = float("inf")
-            current_iteration = 0
-
-            for iteration in range(1, config.max_iter + 1):
-                current_iteration = iteration
-                previous_f = f
-                previous_g = g
-
-                masked_g = torch_module.where(right_positive, g, neg_inf_right)
-                proposed_f = eps * (
-                    log_left
-                    - torch_module.logsumexp(
-                        (masked_g.unsqueeze(0) - cost_value) / eps,
-                        dim=1,
-                    )
-                )
-                f = torch_module.where(left_positive, proposed_f, torch_module.zeros_like(proposed_f))
-
-                masked_f = torch_module.where(left_positive, f, neg_inf_left)
-                proposed_g = eps * (
-                    log_right
-                    - torch_module.logsumexp(
-                        (masked_f.unsqueeze(1) - cost_value) / eps,
-                        dim=0,
-                    )
-                )
-                g = torch_module.where(right_positive, proposed_g, torch_module.zeros_like(proposed_g))
-
-                update = torch_module.maximum(
-                    _max_update(f, previous_f, left_positive),
-                    _max_update(g, previous_g, right_positive),
-                )
-                potential_update = float(update.detach().cpu())
-                if not math.isfinite(potential_update):
-                    raise ContractError(f"{label} Sinkhorn iteration produced a non-finite update")
-                residual = _marginal_residual(
-                    f=f,
-                    g=g,
-                    cost_matrix=cost_value,
-                    epsilon=eps,
-                    left_mass=left_value,
-                    right_mass=right_value,
-                    left_positive=left_positive,
-                    right_positive=right_positive,
-                )
-                final_update = float(residual.detach().cpu())
-                if not math.isfinite(final_update):
-                    raise ContractError(f"{label} Sinkhorn iteration produced a non-finite residual")
-                if final_update <= config.tol:
-                    stage_reached_max_iter = False
-                    break
-
-            if stage_reached_max_iter:
-                if final_update <= config.warning_tol:
-                    warnings.append(
-                        f"{label} Sinkhorn epsilon={eps:g} reached max_iter with update={final_update:g}"
-                    )
-                else:
-                    raise ContractError(
-                        f"{label} Sinkhorn epsilon={eps:g} failed to converge: "
-                        f"final update {final_update:g} exceeds warning_tol {config.warning_tol:g}"
-                    )
-
-            iterations.append(current_iteration)
-            final_updates.append(final_update)
-            max_iter_reached.append(stage_reached_max_iter)
-
-    final_epsilon = float(epsilon_schedule[-1])
-    masked_f = torch_module.where(left_positive, f, neg_inf_left)
-    masked_g = torch_module.where(right_positive, g, neg_inf_right)
-    log_plan = (masked_f.unsqueeze(1) + masked_g.unsqueeze(0) - cost_value) / final_epsilon
-    plan = torch_module.exp(log_plan)
-    positive_plan = plan > 0.0
-    entropy = torch_module.zeros((), dtype=plan.dtype, device=plan.device)
-    if _ensure_bool(positive_plan.any()):
-        entropy = torch_module.sum(
-            plan[positive_plan] * (torch_module.log(plan[positive_plan]) - 1.0)
-        )
-    primal_value = torch_module.sum(plan * cost_value) + final_epsilon * entropy
-    value = _transport_value_with_envelope_gradient(
-        primal_value=primal_value,
-        plan=plan,
-        f=f,
-        g=g,
-        left_mass=left_mass,
-        right_mass=right_mass,
-        cost_matrix=cost_matrix,
+    transport = _batched_sinkhorn_transport_cost(
+        left_mass.unsqueeze(0),
+        right_mass.unsqueeze(0),
+        cost_matrix.unsqueeze(0),
+        epsilon_schedule=epsilon_schedule,
+        config=config,
+        labels=(label,),
     )
-    if not _ensure_bool(torch_module.isfinite(value)):
-        raise ContractError(f"{label} Sinkhorn transport cost is non-finite")
     return _SinkhornCostComputation(
-        value=value,
-        warnings=tuple(warnings),
-        final_updates=tuple(final_updates),
-        iterations=tuple(iterations),
-        max_iter_reached=tuple(max_iter_reached),
-        row_sums=torch_module.sum(plan, dim=1),
-        column_sums=torch_module.sum(plan, dim=0),
+        value=transport.value[0],
+        warnings=transport.warnings,
+        final_updates=transport.final_updates,
+        iterations=transport.iterations,
+        max_iter_reached=transport.max_iter_reached,
+        row_sums=transport.row_sums[0],
+        column_sums=transport.column_sums[0],
     )
 
 
@@ -577,15 +465,34 @@ def _batched_sinkhorn_transport_cost(
         for stage_index, epsilon in enumerate(epsilon_schedule):
             eps = float(epsilon)
             active = torch_module.ones(batch_size, dtype=torch_module.bool, device=left_value.device)
+            first_converged_residual = torch_module.full(
+                (batch_size,),
+                torch_module.inf,
+                dtype=left_value.dtype,
+                device=left_value.device,
+            )
+            first_converged_iteration = torch_module.zeros(
+                (batch_size,),
+                dtype=torch_module.int64,
+                device=left_value.device,
+            )
             last_residual = torch_module.full(
                 (batch_size,),
                 torch_module.inf,
                 dtype=left_value.dtype,
                 device=left_value.device,
             )
-            current_iteration = 0
+            saw_nonfinite_update = torch_module.zeros(
+                (batch_size,),
+                dtype=torch_module.bool,
+                device=left_value.device,
+            )
+            saw_nonfinite_residual = torch_module.zeros(
+                (batch_size,),
+                dtype=torch_module.bool,
+                device=left_value.device,
+            )
             for iteration in range(1, int(config.max_iter) + 1):
-                current_iteration = iteration
                 masked_g = torch_module.where(right_positive, g, neg_inf_right)
                 proposed_f = eps * (
                     log_left - torch_module.logsumexp(
@@ -594,6 +501,7 @@ def _batched_sinkhorn_transport_cost(
                     )
                 )
                 next_f = torch_module.where(left_positive, proposed_f, torch_module.zeros_like(proposed_f))
+                saw_nonfinite_update = saw_nonfinite_update | ~torch_module.isfinite(next_f).all(dim=1)
                 active_left = active.unsqueeze(1)
                 f = torch_module.where(active_left, next_f, f)
 
@@ -605,6 +513,7 @@ def _batched_sinkhorn_transport_cost(
                     )
                 )
                 next_g = torch_module.where(right_positive, proposed_g, torch_module.zeros_like(proposed_g))
+                saw_nonfinite_update = saw_nonfinite_update | ~torch_module.isfinite(next_g).all(dim=1)
                 active_right = active.unsqueeze(1)
                 g = torch_module.where(active_right, next_g, g)
 
@@ -615,56 +524,54 @@ def _batched_sinkhorn_transport_cost(
                 row_residual = torch_module.amax(torch_module.abs(plan.sum(dim=2) - left_value), dim=1)
                 column_residual = torch_module.amax(torch_module.abs(plan.sum(dim=1) - right_value), dim=1)
                 residual = torch_module.maximum(row_residual, column_residual)
-                if not _ensure_bool(torch_module.isfinite(residual).all()):
-                    raise ContractError("batched Sinkhorn iteration produced a non-finite residual")
+                saw_nonfinite_residual = saw_nonfinite_residual | ~torch_module.isfinite(residual)
                 last_residual = torch_module.where(active, residual, last_residual)
 
-                converged_now = active & (residual <= float(config.tol))
-                if _ensure_bool(converged_now.any()):
-                    final_updates_by_item[:, stage_index] = torch_module.where(
-                        converged_now,
-                        residual,
-                        final_updates_by_item[:, stage_index],
-                    )
-                    iterations_by_item[:, stage_index] = torch_module.where(
-                        converged_now,
-                        torch_module.full_like(iterations_by_item[:, stage_index], iteration),
-                        iterations_by_item[:, stage_index],
-                    )
-                    active = active & ~converged_now
-                if not _ensure_bool(active.any()):
-                    break
+                converged_now = active & torch_module.isfinite(residual) & (residual <= float(config.tol))
+                first_converged_residual = torch_module.where(
+                    converged_now,
+                    residual,
+                    first_converged_residual,
+                )
+                first_converged_iteration = torch_module.where(
+                    converged_now,
+                    torch_module.full_like(first_converged_iteration, iteration),
+                    first_converged_iteration,
+                )
+                active = active & ~converged_now
 
-            if _ensure_bool(active.any()):
-                active_updates = torch_module.where(active, last_residual, torch_module.zeros_like(last_residual))
-                too_large = active & (last_residual > float(config.warning_tol))
-                if _ensure_bool(too_large.any()):
-                    first_bad = int(torch_module.nonzero(too_large, as_tuple=False)[0].detach().cpu().item())
-                    bad_update = float(last_residual[first_bad].detach().cpu())
-                    raise ContractError(
-                        f"{labels[first_bad]} Sinkhorn epsilon={eps:g} failed to converge: "
-                        f"final update {bad_update:g} exceeds warning_tol {float(config.warning_tol):g}"
+            if _ensure_bool(saw_nonfinite_update.any()):
+                raise ContractError("batched Sinkhorn iteration produced a non-finite update")
+            if _ensure_bool(saw_nonfinite_residual.any()):
+                raise ContractError("batched Sinkhorn iteration produced a non-finite residual")
+
+            stage_final_updates = torch_module.where(active, last_residual, first_converged_residual)
+            stage_iterations = torch_module.where(
+                active,
+                torch_module.full_like(first_converged_iteration, int(config.max_iter)),
+                first_converged_iteration,
+            )
+            stage_max_iter = active
+            final_updates_by_item[:, stage_index] = stage_final_updates
+            iterations_by_item[:, stage_index] = stage_iterations
+            max_iter_by_item[:, stage_index] = stage_max_iter
+
+            warning_items = tuple(
+                int(item)
+                for item in torch_module.nonzero(stage_max_iter, as_tuple=False).reshape(-1).detach().cpu().tolist()
+            )
+            for item_index in warning_items:
+                final_update = float(stage_final_updates[item_index].detach().cpu())
+                warning_text = (
+                    f"{labels[item_index]} Sinkhorn epsilon={eps:g} reached max_iter "
+                    f"with update={final_update:g}"
+                )
+                if final_update > float(config.warning_tol):
+                    warning_text = (
+                        f"{warning_text}; final update exceeds "
+                        f"warning_tol {float(config.warning_tol):g}"
                     )
-                warning_items = tuple(
-                    int(item)
-                    for item in torch_module.nonzero(active, as_tuple=False).reshape(-1).detach().cpu().tolist()
-                )
-                for item_index in warning_items:
-                    warnings.append(
-                        f"{labels[item_index]} Sinkhorn epsilon={eps:g} reached max_iter "
-                        f"with update={float(last_residual[item_index].detach().cpu()):g}"
-                    )
-                final_updates_by_item[:, stage_index] = torch_module.where(
-                    active,
-                    active_updates,
-                    final_updates_by_item[:, stage_index],
-                )
-                iterations_by_item[:, stage_index] = torch_module.where(
-                    active,
-                    torch_module.full_like(iterations_by_item[:, stage_index], current_iteration),
-                    iterations_by_item[:, stage_index],
-                )
-                max_iter_by_item[:, stage_index] = active
+                warnings.append(warning_text)
 
     final_epsilon = float(epsilon_schedule[-1])
     masked_f = torch_module.where(left_positive, f, neg_inf_left)
@@ -690,20 +597,15 @@ def _batched_sinkhorn_transport_cost(
     if not _ensure_bool(torch_module.isfinite(value).all()):
         raise ContractError("batched Sinkhorn transport cost is non-finite")
 
-    final_updates: list[float] = []
-    iterations: list[int] = []
-    max_iter_reached: list[bool] = []
-    for item_index in range(batch_size):
-        for stage_index in range(n_stages):
-            final_updates.append(float(final_updates_by_item[item_index, stage_index].detach().cpu()))
-            iterations.append(int(iterations_by_item[item_index, stage_index].detach().cpu()))
-            max_iter_reached.append(bool(max_iter_by_item[item_index, stage_index].detach().cpu()))
+    final_updates_tensor = final_updates_by_item.detach().cpu().reshape(-1)
+    iterations_tensor = iterations_by_item.detach().cpu().reshape(-1)
+    max_iter_tensor = max_iter_by_item.detach().cpu().reshape(-1)
     return _BatchedSinkhornCostComputation(
         value=value,
         warnings=tuple(warnings),
-        final_updates=tuple(final_updates),
-        iterations=tuple(iterations),
-        max_iter_reached=tuple(max_iter_reached),
+        final_updates=tuple(float(item) for item in final_updates_tensor.tolist()),
+        iterations=tuple(int(item) for item in iterations_tensor.tolist()),
+        max_iter_reached=tuple(bool(item) for item in max_iter_tensor.tolist()),
         row_sums=plan.sum(dim=2),
         column_sums=plan.sum(dim=1),
     )

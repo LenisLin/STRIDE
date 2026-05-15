@@ -2,9 +2,7 @@
 
 Execution writers record fit-cache provenance; analysis writers record
 cache-derived calibration tables. They must not create biology interpretation
-prose, pass/fail gates, downstream execution decisions, or compatibility
-artifacts for prepare, descriptive-atlas, old suitability, or passed-bundle
-outputs. See
+prose, pass/fail gates, or downstream execution decisions. See
 `tasks/task_A/README.md`, `tasks/task_A/contracts/artifact_contracts.md`, and
 `tasks/task_A/contracts/design_freeze.py`.
 """

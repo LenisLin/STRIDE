@@ -4,9 +4,8 @@ Block 0 asks whether real `TC-IM` STRIDE relation structure departs from a
 within-patient count-preserving FOV domain-label permutation null. The null
 keeps patient identity, FOV composition, FOV count structure, and each
 patient's `n_TC`/`n_IM` counts fixed while permuting `TC`/`IM` labels within
-that same patient. Cross-patient label borrowing, relaxed fallback strata, prepare
-outputs, descriptive-atlas artifacts, old suitability outputs, and passed
-bundles are not allowed as null-model inputs. See
+that same patient. Cross-patient label borrowing and relaxed fallback strata
+are not allowed as null-model inputs. See
 `tasks/task_A/README.md`, `tasks/task_A/contracts/artifact_contracts.md`, and
 `tasks/task_A/contracts/design_freeze.py`.
 """

@@ -1,9 +1,10 @@
 """Workflow-layer orchestration helpers for STRIDE."""
 from __future__ import annotations
 
-from .fit_stride import STRIDEFitConfig, run_stride_fit
+from .config import TaskConfig
+from .fit_stride import run_stride_fit
 
 __all__ = [
-    "STRIDEFitConfig",
+    "TaskConfig",
     "run_stride_fit",
 ]

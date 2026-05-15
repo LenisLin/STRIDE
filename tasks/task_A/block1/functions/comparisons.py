@@ -1,9 +1,4 @@
-"""Task-local Block 1 paired comparison writers for Task A.
-
-These utilities build patient-paired confirmatory `TC-IM` versus `TC-PT`
-comparison surfaces from the frozen Block 1 summary outputs. They do not
-recompute STRIDE fits or change `src/stride/` semantics.
-"""
+"""Task-local Block 1 direct contrast builders."""
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping, Sequence
@@ -13,24 +8,27 @@ import numpy as np
 import pandas as pd
 
 from stride.errors import ContractError
+from stride.outputs.fit_export import NativeRelationExport
 
+from .schemas import COHORT_RELATION_COMPARISON_COLUMNS
 from .summaries import FAMILY_SUMMARY_SCALES
 
 
 CONFIRMATORY_FAMILY_COMPARISON_FILENAME = "block1_confirmatory_family_comparison.csv"
-EXPLORATORY_SOURCE_COMMUNITY_COMPARISON_FILENAME = (
-    "block1_exploratory_source_community_comparison.csv"
+DESCRIPTIVE_SOURCE_COMMUNITY_COMPARISON_FILENAME = (
+    "block1_source_community_comparison.csv"
 )
-EXPLORATORY_TARGET_COMMUNITY_COMPARISON_FILENAME = (
-    "block1_exploratory_target_community_comparison.csv"
+DESCRIPTIVE_TARGET_COMMUNITY_COMPARISON_FILENAME = (
+    "block1_target_community_comparison.csv"
 )
 PAIRED_COMPARISON_CONTRACT_VERSION = "task_a_block1_paired_comparison_v1"
+COHORT_RELATION_COMPARISON_SCOPE_ROLE = "descriptive_direct_contrast"
 
 LEFT_PAIR_FAMILY = "TC-IM"
 RIGHT_PAIR_FAMILY = "TC-PT"
 CONFIRMATORY_PAIR_FAMILIES: tuple[str, str] = (LEFT_PAIR_FAMILY, RIGHT_PAIR_FAMILY)
 CONFIRMATORY_SCOPE_ROLE = "confirmatory"
-EXPLORATORY_SUPPORTIVE_SCOPE_ROLE = "exploratory_supportive"
+DESCRIPTIVE_SUPPORTIVE_SCOPE_ROLE = "descriptive_direct_contrast"
 MISSING_FIT_STATUS = "missing"
 DEFERRED_FIT_STATUSES: frozenset[str] = frozenset({"deferred", "failed"})
 
@@ -52,12 +50,14 @@ SOURCE_COMMUNITY_SUMMARY_NAMES: tuple[str, ...] = (
     "off_diagonal_remodeling",
 )
 TARGET_COMMUNITY_SUMMARY_NAMES: tuple[str, ...] = (
-    "incoming_matched_operator",
-    "emergence_tendency",
+    "matched_incoming_burden",
+    "open_incoming_tendency",
+    "open_incoming_burden",
 )
 TARGET_COMMUNITY_SUMMARY_ROLE_BY_NAME: Mapping[str, str] = {
-    "incoming_matched_operator": "supportive",
-    "emergence_tendency": "supportive",
+    "matched_incoming_burden": "supportive",
+    "open_incoming_tendency": "supportive",
+    "open_incoming_burden": "supportive",
 }
 
 FAMILY_COMPARISON_COLUMNS: tuple[str, ...] = (
@@ -170,17 +170,17 @@ def _unique_records(
 
 
 def _fit_status_records(
-    dry_run_df: pd.DataFrame,
+    fit_status_df: pd.DataFrame,
 ) -> dict[tuple[str, str], dict[str, Any]]:
-    if dry_run_df.empty:
+    if fit_status_df.empty:
         return {}
-    filtered = dry_run_df.loc[
-        dry_run_df["pair_family"].astype(str).isin(CONFIRMATORY_PAIR_FAMILIES)
+    filtered = fit_status_df.loc[
+        fit_status_df["pair_family"].astype(str).isin(CONFIRMATORY_PAIR_FAMILIES)
     ].copy()
     return _unique_records(
         filtered,
         key_columns=("patient_id", "pair_family"),
-        label="Block 1 dry-run surface",
+        label="Block 1 native fit-status surface",
     )
 
 
@@ -193,7 +193,9 @@ def _fit_status_details(
     row = lookup.get((patient_id, pair_family))
     if row is None:
         return MISSING_FIT_STATUS, None
-    return str(row["fit_status"]), _normalize_optional_string(row.get("defer_reason"))
+    return str(row["fit_status"]), _normalize_optional_string(
+        row.get("status_reason", row.get("defer_reason"))
+    )
 
 
 def _family_axis_rows() -> tuple[tuple[str, str, str, str], ...]:
@@ -266,7 +268,7 @@ def _finalize_frame(
 
 def _build_family_comparison_frame(
     *,
-    dry_run_lookup: Mapping[tuple[str, str], dict[str, Any]],
+    fit_status_lookup: Mapping[tuple[str, str], dict[str, Any]],
     family_summary_df: pd.DataFrame,
     patient_ids: Sequence[str],
 ) -> pd.DataFrame:
@@ -282,12 +284,12 @@ def _build_family_comparison_frame(
     records: list[dict[str, Any]] = []
     for patient_id in patient_ids:
         left_status, left_reason = _fit_status_details(
-            dry_run_lookup,
+            fit_status_lookup,
             patient_id=patient_id,
             pair_family=LEFT_PAIR_FAMILY,
         )
         right_status, right_reason = _fit_status_details(
-            dry_run_lookup,
+            fit_status_lookup,
             patient_id=patient_id,
             pair_family=RIGHT_PAIR_FAMILY,
         )
@@ -401,7 +403,7 @@ def _target_row_lookup(frame: pd.DataFrame) -> dict[tuple[str, str, int], dict[s
 
 def _build_source_community_comparison_frame(
     *,
-    dry_run_lookup: Mapping[tuple[str, str], dict[str, Any]],
+    fit_status_lookup: Mapping[tuple[str, str], dict[str, Any]],
     source_summary_df: pd.DataFrame,
     patient_ids: Sequence[str],
 ) -> pd.DataFrame:
@@ -413,12 +415,12 @@ def _build_source_community_comparison_frame(
     records: list[dict[str, Any]] = []
     for patient_id in patient_ids:
         left_status, left_reason = _fit_status_details(
-            dry_run_lookup,
+            fit_status_lookup,
             patient_id=patient_id,
             pair_family=LEFT_PAIR_FAMILY,
         )
         right_status, right_reason = _fit_status_details(
-            dry_run_lookup,
+            fit_status_lookup,
             patient_id=patient_id,
             pair_family=RIGHT_PAIR_FAMILY,
         )
@@ -477,7 +479,7 @@ def _build_source_community_comparison_frame(
                         "tc_pt_source_burden": np.nan if right_row is None else float(right_row["source_burden"]),
                         "tc_im_source_weight": np.nan if left_row is None else float(left_row["source_weight"]),
                         "tc_pt_source_weight": np.nan if right_row is None else float(right_row["source_weight"]),
-                        "comparison_scope_role": EXPLORATORY_SUPPORTIVE_SCOPE_ROLE,
+                        "comparison_scope_role": DESCRIPTIVE_SUPPORTIVE_SCOPE_ROLE,
                     }
                 )
 
@@ -490,7 +492,7 @@ def _build_source_community_comparison_frame(
 
 def _build_target_community_comparison_frame(
     *,
-    dry_run_lookup: Mapping[tuple[str, str], dict[str, Any]],
+    fit_status_lookup: Mapping[tuple[str, str], dict[str, Any]],
     target_summary_df: pd.DataFrame,
     patient_ids: Sequence[str],
 ) -> pd.DataFrame:
@@ -502,12 +504,12 @@ def _build_target_community_comparison_frame(
     records: list[dict[str, Any]] = []
     for patient_id in patient_ids:
         left_status, left_reason = _fit_status_details(
-            dry_run_lookup,
+            fit_status_lookup,
             patient_id=patient_id,
             pair_family=LEFT_PAIR_FAMILY,
         )
         right_status, right_reason = _fit_status_details(
-            dry_run_lookup,
+            fit_status_lookup,
             patient_id=patient_id,
             pair_family=RIGHT_PAIR_FAMILY,
         )
@@ -566,7 +568,7 @@ def _build_target_community_comparison_frame(
                         "tc_pt_target_burden": np.nan if right_row is None else float(right_row["target_burden"]),
                         "tc_im_target_weight": np.nan if left_row is None else float(left_row["target_weight"]),
                         "tc_pt_target_weight": np.nan if right_row is None else float(right_row["target_weight"]),
-                        "comparison_scope_role": EXPLORATORY_SUPPORTIVE_SCOPE_ROLE,
+                        "comparison_scope_role": DESCRIPTIVE_SUPPORTIVE_SCOPE_ROLE,
                     }
                 )
 
@@ -579,18 +581,18 @@ def _build_target_community_comparison_frame(
 
 def build_block1_comparison_frames(
     *,
-    dry_run_df: pd.DataFrame,
+    fit_status_df: pd.DataFrame,
     family_summary_df: pd.DataFrame,
     source_summary_df: pd.DataFrame,
     target_summary_df: pd.DataFrame,
     patient_ids: Iterable[str] | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-    dry_run_lookup = _fit_status_records(dry_run_df)
+    fit_status_lookup = _fit_status_records(fit_status_df)
 
     if patient_ids is None:
         discovered_patient_ids = {
             str(patient_id)
-            for patient_id, _pair_family in dry_run_lookup
+            for patient_id, _pair_family in fit_status_lookup
         }
         if not family_summary_df.empty:
             discovered_patient_ids.update(family_summary_df["patient_id"].astype(str).tolist())
@@ -603,31 +605,140 @@ def build_block1_comparison_frames(
         resolved_patient_ids = tuple(dict.fromkeys(str(patient_id) for patient_id in patient_ids))
 
     family_frame = _build_family_comparison_frame(
-        dry_run_lookup=dry_run_lookup,
+        fit_status_lookup=fit_status_lookup,
         family_summary_df=family_summary_df,
         patient_ids=resolved_patient_ids,
     )
     source_frame = _build_source_community_comparison_frame(
-        dry_run_lookup=dry_run_lookup,
+        fit_status_lookup=fit_status_lookup,
         source_summary_df=source_summary_df,
         patient_ids=resolved_patient_ids,
     )
     target_frame = _build_target_community_comparison_frame(
-        dry_run_lookup=dry_run_lookup,
+        fit_status_lookup=fit_status_lookup,
         target_summary_df=target_summary_df,
         patient_ids=resolved_patient_ids,
     )
     return family_frame, source_frame, target_frame
 
 
+def _resolve_cohort_record(export: NativeRelationExport):
+    realized = [record for record in export.cohort_records if record.is_ok]
+    if not realized:
+        return None
+    if len(realized) != 1:
+        raise ContractError("Block 1 cohort relation comparison expects one realized cohort record per family")
+    return realized[0]
+
+
+def _cohort_value(array: np.ndarray | None, *indices: int) -> float:
+    if array is None:
+        return np.nan
+    return float(array[indices])
+
+
+def build_block1_cohort_relation_comparison_frame(
+    *,
+    native_exports: Mapping[str, NativeRelationExport],
+) -> pd.DataFrame:
+    """Build the cohort-level TC-IM versus TC-PT relation comparison frame."""
+    left_export = native_exports.get(LEFT_PAIR_FAMILY)
+    right_export = native_exports.get(RIGHT_PAIR_FAMILY)
+    if left_export is None or right_export is None:
+        raise ContractError("Block 1 cohort relation comparison requires both TC-IM and TC-PT exports")
+    if tuple(left_export.state_ids) != tuple(right_export.state_ids):
+        raise ContractError("Block 1 cohort relation comparison requires a shared state axis")
+
+    left_record = _resolve_cohort_record(left_export)
+    right_record = _resolve_cohort_record(right_export)
+    state_ids = tuple(int(state_id) for state_id in left_export.state_ids)
+    left_support = np.nan if left_record is None else float(left_record.support_n_patients)
+    right_support = np.nan if right_record is None else float(right_record.support_n_patients)
+    left_dispersion = np.nan if left_record is None or left_record.dispersion is None else float(left_record.dispersion)
+    right_dispersion = np.nan if right_record is None or right_record.dispersion is None else float(right_record.dispersion)
+
+    records: list[dict[str, Any]] = []
+    for source_index, source_state_id in enumerate(state_ids):
+        for target_index, target_state_id in enumerate(state_ids):
+            left_value = _cohort_value(None if left_record is None else left_record.template_A, source_index, target_index)
+            right_value = _cohort_value(None if right_record is None else right_record.template_A, source_index, target_index)
+            delta = None if not np.isfinite(left_value) or not np.isfinite(right_value) else left_value - right_value
+            records.append(
+                {
+                    "component": "template_A",
+                    "relation_axis": "source_target",
+                    "source_community_id": int(source_state_id),
+                    "target_community_id": int(target_state_id),
+                    "tc_im_value": left_value,
+                    "tc_pt_value": right_value,
+                    "delta_tc_im_minus_tc_pt": np.nan if delta is None else float(delta),
+                    "contrast_direction": _comparison_direction(delta),
+                    "tc_im_support_n_patients": left_support,
+                    "tc_pt_support_n_patients": right_support,
+                    "tc_im_within_family_dispersion": left_dispersion,
+                    "tc_pt_within_family_dispersion": right_dispersion,
+                    "comparison_scope_role": COHORT_RELATION_COMPARISON_SCOPE_ROLE,
+                }
+            )
+    for source_index, source_state_id in enumerate(state_ids):
+        left_value = _cohort_value(None if left_record is None else left_record.template_d, source_index)
+        right_value = _cohort_value(None if right_record is None else right_record.template_d, source_index)
+        delta = None if not np.isfinite(left_value) or not np.isfinite(right_value) else left_value - right_value
+        records.append(
+            {
+                "component": "template_d",
+                "relation_axis": "source",
+                "source_community_id": int(source_state_id),
+                "target_community_id": np.nan,
+                "tc_im_value": left_value,
+                "tc_pt_value": right_value,
+                "delta_tc_im_minus_tc_pt": np.nan if delta is None else float(delta),
+                "contrast_direction": _comparison_direction(delta),
+                "tc_im_support_n_patients": left_support,
+                "tc_pt_support_n_patients": right_support,
+                "tc_im_within_family_dispersion": left_dispersion,
+                "tc_pt_within_family_dispersion": right_dispersion,
+                "comparison_scope_role": COHORT_RELATION_COMPARISON_SCOPE_ROLE,
+            }
+        )
+    for target_index, target_state_id in enumerate(state_ids):
+        left_value = _cohort_value(None if left_record is None else left_record.template_e, target_index)
+        right_value = _cohort_value(None if right_record is None else right_record.template_e, target_index)
+        delta = None if not np.isfinite(left_value) or not np.isfinite(right_value) else left_value - right_value
+        records.append(
+            {
+                "component": "template_e",
+                "relation_axis": "target",
+                "source_community_id": np.nan,
+                "target_community_id": int(target_state_id),
+                "tc_im_value": left_value,
+                "tc_pt_value": right_value,
+                "delta_tc_im_minus_tc_pt": np.nan if delta is None else float(delta),
+                "contrast_direction": _comparison_direction(delta),
+                "tc_im_support_n_patients": left_support,
+                "tc_pt_support_n_patients": right_support,
+                "tc_im_within_family_dispersion": left_dispersion,
+                "tc_pt_within_family_dispersion": right_dispersion,
+                "comparison_scope_role": COHORT_RELATION_COMPARISON_SCOPE_ROLE,
+            }
+        )
+    return _finalize_frame(
+        pd.DataFrame.from_records(records),
+        columns=COHORT_RELATION_COMPARISON_COLUMNS,
+        sort_columns=("component", "source_community_id", "target_community_id"),
+    )
+
+
 __all__ = [
+    "COHORT_RELATION_COMPARISON_COLUMNS",
     "CONFIRMATORY_FAMILY_COMPARISON_FILENAME",
-    "EXPLORATORY_SOURCE_COMMUNITY_COMPARISON_FILENAME",
-    "EXPLORATORY_SUPPORTIVE_SCOPE_ROLE",
-    "EXPLORATORY_TARGET_COMMUNITY_COMPARISON_FILENAME",
+    "DESCRIPTIVE_SOURCE_COMMUNITY_COMPARISON_FILENAME",
+    "DESCRIPTIVE_SUPPORTIVE_SCOPE_ROLE",
+    "DESCRIPTIVE_TARGET_COMMUNITY_COMPARISON_FILENAME",
     "FAMILY_COMPARISON_COLUMNS",
     "PAIRED_COMPARISON_CONTRACT_VERSION",
     "SOURCE_COMMUNITY_COMPARISON_COLUMNS",
     "TARGET_COMMUNITY_COMPARISON_COLUMNS",
     "build_block1_comparison_frames",
+    "build_block1_cohort_relation_comparison_frame",
 ]

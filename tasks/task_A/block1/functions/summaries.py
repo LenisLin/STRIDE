@@ -1,11 +1,4 @@
-"""Task-local Block 1 summary extraction for Task A.
-
-This module converts realized patient-level ``A``, ``d``, and ``e`` outputs
-into the frozen Task A summary surfaces without changing ``src/stride/``
-semantics. Source-side continuity is currently defined as strict
-``self-retention`` only; no neighborhood-based local continuity is used in
-this pass.
-"""
+"""Task-local Block 1 summary extraction from native relation exports."""
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping, Sequence
@@ -16,9 +9,9 @@ import numpy as np
 import pandas as pd
 
 from stride.errors import ContractError
-from stride.outputs.fit_result import PatientBridgeResult, STRIDEFitResult
+from stride.outputs.fit_export import NativeRelationExport, PatientRelationRecord
 
-from ..config import TaskAOrderedPairFamilySpec
+from ...config import TaskAOrderedPairFamilySpec
 
 
 FAMILY_SUMMARY_FILENAME = "block1_family_summary.csv"
@@ -28,7 +21,6 @@ TARGET_COMMUNITY_SUMMARY_FILENAME = "block1_target_community_summary.csv"
 SUMMARY_CONTRACT_VERSION = "task_a_block1_summary_v1"
 SOURCE_ELIGIBILITY_RULE = "mu_minus > 0"
 TARGET_ELIGIBILITY_RULE = "mu_plus > 0"
-TOP_TARGET_K = 3
 
 PROOF_CARRYING_SUMMARY_NAMES: tuple[str, ...] = (
     "self_retention",
@@ -72,12 +64,6 @@ SOURCE_SUMMARY_COLUMNS: tuple[str, ...] = (
     "self_retention_burden",
     "depletion_burden",
     "off_diagonal_burden",
-    "top_target_1_id",
-    "top_target_1_value",
-    "top_target_2_id",
-    "top_target_2_value",
-    "top_target_3_id",
-    "top_target_3_value",
 )
 TARGET_SUMMARY_COLUMNS: tuple[str, ...] = (
     "patient_id",
@@ -88,10 +74,9 @@ TARGET_SUMMARY_COLUMNS: tuple[str, ...] = (
     "target_community_id",
     "target_burden",
     "target_weight",
-    "incoming_matched_operator",
-    "incoming_matched_burden",
-    "emergence_tendency",
-    "emergence_burden",
+    "matched_incoming_burden",
+    "open_incoming_tendency",
+    "open_incoming_burden",
 )
 
 
@@ -103,9 +88,9 @@ class _PatientSummaryInputs:
     mu_minus: np.ndarray
     mu_plus: np.ndarray
     state_ids: tuple[int, ...]
-    matched_transition_burden: np.ndarray
-    source_unmatched_burden: np.ndarray
-    target_unmatched_burden: np.ndarray
+    transition_burden: np.ndarray
+    depletion_burden_by_source: np.ndarray
+    target_open_burden_by_target: np.ndarray
 
 
 def _as_float_array(value: object, *, field_name: str) -> np.ndarray:
@@ -136,85 +121,51 @@ def _require_vector_shape(
     return array
 
 
-def _resolve_state_ids(patient_result: PatientBridgeResult, *, n_states: int) -> tuple[int, ...]:
-    if patient_result.state_ids is None:
-        return tuple(range(n_states))
-    state_ids = tuple(int(state_id) for state_id in patient_result.state_ids)
-    if len(state_ids) != n_states:
-        raise ContractError(
-            "Task A summary extraction requires patient_result.state_ids to align "
-            "with realized A/d/e dimensions"
-        )
-    return state_ids
-
-
-def _require_auxiliary_array(
-    patient_result: PatientBridgeResult,
-    *,
-    field_name: str,
-    expected_shape: tuple[int, ...],
-) -> np.ndarray:
-    if field_name not in patient_result.auxiliary:
-        raise ContractError(
-            f"Task A summary extraction requires PatientBridgeResult.auxiliary[{field_name!r}]"
-        )
-    array = np.asarray(patient_result.auxiliary[field_name], dtype=float)
-    if array.shape != expected_shape:
-        raise ContractError(
-            "Task A summary extraction found an unexpected auxiliary shape for "
-            f"{field_name!r}: expected {expected_shape}, got {array.shape}"
-        )
-    return array
-
-
 def _extract_patient_summary_inputs(
-    patient_result: PatientBridgeResult,
+    patient_record: PatientRelationRecord,
+    *,
+    state_ids: Sequence[int],
 ) -> _PatientSummaryInputs:
-    A = _as_float_matrix(patient_result.A, field_name="A")
+    if not patient_record.is_ok:
+        raise ContractError("Task A summary extraction requires realized patient relation arrays")
+    A = _as_float_matrix(patient_record.A, field_name="A")
     n_states = A.shape[0]
     d = _require_vector_shape(
-        _as_float_array(patient_result.d, field_name="d"),
+        _as_float_array(patient_record.d, field_name="d"),
         n_states=n_states,
         field_name="d",
     )
     e = _require_vector_shape(
-        _as_float_array(patient_result.e, field_name="e"),
+        _as_float_array(patient_record.e, field_name="e"),
         n_states=n_states,
         field_name="e",
     )
     mu_minus = _require_vector_shape(
-        _as_float_array(patient_result.mu_minus, field_name="mu_minus"),
+        _as_float_array(patient_record.mu_minus, field_name="mu_minus"),
         n_states=n_states,
         field_name="mu_minus",
     )
     mu_plus = _require_vector_shape(
-        _as_float_array(patient_result.mu_plus, field_name="mu_plus"),
+        _as_float_array(patient_record.mu_plus, field_name="mu_plus"),
         n_states=n_states,
         field_name="mu_plus",
     )
-    state_ids = _resolve_state_ids(patient_result, n_states=n_states)
+    resolved_state_ids = tuple(int(state_id) for state_id in state_ids)
+    if len(resolved_state_ids) != n_states:
+        raise ContractError("Task A summary extraction requires native-export state_ids to align with A/d/e")
+    transition_burden = A * mu_minus[:, None]
+    depletion_burden_by_source = d * mu_minus
+    target_open_burden_by_target = e * float(np.sum(mu_minus, dtype=float))
     return _PatientSummaryInputs(
         A=A,
         d=d,
         e=e,
         mu_minus=mu_minus,
         mu_plus=mu_plus,
-        state_ids=state_ids,
-        matched_transition_burden=_require_auxiliary_array(
-            patient_result,
-            field_name="matched_transition_burden",
-            expected_shape=A.shape,
-        ),
-        source_unmatched_burden=_require_auxiliary_array(
-            patient_result,
-            field_name="source_unmatched_burden",
-            expected_shape=d.shape,
-        ),
-        target_unmatched_burden=_require_auxiliary_array(
-            patient_result,
-            field_name="target_unmatched_burden",
-            expected_shape=e.shape,
-        ),
+        state_ids=resolved_state_ids,
+        transition_burden=transition_burden,
+        depletion_burden_by_source=depletion_burden_by_source,
+        target_open_burden_by_target=target_open_burden_by_target,
     )
 
 
@@ -237,34 +188,16 @@ def _summary_role(summary_name: str) -> str:
     raise ContractError(f"Unknown Task A summary_name {summary_name!r}")
 
 
-def _top_targets(
-    row: np.ndarray,
-    *,
-    state_ids: Sequence[int],
-    source_index: int,
-    topk: int = TOP_TARGET_K,
-) -> list[tuple[int | None, float]]:
-    pairs = [
-        (int(state_ids[target_index]), float(value))
-        for target_index, value in enumerate(row.tolist())
-        if target_index != source_index and float(value) > 0.0
-    ]
-    pairs.sort(key=lambda item: item[1], reverse=True)
-    padded = pairs[:topk]
-    while len(padded) < topk:
-        padded.append((None, 0.0))
-    return padded
-
-
 def _build_family_summary_records(
     *,
-    patient_result: PatientBridgeResult,
+    patient_record: PatientRelationRecord,
     family_spec: TaskAOrderedPairFamilySpec,
+    state_ids: Sequence[int],
 ) -> list[dict[str, Any]]:
-    if not patient_result.is_ok:
+    if not patient_record.is_ok:
         return []
 
-    inputs = _extract_patient_summary_inputs(patient_result)
+    inputs = _extract_patient_summary_inputs(patient_record, state_ids=state_ids)
     source_mask = np.asarray(inputs.mu_minus > 0.0, dtype=bool)
     target_mask = np.asarray(inputs.mu_plus > 0.0, dtype=bool)
     source_weights = _normalized_weights(inputs.mu_minus, source_mask)
@@ -299,7 +232,7 @@ def _build_family_summary_records(
         summary_role = _summary_role(summary_name)
         records.append(
             {
-                "patient_id": str(patient_result.patient_id),
+                "patient_id": str(patient_record.patient_id),
                 "pair_family": family_spec.name,
                 "claim_role": family_spec.claim_role,
                 "source_domain": family_spec.source_domain,
@@ -315,7 +248,7 @@ def _build_family_summary_records(
         )
         records.append(
             {
-                "patient_id": str(patient_result.patient_id),
+                "patient_id": str(patient_record.patient_id),
                 "pair_family": family_spec.name,
                 "claim_role": family_spec.claim_role,
                 "source_domain": family_spec.source_domain,
@@ -334,7 +267,7 @@ def _build_family_summary_records(
         summary_role = _summary_role(summary_name)
         records.append(
             {
-                "patient_id": str(patient_result.patient_id),
+                "patient_id": str(patient_record.patient_id),
                 "pair_family": family_spec.name,
                 "claim_role": family_spec.claim_role,
                 "source_domain": family_spec.source_domain,
@@ -350,7 +283,7 @@ def _build_family_summary_records(
         )
         records.append(
             {
-                "patient_id": str(patient_result.patient_id),
+                "patient_id": str(patient_record.patient_id),
                 "pair_family": family_spec.name,
                 "claim_role": family_spec.claim_role,
                 "source_domain": family_spec.source_domain,
@@ -370,29 +303,37 @@ def _build_family_summary_records(
 
 def _build_source_summary_records(
     *,
-    patient_result: PatientBridgeResult,
+    patient_record: PatientRelationRecord,
     family_spec: TaskAOrderedPairFamilySpec,
+    state_ids: Sequence[int],
 ) -> list[dict[str, Any]]:
-    if not patient_result.is_ok:
+    if not patient_record.is_ok:
         return []
 
-    inputs = _extract_patient_summary_inputs(patient_result)
+    inputs = _extract_patient_summary_inputs(patient_record, state_ids=state_ids)
     source_mask = np.asarray(inputs.mu_minus > 0.0, dtype=bool)
     source_weights = _normalized_weights(inputs.mu_minus, source_mask)
     records: list[dict[str, Any]] = []
 
     for source_index, state_id in enumerate(inputs.state_ids):
-        if not bool(source_mask[source_index]):
-            continue
+        eligible = bool(source_mask[source_index])
         row = inputs.A[source_index]
-        self_retention = float(row[source_index])
-        off_diagonal = float(np.sum(row, dtype=float) - self_retention)
-        diagonal_burden = float(inputs.matched_transition_burden[source_index, source_index])
-        row_burden = np.asarray(inputs.matched_transition_burden[source_index], dtype=float)
-        off_diagonal_burden = float(np.sum(row_burden, dtype=float) - diagonal_burden)
-        top_targets = _top_targets(row, state_ids=inputs.state_ids, source_index=source_index)
+        self_retention = np.nan
+        depletion = np.nan
+        off_diagonal = np.nan
+        diagonal_burden = np.nan
+        depletion_burden = np.nan
+        off_diagonal_burden = np.nan
+        if eligible:
+            self_retention = float(row[source_index])
+            depletion = float(inputs.d[source_index])
+            off_diagonal = float(np.sum(row, dtype=float) - self_retention)
+            diagonal_burden = float(inputs.transition_burden[source_index, source_index])
+            depletion_burden = float(inputs.depletion_burden_by_source[source_index])
+            row_burden = np.asarray(inputs.transition_burden[source_index], dtype=float)
+            off_diagonal_burden = float(np.sum(row_burden, dtype=float) - diagonal_burden)
         record: dict[str, Any] = {
-            "patient_id": str(patient_result.patient_id),
+            "patient_id": str(patient_record.patient_id),
             "pair_family": family_spec.name,
             "claim_role": family_spec.claim_role,
             "source_domain": family_spec.source_domain,
@@ -401,40 +342,36 @@ def _build_source_summary_records(
             "source_burden": float(inputs.mu_minus[source_index]),
             "source_weight": float(source_weights[source_index]),
             "self_retention": self_retention,
-            "depletion": float(inputs.d[source_index]),
+            "depletion": depletion,
             "off_diagonal_remodeling": off_diagonal,
             "self_retention_burden": diagonal_burden,
-            "depletion_burden": float(inputs.source_unmatched_burden[source_index]),
+            "depletion_burden": depletion_burden,
             "off_diagonal_burden": off_diagonal_burden,
         }
-        for rank, (target_state_id, target_value) in enumerate(top_targets, start=1):
-            record[f"top_target_{rank}_id"] = target_state_id
-            record[f"top_target_{rank}_value"] = float(target_value)
         records.append(record)
     return records
 
 
 def _build_target_summary_records(
     *,
-    patient_result: PatientBridgeResult,
+    patient_record: PatientRelationRecord,
     family_spec: TaskAOrderedPairFamilySpec,
+    state_ids: Sequence[int],
 ) -> list[dict[str, Any]]:
-    if not patient_result.is_ok:
+    if not patient_record.is_ok:
         return []
 
-    inputs = _extract_patient_summary_inputs(patient_result)
+    inputs = _extract_patient_summary_inputs(patient_record, state_ids=state_ids)
     target_mask = np.asarray(inputs.mu_plus > 0.0, dtype=bool)
     target_weights = _normalized_weights(inputs.mu_plus, target_mask)
-    incoming_operator = np.sum(inputs.A, axis=0, dtype=float)
-    incoming_burden = np.sum(inputs.matched_transition_burden, axis=0, dtype=float)
+    matched_incoming_burden = np.sum(inputs.transition_burden, axis=0, dtype=float)
 
     records: list[dict[str, Any]] = []
     for target_index, state_id in enumerate(inputs.state_ids):
-        if not bool(target_mask[target_index]):
-            continue
+        eligible = bool(target_mask[target_index])
         records.append(
             {
-                "patient_id": str(patient_result.patient_id),
+                "patient_id": str(patient_record.patient_id),
                 "pair_family": family_spec.name,
                 "claim_role": family_spec.claim_role,
                 "source_domain": family_spec.source_domain,
@@ -442,10 +379,13 @@ def _build_target_summary_records(
                 "target_community_id": int(state_id),
                 "target_burden": float(inputs.mu_plus[target_index]),
                 "target_weight": float(target_weights[target_index]),
-                "incoming_matched_operator": float(incoming_operator[target_index]),
-                "incoming_matched_burden": float(incoming_burden[target_index]),
-                "emergence_tendency": float(inputs.e[target_index]),
-                "emergence_burden": float(inputs.target_unmatched_burden[target_index]),
+                "matched_incoming_burden": (
+                    float(matched_incoming_burden[target_index]) if eligible else np.nan
+                ),
+                "open_incoming_tendency": float(inputs.e[target_index]) if eligible else np.nan,
+                "open_incoming_burden": (
+                    float(inputs.target_open_burden_by_target[target_index]) if eligible else np.nan
+                ),
             }
         )
     return records
@@ -468,7 +408,7 @@ def _finalize_summary_frame(
 
 def build_block1_summary_frames(
     *,
-    fit_results: Mapping[str, STRIDEFitResult],
+    native_exports: Mapping[str, NativeRelationExport],
     pair_families: Iterable[TaskAOrderedPairFamilySpec],
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     family_records: list[dict[str, Any]] = []
@@ -477,26 +417,29 @@ def build_block1_summary_frames(
 
     active_pair_families = tuple(pair_families)
     for family_spec in active_pair_families:
-        result = fit_results.get(family_spec.name)
-        if result is None:
+        export = native_exports.get(family_spec.name)
+        if export is None:
             continue
-        for patient_result in result.patient_results:
+        for patient_record in export.patient_records:
             family_records.extend(
                 _build_family_summary_records(
-                    patient_result=patient_result,
+                    patient_record=patient_record,
                     family_spec=family_spec,
+                    state_ids=export.state_ids,
                 )
             )
             source_records.extend(
                 _build_source_summary_records(
-                    patient_result=patient_result,
+                    patient_record=patient_record,
                     family_spec=family_spec,
+                    state_ids=export.state_ids,
                 )
             )
             target_records.extend(
                 _build_target_summary_records(
-                    patient_result=patient_result,
+                    patient_record=patient_record,
                     family_spec=family_spec,
+                    state_ids=export.state_ids,
                 )
             )
 
@@ -528,6 +471,5 @@ __all__ = [
     "SUPPORTIVE_SUMMARY_NAMES",
     "TARGET_COMMUNITY_SUMMARY_FILENAME",
     "TARGET_ELIGIBILITY_RULE",
-    "TOP_TARGET_K",
     "build_block1_summary_frames",
 ]

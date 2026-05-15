@@ -4,9 +4,8 @@ Block 0 asks whether real `TC-IM` STRIDE relation structure departs from a
 within-patient count-preserving FOV domain-label permutation null. Schemas define the allowed
 Task A config, Stage 0 h5ad, output dir, permutation count, master seed, and
 optional selector surface plus the formal calibration outputs. They do not
-define biology interpretation, pass/fail gates, downstream execution
-authorization, or inputs from prepare, descriptive-atlas, old suitability, or
-passed-bundle artifacts. See `tasks/task_A/README.md`,
+define biology interpretation, pass/fail gates, or downstream execution
+authorization. See `tasks/task_A/README.md`,
 `tasks/task_A/contracts/artifact_contracts.md`, and
 `tasks/task_A/contracts/design_freeze.py`.
 """

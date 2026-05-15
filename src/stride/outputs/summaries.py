@@ -1,4 +1,4 @@
-"""Reporting-layer summaries for patient relations, recurrence, and fit artifacts."""
+"""Reporting-layer summaries for STRIDE relation and fit artifacts."""
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -6,9 +6,8 @@ from typing import Any, Mapping
 
 import numpy as np
 
-from ..latent.operators import PatientRelation
-from ..latent.recurrence import RecurrenceResult, summarize_recurrence_support as _summarize_recurrence_support
-from .fit_result import PatientBridgeResult, STRIDEFitResult
+from ..latent.operators import CohortRelation, PatientRelation
+from .fit_result import PatientRelationResult, STRIDEFitResult
 
 
 @dataclass(frozen=True)
@@ -80,13 +79,20 @@ def summarize_patient_relation(relation: PatientRelation) -> PatientRelationSumm
     )
 
 
-def summarize_recurrence_support(result: RecurrenceResult) -> dict[str, int]:
-    """Thin recurrence-support summary export."""
-    return _summarize_recurrence_support(result)
+def summarize_cohort_relation(relation: CohortRelation) -> dict[str, object]:
+    """Summarize one cohort common-structure relation."""
+    return {
+        "cohort_id": relation.cohort_id,
+        "fit_status": relation.fit_status,
+        "support_n_patients": len(relation.support_patient_ids),
+        "support_patient_ids": tuple(relation.support_patient_ids),
+        "dispersion": relation.dispersion,
+        "metadata": dict(relation.metadata),
+    }
 
 
-def summarize_patient_bridge_result(result: PatientBridgeResult) -> object:
-    """Summarize one patient bridge result without inventing missing arrays."""
+def summarize_patient_relation_result(result: PatientRelationResult) -> object:
+    """Summarize one patient relation result without inventing missing arrays."""
     relation = result.relation
     if relation is not None:
         return summarize_patient_relation(relation)
@@ -110,8 +116,8 @@ def summarize_stride_fit_result(result: STRIDEFitResult) -> dict[str, object]:
         "implementation_tier": result.implementation_tier,
         "n_patients": len(result.patient_results),
         "patient_status_counts": patient_status_counts,
-        "recurrence_fit_status": result.recurrence.fit_status,
-        "n_recurrence_used_patients": len(result.recurrence.used_patient_ids),
+        "cohort_fit_status": result.cohort_relation.fit_status,
+        "cohort_support_n_patients": len(result.cohort_relation.support_patient_ids),
         "objective_total": (result.objective.total if result.objective is not None else None),
     }
 
@@ -120,22 +126,22 @@ def summarize_outputs(payload: object) -> object:
     """Summarize canonical STRIDE outputs when a stable summary exists."""
     if isinstance(payload, PatientRelation):
         return summarize_patient_relation(payload)
-    if isinstance(payload, PatientBridgeResult):
-        return summarize_patient_bridge_result(payload)
+    if isinstance(payload, PatientRelationResult):
+        return summarize_patient_relation_result(payload)
     if isinstance(payload, STRIDEFitResult):
         return summarize_stride_fit_result(payload)
-    if isinstance(payload, RecurrenceResult):
-        return summarize_recurrence_support(payload)
+    if isinstance(payload, CohortRelation):
+        return summarize_cohort_relation(payload)
     return payload
 
 
 __all__ = [
     "PatientRelationSummary",
+    "summarize_cohort_relation",
     "summarize_continuity_backbone",
     "summarize_open_channels",
     "summarize_outputs",
-    "summarize_patient_bridge_result",
+    "summarize_patient_relation_result",
     "summarize_patient_relation",
-    "summarize_recurrence_support",
     "summarize_stride_fit_result",
 ]
