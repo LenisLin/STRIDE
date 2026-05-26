@@ -163,6 +163,25 @@ def _require_ok_train_result(train_result: TrainResult | None) -> TrainResult:
     return train_result
 
 
+def _loss_ledger_observation_comparison_plan(train_result: TrainResult) -> dict[str, Any]:
+    plan = dict(train_result.loss_ledger.metadata.get("observation_comparison_plan", {}))
+    required = {"block_construction_policy", "n_blocks_by_patient", "n_evidence_blocks"}
+    if not required.issubset(plan):
+        raise ContractError("ok TrainResult loss ledger must carry observation comparison plan metadata")
+    return plan
+
+
+def _patient_evidence_block_count(
+    comparison_plan: dict[str, Any],
+    patient_id: str,
+) -> int:
+    blocks_by_patient = dict(comparison_plan["n_blocks_by_patient"])
+    patient_key = str(patient_id)
+    if patient_key not in blocks_by_patient:
+        raise ContractError("observation comparison plan must include each realized patient")
+    return int(blocks_by_patient[patient_key])
+
+
 def build_cohort_relation(
     *,
     patient_ids: tuple[str, ...],
@@ -247,7 +266,9 @@ def build_patient_results(
     A_all = _tensor_array(train_result.A)
     d_all = _tensor_array(train_result.d)
     e_all = _tensor_array(train_result.e)
-    block_counts = Counter(block.patient_id for block in evidence_blocks)
+    comparison_plan = _loss_ledger_observation_comparison_plan(train_result)
+    block_construction_policy = str(comparison_plan["block_construction_policy"])
+    block_counts = Counter(str(block.patient_id) for block in evidence_blocks)
     results: list[PatientRelationResult] = []
     for patient_index, patient_input in enumerate(patient_inputs):
         pre_group, post_group = patient_input.groups
@@ -258,6 +279,9 @@ def build_patient_results(
         patient_e = e_all[patient_index]
         transition_burden = np.asarray(patient_A, dtype=float) * mu_minus[:, None]
         emergence_scale = float(np.sum(mu_minus, dtype=float))
+        patient_n_blocks = _patient_evidence_block_count(comparison_plan, patient_input.patient_id)
+        if patient_n_blocks != int(block_counts[patient_input.patient_id]):
+            raise ContractError("observation comparison plan must align with evidence_blocks")
         audit = PatientRelationAudit(
             patient_id=patient_input.patient_id,
             timepoint_order=patient_input.ordered_group_labels,
@@ -270,7 +294,8 @@ def build_patient_results(
                 **_shared_bridge_audit_metadata(patient_input),
                 "estimator_mode": FIT_RUNTIME_MODE,
                 "optimizer_status": train_result.status,
-                "n_evidence_blocks": int(block_counts[patient_input.patient_id]),
+                "n_evidence_blocks": patient_n_blocks,
+                "block_construction_policy": block_construction_policy,
             },
         )
         results.append(
@@ -289,7 +314,8 @@ def build_patient_results(
                     "mode": FIT_RUNTIME_MODE,
                     "observation_fit_status": "D_obs^BalancedSinkhornDivergence-v1",
                     "optimizer_status": train_result.status,
-                    "n_evidence_blocks": int(block_counts[patient_input.patient_id]),
+                    "n_evidence_blocks": patient_n_blocks,
+                    "block_construction_policy": block_construction_policy,
                 },
                 auxiliary={
                     "matched_transition_burden": transition_burden,
@@ -340,9 +366,11 @@ def assemble_stride_fit_result(
     status_diagnostics = _fit_status_diagnostics(run_status, train_result=train_result)
     objective = None
     provenance = None
+    comparison_plan: dict[str, Any] = {}
     if run_status.status == "ok":
         ok_train_result = _require_ok_train_result(train_result)
         objective = ok_train_result.loss_ledger
+        comparison_plan = _loss_ledger_observation_comparison_plan(ok_train_result)
         provenance = build_successful_provenance(
             ok_train_result.loss_ledger,
             train_config=ok_train_result.train_config,
@@ -357,6 +385,13 @@ def assemble_stride_fit_result(
         "target": task_config.target,
         "K": task_config.K,
     }
+    if comparison_plan:
+        metadata.update(
+            {
+                "block_construction_policy": comparison_plan["block_construction_policy"],
+                "n_blocks_by_patient": dict(comparison_plan["n_blocks_by_patient"]),
+            }
+        )
     summaries = {
         "n_patients": len(patient_results),
         "n_realized_patients": sum(1 for result in patient_results if result.fit_status == "ok"),
@@ -367,6 +402,13 @@ def assemble_stride_fit_result(
         "optimizer_status": _optimizer_status_label(run_status),
         "n_evidence_blocks": len(evidence_blocks),
     }
+    if comparison_plan:
+        summaries.update(
+            {
+                "block_construction_policy": comparison_plan["block_construction_policy"],
+                "n_blocks_by_patient": dict(comparison_plan["n_blocks_by_patient"]),
+            }
+        )
     diagnostics = {
         "mode": FIT_RUNTIME_MODE,
         "patient_status_counts": patient_status_counts,
@@ -375,6 +417,13 @@ def assemble_stride_fit_result(
         "n_evidence_blocks": len(evidence_blocks),
         **status_diagnostics,
     }
+    if comparison_plan:
+        diagnostics.update(
+            {
+                "block_construction_policy": comparison_plan["block_construction_policy"],
+                "n_blocks_by_patient": dict(comparison_plan["n_blocks_by_patient"]),
+            }
+        )
     if train_result is not None and train_result.trace is not None:
         diagnostics["optimizer_trace"] = train_result.trace
     return STRIDEFitResult(
