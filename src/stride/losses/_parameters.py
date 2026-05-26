@@ -84,6 +84,14 @@ def _as_float64_tensor(value: Any, *, name: str, device: Any | None = None) -> A
     return torch_module.as_tensor(value, dtype=torch_module.float64, device=device)
 
 
+def _preferred_tensor_device(*values: Any) -> Any | None:
+    torch_module = _require_torch()
+    for value in values:
+        if torch_module.is_tensor(value):
+            return value.device
+    return None
+
+
 def _finite_scalar_bool(value: Any) -> bool:
     torch_module = _require_torch()
     return bool(value.detach().cpu().item()) if torch_module.is_tensor(value) else bool(value)
@@ -370,7 +378,8 @@ def _normalized_geometry_cost(
 
 def post_reconstruct(q_minus: Any, A: Any, e: Any) -> Any:
     """Return ``normalize(q_minus @ A + e)`` for source FOV bags."""
-    q = _as_float64_tensor(q_minus, name="q_minus")
+    preferred_device = _preferred_tensor_device(A, e, q_minus)
+    q = _as_float64_tensor(q_minus, name="q_minus", device=preferred_device)
     A_tensor = _as_float64_tensor(A, name="A", device=q.device)
     e_tensor = _as_float64_tensor(e, name="e", device=q.device)
     _ensure_distribution_matrix(q, name="q_minus")
