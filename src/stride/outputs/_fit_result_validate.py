@@ -2,13 +2,16 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
 from ..errors import ContractError
 from ..latent.operators import validate_cohort_relation, validate_patient_relation
 from .provenance import STRIDEFitProvenance, validate_stride_fit_provenance
+
+if TYPE_CHECKING:  # pragma: no cover
+    from .fit_result import PatientRelationResult, STRIDEFitResult
 
 _ALLOWED_FIT_STATUSES: tuple[str, ...] = ("ok", "deferred", "failed")
 _ALLOWED_IMPLEMENTATION_TIERS: tuple[str, ...] = ("canonical_full",)
