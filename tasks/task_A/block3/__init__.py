@@ -5,8 +5,8 @@ Role:
     rebuild stack.
 
 Authority anchors:
-    - docs/task_A_spec.md §4.5.2, §4.5.5, §4.5.6, §5.1 Phase 3
-    - docs/task_A_block3_redesign_v1_1.md §4.1-§4.4, §5.5, §5.6
+    - docs/task_A/spec.md §4.5.2, §4.5.5, §4.5.6, §5.1 Phase 3
+    - docs/task_A/block3/scientific_contract.md §4.1-§4.4, §5.5, §5.6
 
 Local boundary:
     - This module exposes only registry-first contract objects that other
@@ -29,13 +29,7 @@ Why this module exists:
 """
 from __future__ import annotations
 
-from .contracts import (
-    Block3MethodName,
-    Block3MetricName,
-    Block3SubexperimentId,
-    MetricStatus,
-)
-from .registry import get_live_block3_registry
+from importlib import import_module
 
 # Export only the frozen vocabulary and the live registry accessor. Execution,
 # raw-bundle, and review writers remain internal implementation surfaces.
@@ -46,3 +40,18 @@ __all__ = [
     "MetricStatus",
     "get_live_block3_registry",
 ]
+
+
+def __getattr__(name: str) -> object:
+    """Lazily expose the frozen vocabulary without loading execution helpers."""
+
+    if name in {
+        "Block3MethodName",
+        "Block3MetricName",
+        "Block3SubexperimentId",
+        "MetricStatus",
+    }:
+        return getattr(import_module(".contracts", __name__), name)
+    if name == "get_live_block3_registry":
+        return getattr(import_module(".registry", __name__), name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
