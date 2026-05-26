@@ -7,7 +7,13 @@ from dataclasses import fields, is_dataclass, replace
 from typing import Any
 
 from ..geometry.state_geometry import StateGeometry
-from ..losses.assembly import ADEState, EvidenceBlock, LossLedger, ObjectiveContext, compute_loss_ledger
+from ..losses.assembly import (
+    ADEState,
+    EvidenceBlock,
+    LossLedger,
+    ObjectiveContext,
+    compute_loss_ledger,
+)
 from .config import TrainConfig, validate_train_config
 from .model import RelationModel, require_torch
 from .result import OptimizerRunInfo, TrainResult
@@ -20,13 +26,6 @@ def _scalar(value: Any) -> float:
     return float(value)
 
 
-def _finite_loss(value: Any) -> bool:
-    try:
-        return math.isfinite(_scalar(value))
-    except (TypeError, ValueError, RuntimeError):
-        return False
-
-
 def _plateau_condition_met(
     *,
     absolute_improvement: float,
@@ -35,12 +34,10 @@ def _plateau_condition_met(
 ) -> bool:
     if float(config.convergence_tol) > 0.0 and abs(absolute_improvement) <= float(config.convergence_tol):
         return True
-    if (
+    return (
         float(config.min_relative_improvement) > 0.0
         and abs(relative_improvement) <= float(config.min_relative_improvement)
-    ):
-        return True
-    return False
+    )
 
 
 def _detach_state(state: ADEState) -> tuple[Any, Any, Any]:
@@ -285,7 +282,8 @@ def run_training(
                 config=resolved_config,
                 objective_context=objective_context,
             )
-            if not _finite_loss(ledger.total):
+            current_total = _scalar(ledger.total)
+            if not math.isfinite(current_total):
                 return TrainResult(
                     status="failed",
                     train_config=resolved_config,
@@ -301,7 +299,6 @@ def run_training(
                     ),
                 )
 
-            current_total = _scalar(ledger.total)
             if initial_total is None:
                 initial_total = current_total
             if resolved_config.detailed_trace:
@@ -332,7 +329,8 @@ def run_training(
                 config=resolved_config,
                 objective_context=objective_context,
             )
-            if not _finite_loss(ledger.total):
+            current_total = _scalar(ledger.total)
+            if not math.isfinite(current_total):
                 return TrainResult(
                     status="failed",
                     train_config=resolved_config,
@@ -348,7 +346,6 @@ def run_training(
                     ),
                 )
 
-            current_total = _scalar(ledger.total)
             if initial_total is None:
                 initial_total = current_total
             if resolved_config.detailed_trace:
@@ -412,7 +409,8 @@ def run_training(
                 config=resolved_config,
                 objective_context=objective_context,
             )
-        if not _finite_loss(final_ledger.total):
+        final_total = _scalar(final_ledger.total)
+        if not math.isfinite(final_total):
             return TrainResult(
                 status="failed",
                 train_config=resolved_config,
@@ -438,7 +436,7 @@ def run_training(
             warmup_steps_completed=warmup_steps_completed,
             main_steps_completed=main_steps_completed,
             initial_total=initial_total,
-            final_total=_scalar(final_ledger.total),
+            final_total=final_total,
             trace_steps=trace_steps,
         )
     except RuntimeError as exc:
