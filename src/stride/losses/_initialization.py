@@ -2,29 +2,29 @@
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
+from collections.abc import Mapping
+from dataclasses import dataclass, field
 from typing import Any
 
 from ..errors import ContractError
 from ..geometry.state_geometry import StateGeometry
 from ..observation.balanced_sinkhorn import (
     BalancedSinkhornDivergenceConfig,
-    _pairwise_composition_ground_cost,
+    _pairwise_composition_ground_cost_value,
 )
-from ._constants import OFFDIAG_INIT_MASS, S_G_INIT_ATOL, S_G_INIT_RTOL
+from ._constants import S_G_INIT_ATOL, S_G_INIT_RTOL
 from ._parameters import (
     ADEState,
-    LogitState,
     _as_float64_tensor,
     _ensure_distribution_matrix,
     _ensure_finite_tensor,
     _normalized_geometry_cost,
-    _normalize_patient_ids,
     _require_positive_int,
     _require_torch,
     _validate_parameter_shapes,
     post_reconstruct,
 )
+
 
 @dataclass(frozen=True)
 class ScaleInit:
@@ -47,6 +47,7 @@ class EvidenceBlock:
     fov_cost_scale: float | None = None
     fov_cost_scale_floor_used: bool = False
     block_id: str | None = None
+    metadata: Mapping[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -106,6 +107,7 @@ def compute_init_fov_cost_scale(
     *,
     K: int,
     config: BalancedSinkhornDivergenceConfig | None = None,
+    device: Any | None = None,
 ) -> FovCostScale:
     """Compute canonical ``s_G_init`` from identity-plus-small-open FOV costs."""
     torch_module = _require_torch()
@@ -113,7 +115,7 @@ def compute_init_fov_cost_scale(
         raise ContractError("block must be a EvidenceBlock object")
     n_states = _require_positive_int(K, name="K")
     resolved_config = _resolve_observation_config(config)
-    init = identity_plus_small_open_initialization(n_states)
+    init = identity_plus_small_open_initialization(n_states, device=device)
     source = _as_float64_tensor(block.source_bag, name="source_bag", device=init.A.device)
     target = _as_float64_tensor(block.target_bag, name="target_bag", device=source.device)
     _ensure_distribution_matrix(source, name="source_bag")
@@ -123,7 +125,7 @@ def compute_init_fov_cost_scale(
 
     predicted = post_reconstruct(source, init.A, init.e)
     C_norm = _normalized_geometry_cost(geometry, K=n_states, device=predicted.device)
-    ground_cost = _pairwise_composition_ground_cost(
+    ground_cost = _pairwise_composition_ground_cost_value(
         predicted,
         target,
         C_norm,
@@ -154,8 +156,9 @@ def _resolve_block_fov_cost_scale(
     *,
     K: int,
     config: BalancedSinkhornDivergenceConfig | None,
+    device: Any | None = None,
 ) -> FovCostScale:
-    computed = compute_init_fov_cost_scale(block, geometry, K=K, config=config)
+    computed = compute_init_fov_cost_scale(block, geometry, K=K, config=config, device=device)
     if block.fov_cost_scale is None:
         if block.fov_cost_scale_floor_used:
             raise ContractError(
