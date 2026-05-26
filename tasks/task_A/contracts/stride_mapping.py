@@ -2,7 +2,7 @@
 
 These payloads define the task-local JSON and CSV schemas for the Step 3
 canonical rerun surfaces. They cover Step 1 mapping, canonical ``fit_stride``
-dry-run provenance, and the recurrence-context fields that Block 1/2 now
+dry-run provenance, and the recurrence-context fields that Block 1 now
 require, without redefining the STRIDE core outputs.
 """
 from __future__ import annotations
