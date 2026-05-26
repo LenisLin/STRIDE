@@ -5,8 +5,8 @@ Role:
     single Block 3 subexperiment.
 
 Authority anchors:
-    - docs/task_A_spec.md §4.5.6, §5.1 Phase 3
-    - docs/task_A_block3_redesign_v1_1.md §5.5, §5.6
+    - docs/task_A/spec.md §4.5.6, §5.1 Phase 3
+    - docs/task_A/block3/scientific_contract.md §5.5, §5.6
 
 Local boundary:
     - This module shapes internal review carriers that remain subordinate to the
@@ -24,8 +24,7 @@ Why this module exists:
     The internal review surface needs flat, readable tables without mixing its
     layout logic into the raw bundle writer or the execution dispatcher. Keeping
     review-specific schema decisions here makes it explicit that `3A` remains
-    non-method-bearing while `3B`/`3C-1`/`3C-2` carry summary and method
-    columns.
+    non-method-bearing while `3B`/`3C-*` carry summary and method columns.
 """
 from __future__ import annotations
 
@@ -38,9 +37,8 @@ import pandas as pd
 
 from stride.errors import ContractError
 
-from .bundle import Block3BundleLayout
+from .bundle import BLOCK3_PACKET_BRIDGE_POLICY, Block3BundleLayout
 from .contracts import Block3SubexperimentReviewRows
-from .execution import BLOCK3_PACKET_BRIDGE_POLICY, Block3ExecutionPlan
 
 
 @dataclass(frozen=True)
@@ -63,6 +61,9 @@ class Block3ReviewLayout:
     scientific_interpretation_allowed: bool
     packet_bridge_enabled: bool
     packet_bridge_policy: str
+    execution_scope: str
+    n_generator_reruns: int
+    n_test_patients: int
     manifest_name: str
     review_index_name: str
 
@@ -120,7 +121,7 @@ def build_review_table_schema(subexperiment_id: str) -> tuple[str, ...]:
     Core flow:
         1. Route `3A` to the non-method-bearing review schema with validation
            object and stability-level columns.
-        2. Route `3B`, `3C-1`, and `3C-2` to the method-bearing review schema
+        2. Route `3B` and `3C-*` to the method-bearing review schema
            with summary-statistic columns.
 
     Notes:
@@ -182,7 +183,7 @@ def _filter_review_artifacts(
 
 
 def build_block3_review_layout(
-    plan: Block3ExecutionPlan,
+    plan: Any,
     bundle_layout: Block3BundleLayout,
     *,
     manifest_name: str | None = None,
@@ -257,39 +258,46 @@ def build_block3_review_layout(
             ),
         ),
         Block3ReviewArtifactLayout(
-            role="3a_review_surface",
-            relative_path="review/3a_review_surface.csv",
+            role="generator_validation_review_surface",
+            relative_path="review/generator_validation/review_surface.csv",
             format="csv",
             schema_columns=build_review_table_schema("3A"),
             subexperiment_id="3A",
         ),
         Block3ReviewArtifactLayout(
-            role="3b1_review_surface",
-            relative_path="review/3b1_review_surface.csv",
+            role="a_benchmark_review_surface",
+            relative_path="review/a_benchmark/review_surface.csv",
             format="csv",
             schema_columns=build_review_table_schema("3B-1"),
             subexperiment_id="3B-1",
         ),
         Block3ReviewArtifactLayout(
-            role="3b2_review_surface",
-            relative_path="review/3b2_review_surface.csv",
+            role="de_benchmark_review_surface",
+            relative_path="review/de_benchmark/review_surface.csv",
             format="csv",
             schema_columns=build_review_table_schema("3B-2"),
             subexperiment_id="3B-2",
         ),
         Block3ReviewArtifactLayout(
-            role="3c1_review_surface",
-            relative_path="review/3c1_review_surface.csv",
+            role="subbag_consistency_ablation_review_surface",
+            relative_path="review/subbag_consistency_ablation/review_surface.csv",
             format="csv",
             schema_columns=build_review_table_schema("3C-1"),
             subexperiment_id="3C-1",
         ),
         Block3ReviewArtifactLayout(
-            role="3c2_review_surface",
-            relative_path="review/3c2_review_surface.csv",
+            role="geometry_ablation_review_surface",
+            relative_path="review/geometry_ablation/review_surface.csv",
             format="csv",
             schema_columns=build_review_table_schema("3C-2"),
             subexperiment_id="3C-2",
+        ),
+        Block3ReviewArtifactLayout(
+            role="recurrence_ablation_review_surface",
+            relative_path="review/recurrence_ablation/review_surface.csv",
+            format="csv",
+            schema_columns=build_review_table_schema("3C-3"),
+            subexperiment_id="3C-3",
         ),
     )
     artifacts = _filter_review_artifacts(
@@ -303,6 +311,9 @@ def build_block3_review_layout(
         scientific_interpretation_allowed=plan.scientific_interpretation_allowed,
         packet_bridge_enabled=plan.packet_bridge_enabled,
         packet_bridge_policy=BLOCK3_PACKET_BRIDGE_POLICY,
+        execution_scope=str(plan.execution_scope),
+        n_generator_reruns=int(plan.n_generator_reruns),
+        n_test_patients=int(plan.n_test_patients),
         manifest_name=manifest_filename,
         review_index_name=review_index_filename,
     )
@@ -341,6 +352,9 @@ def build_review_manifest_payload(
         "scientific_interpretation_allowed": layout.scientific_interpretation_allowed,
         "packet_bridge_enabled": layout.packet_bridge_enabled,
         "packet_bridge_policy": layout.packet_bridge_policy,
+        "execution_scope": layout.execution_scope,
+        "n_generator_reruns": layout.n_generator_reruns,
+        "n_test_patients": layout.n_test_patients,
         "artifacts": [
             {
                 "artifact_role": artifact.role,
@@ -458,7 +472,7 @@ def _review_role_records(
         1. Route `3A` to the generator-review surface only.
         2. Reject section-review rows on `3A`.
         3. Reject generator-review rows on method-bearing sections.
-        4. Route `3B`, `3C-1`, and `3C-2` to their section-review artifacts.
+        4. Route `3B` and `3C-*` to their section-review artifacts.
         5. Fail fast for unsupported subexperiment ids.
 
     Notes:
@@ -470,16 +484,17 @@ def _review_role_records(
             raise ContractError("3A review surface must remain non-method-bearing")
         if not review_rows.generator_rows:
             raise ContractError("3A review surface requires generator review rows")
-        return {"3a_review_surface": [row.to_record() for row in review_rows.generator_rows]}
+        return {"generator_validation_review_surface": [row.to_record() for row in review_rows.generator_rows]}
     if review_rows.generator_rows:
         raise ContractError(f"{subexperiment_id} review surface must not carry 3A review rows")
     if not review_rows.section_rows:
         raise ContractError(f"{subexperiment_id} review surface requires section review rows")
     suffix = {
-        "3B-1": "3b1",
-        "3B-2": "3b2",
-        "3C-1": "3c1",
-        "3C-2": "3c2",
+        "3B-1": "a_benchmark",
+        "3B-2": "de_benchmark",
+        "3C-1": "subbag_consistency_ablation",
+        "3C-2": "geometry_ablation",
+        "3C-3": "recurrence_ablation",
     }.get(subexperiment_id)
     if suffix is None:
         raise ContractError(f"Unsupported Block 3 review subexperiment {subexperiment_id!r}")
@@ -489,7 +504,7 @@ def _review_role_records(
 def write_block3_subexperiment_review_surface(
     *,
     output_dir: str | Path,
-    plan: Block3ExecutionPlan,
+    plan: Any,
     bundle_layout: Block3BundleLayout,
     subexperiment_id: str,
     review_rows: Block3SubexperimentReviewRows,
