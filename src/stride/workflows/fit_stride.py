@@ -18,10 +18,52 @@ from ._fit_inputs import _FitObservationGroup, _PatientFitInput, _build_patient_
 from .config import TaskConfig
 
 
+BLOCK_CONSTRUCTION_POLICY = "partitioned_fov_subbag_v1"
+
+
 def _group_state_matrix(observations: Sequence[FovObservation]) -> np.ndarray:
     return np.vstack(
         [np.asarray(observation.community_composition, dtype=float) for observation in observations]
     ).astype(float, copy=False)
+
+
+def _stable_observation_order(
+    observations: Sequence[FovObservation],
+) -> tuple[FovObservation, ...]:
+    return tuple(
+        observation
+        for _index, observation in sorted(
+            enumerate(observations),
+            key=lambda item: (
+                str(item[1].fov_id),
+                str(item[1].domain_label or ""),
+                item[0],
+            ),
+        )
+    )
+
+
+def _balanced_nonempty_partitions(
+    observations: Sequence[FovObservation],
+    n_parts: int,
+) -> tuple[tuple[FovObservation, ...], ...]:
+    if isinstance(n_parts, bool) or n_parts <= 0:
+        raise ContractError("subbag partition count must be positive")
+    if n_parts > len(observations):
+        raise ContractError("subbag partition count must not exceed observation count")
+    base_size, remainder = divmod(len(observations), n_parts)
+    chunks: list[tuple[FovObservation, ...]] = []
+    start = 0
+    observation_tuple = tuple(observations)
+    for index in range(n_parts):
+        size = base_size + (1 if index < remainder else 0)
+        stop = start + size
+        chunk = observation_tuple[start:stop]
+        if len(chunk) == 0:
+            raise ContractError("subbag partitions must be non-empty")
+        chunks.append(chunk)
+        start = stop
+    return tuple(chunks)
 
 
 def _patient_inputs_support_full_optimizer(patient_inputs: Sequence[_PatientFitInput]) -> bool:
@@ -96,21 +138,42 @@ def _build_evidence_blocks(patient_inputs: Sequence[_PatientFitInput]) -> tuple[
     blocks: list[EvidenceBlock] = []
     for patient_input in patient_inputs:
         source_group, target_group = patient_input.groups
-        for source_domain, source_observations in sorted(source_group.observations_by_domain.items()):
-            for target_domain, target_observations in sorted(target_group.observations_by_domain.items()):
-                block_id = (
-                    f"{patient_input.patient_id}:"
-                    f"{source_group.group_label}:{source_domain}->"
-                    f"{target_group.group_label}:{target_domain}"
+        source_observations = _stable_observation_order(source_group.observations)
+        target_observations = _stable_observation_order(target_group.observations)
+        n_subbags = min(len(source_observations), len(target_observations))
+        source_chunks = _balanced_nonempty_partitions(source_observations, n_subbags)
+        target_chunks = _balanced_nonempty_partitions(target_observations, n_subbags)
+        for subbag_index, (source_chunk, target_chunk) in enumerate(
+            zip(source_chunks, target_chunks, strict=True)
+        ):
+            block_id = (
+                f"{patient_input.patient_id}:"
+                f"{source_group.group_label}->"
+                f"{target_group.group_label}:subbag_{subbag_index}"
+            )
+            blocks.append(
+                EvidenceBlock(
+                    patient_id=patient_input.patient_id,
+                    source_bag=_group_state_matrix(source_chunk),
+                    target_bag=_group_state_matrix(target_chunk),
+                    block_id=block_id,
+                    metadata={
+                        "block_construction_policy": BLOCK_CONSTRUCTION_POLICY,
+                        "subbag_index": subbag_index,
+                        "n_blocks_for_patient": n_subbags,
+                        "source_group": source_group.group_label,
+                        "target_group": target_group.group_label,
+                        "source_fov_ids": tuple(str(obs.fov_id) for obs in source_chunk),
+                        "target_fov_ids": tuple(str(obs.fov_id) for obs in target_chunk),
+                        "source_domain_labels": tuple(
+                            sorted({str(obs.domain_label) for obs in source_chunk})
+                        ),
+                        "target_domain_labels": tuple(
+                            sorted({str(obs.domain_label) for obs in target_chunk})
+                        ),
+                    },
                 )
-                blocks.append(
-                    EvidenceBlock(
-                        patient_id=patient_input.patient_id,
-                        source_bag=_group_state_matrix(source_observations),
-                        target_bag=_group_state_matrix(target_observations),
-                        block_id=block_id,
-                    )
-                )
+            )
     if not blocks:
         raise ContractError("Canonical full estimator requires at least one evidence block")
     return tuple(blocks)
