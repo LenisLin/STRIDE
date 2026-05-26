@@ -45,3 +45,31 @@ For package-local module CLIs that import `src` modules before dry-run exits, bo
 - Source: error
 - Related Files: tasks/task_A/block3/__main__.py
 - Tags: pythonpath, cli, dry-run
+
+---
+
+## [ERR-20260526-001] Git Index Write Blocked By Sandbox
+
+**Logged**: 2026-05-26T22:18:57+08:00
+**Priority**: low
+**Status**: resolved
+**Area**: tooling
+
+### Summary
+Creating requested per-file Git commits failed in the default sandbox because `.git/index.lock` could not be created.
+
+### Error
+```text
+fatal: Unable to create '/home/lenislin/Experiment/projects/STRIDE/.git/index.lock': Read-only file system
+```
+
+### Context
+The failing operation was a scripted sequence of `git add` and `git commit` calls. Re-running the same operation with escalated Git permissions succeeded.
+
+### Suggested Fix
+When Git index writes fail with a read-only filesystem error in this workspace, retry the same Git operation with explicit approval rather than changing working tree files.
+
+### Metadata
+- Reproducible: unknown
+- Related Files: .git/index
+- Tags: git, sandbox, commit
