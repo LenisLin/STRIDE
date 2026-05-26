@@ -6,7 +6,7 @@ patient-level open remodeling relations rather than a transport-first ontology.
 
 The canonical full-method definition is frozen in
 `docs/stride_design_freeze.md`. The live implementation exposes the canonical
-`stride` first-pass fit path and Task A operational workflows for Block 0-2 and
+`stride` first-pass fit path and Task A operational workflows for Block 0/1 and
 the internal Block 3 rebuild surface.
 
 ## What STRIDE Represents
@@ -85,7 +85,7 @@ stratification.
 
 Task A is the current bounded validation task. It uses a single-timepoint
 ordered tissue-domain surface for Task A validation. The Task A rewiring freeze
-lives in `docs/task_A_rewiring_plan.md`; Block 0-2 and the internal Block 3
+lives in `docs/task_A/spec.md`; Block 0/1 and the internal Block 3
 rebuild are documented in the Task A operational surfaces.
 
 ## Current Architecture Status
@@ -94,7 +94,7 @@ rebuild are documented in the Task A operational surfaces.
   implementation surface.
 - `tasks/` owns task-specific workflows, benchmark code, and operational
   documentation.
-- `tasks/task_A/` owns Task A Block 0-2 workflows and the internal Block 3
+- `tasks/task_A/` owns Task A Block 0/1 workflows and the internal Block 3
   rebuild package.
 
 ## Documentation Map
@@ -119,12 +119,12 @@ rebuild are documented in the Task A operational surfaces.
 
 ### Task surfaces
 
-- `docs/task_A_rewiring_plan.md` freezes how Task A maps onto full STRIDE.
-- `docs/task_A_spec.md` is the live Task A specification.
-- `docs/task_A_block3_redesign_v1_1.md` records the adopted Block 3 redesign
-  alignment and is subordinate to `docs/task_A_spec.md`.
-- `docs/task_A_result.md` is the Task A results memo through Block 2.
-- `tasks/task_A/README.md` is the Task A operational companion for Block 0-2
+- `docs/task_A/spec.md` is the top-level live Task A design document.
+- `docs/task_A/block3/scientific_contract.md` records the live Block 3
+  generator, benchmark, and ablation contract.
+- `docs/task_A/block3/refactor_contract_map.md` is the Block 3 migration map.
+- `docs/task_A/result.md` is the Task A results memo through Block 1.
+- `tasks/task_A/README.md` is the Task A operational companion for Block 0/1
   workflows and the internal Block 3 rebuild surface.
 - `docs/task_B_spec.md`, `docs/task_C_spec.md`, and `docs/task_D_spec.md`
   are bounded task/background notes.
@@ -135,12 +135,13 @@ rebuild are documented in the Task A operational surfaces.
 2. `docs/decisions.md`, `docs/api_specs.md`, `docs/data_contracts.md`,
    `docs/overall_validation_plan.md`, `docs/constraints.md`
 3. `docs/state.md`
-4. `docs/task_A_rewiring_plan.md`
-5. `docs/task_A_spec.md`
-6. `docs/task_A_block3_redesign_v1_1.md` for live Task A Block 3 alignment
-7. `docs/task_A_result.md` and `tasks/task_A/README.md` as derived Task A
+4. `docs/task_A/spec.md`
+5. `docs/task_A/block3/scientific_contract.md` and stage docs under
+   `docs/task_A/block3/` for live Task A Block 3 contracts
+6. `docs/task_A/block3/refactor_contract_map.md` for migration mapping only
+7. `docs/task_A/result.md` and `tasks/task_A/README.md` as derived Task A
    result/operational docs
-8. Task-local operational docs under `tasks/` as execution companions
+8. Historical/proxy references only
 
 ### Repository layout
 
