@@ -9,8 +9,8 @@ Purpose:
   3 execution can be treated as aligned with the live `3B/3C` contract.
 
 Reviewed sources:
-- `docs/task_A_spec.md`
-- `docs/task_A_block3_redesign_v1_1.md`
+- `docs/task_A/spec.md`
+- `docs/task_A/block3/scientific_contract.md`
 - `tasks/task_A/README.md`
 - `tasks/task_A/block3_execution_runbook.md`
 - `tasks/task_A/contracts/artifact_contracts.md`
@@ -32,18 +32,19 @@ Reviewed code/tests:
 - `tests/test_task_a_block3_phase3_audit.py`
 
 Traceability findings:
-- The internal Block 3 execution path still requires an evidence-ready,
-  `canonical_full`, `canonical_rerun` Block 2 manifest and an evidence-ready
-  Block 1 bundle before any Phase 3 work begins.
-- The generator path now enforces the frozen outer design of `10` reruns with
-  `24 train / 8 test` per rerun and fails fast when fewer than `32` eligible
-  patients are available.
-- `3B` remains the only section that expands `relation_null`,
-  `relation_weak`, `relation_mid`, and `relation_strong`.
-- The live `3C` contract contains `recurrence_ablation`,
-  `geometry_ablation`, and `consistency_ablation`.
+- The internal Block 3 execution path now exposes a Stage 0 h5ad plus Task A
+  config CLI surface. Block1/2 manifest routing is retired from the live
+  contract.
+- The generator path now enforces the formal outer design of `10` reruns with
+  `24 train / 8 test` per rerun, while subset engineering smoke runs may reduce
+  rerun and held-out test counts without changing generator mechanics.
+- Relation support is derived from identity-cost geometry. Motif-probe,
+  diagnostic-matrix, and retired grid routes are not live execution paths.
+- `3B-1`, `3B-2`, and `3C-*` all use the shared multi-FOV realization set.
+- The live `3C` contract contains `consistency_ablation`,
+  `geometry_ablation`, and `recurrence_ablation`.
 - Each live `3C` arm removes or zeroes the corresponding objective term and
-  refits patient-level `A_p`, `d_p`, and `e_p` on the same rerun-specific
+  refits patient-level `A_p`, `d_p`, and `e_p` on the same shared multi-FOV
   realization set as `stride_reference`.
 - Live `3C` uses native patient-level recovery metrics for `A_p`, `d_p`, and
   `e_p`; comparator-style transport or channel variants belong to the `3B`
@@ -56,7 +57,7 @@ Anti-fabrication findings:
   `patient_offset`, or `rerun_offset` style score fabrication.
 - Internal manifest workflow names and module wording no longer identify the
   current Phase 3 implementation as a `demo` surface.
-- Public Block 3 entrypoints remain deferred/fail-fast, so the internal Phase 3
+- Public Block 3 workflow entrypoints remain absent, so the internal Phase 3
   implementation is not being relabeled as a live scientific workflow.
 
 Annotation coverage findings:
@@ -71,10 +72,8 @@ Annotation coverage findings:
   relation scenarios, and benchmark modes now carry local semantic guidance.
 
 Blocking mismatches:
-- The internal Phase 3 audit surface predates the live `3C` split into
-  recurrence, geometry, and consistency refit ablations. It therefore remains
-  historical audit context until implementation, artifacts, and tests are
-  synchronized to that live contract.
+- This memo remains historical audit context; the live `3C` split is
+  consistency, geometry, and recurrence refit ablations.
 - Block3b still has documented implementation-lag items that must be closed
   before the rebuilt 3B surface is treated as contract-aligned execution.
 
@@ -86,8 +85,8 @@ Targeted verification:
 
 Decision:
 - Historical audit context only. The live target is the frozen Task A Block 3
-  contract in `docs/task_A_spec.md` and
-  `docs/task_A_block3_redesign_v1_1.md`; implementation alignment remains
+  contract in `docs/task_A/spec.md` and
+  `docs/task_A/block3/scientific_contract.md`; implementation alignment remains
   pending for the refit-ablation `3C` surface.
 
 Reviewer:
