@@ -1,16 +1,19 @@
-# Task A Live Proxy Specification
+# Task A Live Design Specification
 
-This file is the sole live scientific Task A document for the current
-proxy/approximate Task A stack.
+This file is the top-level live Task A design document. It integrates the
+former Task A rewiring plan; no standalone live rewiring document exists.
 
 For the canonical full STRIDE method definition, use
 [`docs/stride_design_freeze.md`](/home/lenislin/Experiment/projects/STRIDE/docs/stride_design_freeze.md).
-For the Task A migration target, use
-[`docs/task_A_rewiring_plan.md`](/home/lenislin/Experiment/projects/STRIDE/docs/task_A_rewiring_plan.md).
 This file must not be used to redefine STRIDE itself.
 
+Task A remains a bounded validation and migration surface inside STRIDE. Its
+historical proxy execution stack is preserved as history; current live Task A
+contracts describe how Task A consumes the full STRIDE design without replacing
+the method-level authority in `docs/stride_design_freeze.md`.
+
 This revision freezes the scientific structure, claim boundaries, and execution
-logic of Task A around the new `Descriptive atlas + Block 0/1/2/3` framing.
+logic of Task A around the new `Descriptive atlas + Block 0/1/3` framing.
 The Block 1 summary estimand layer and the main `TC-IM` versus `TC-PT`
 comparison logic are now frozen. Remaining deferred statistical and artifact
 closure items are listed explicitly in `Freeze Status and Remaining Deferred
@@ -38,7 +41,8 @@ For patient `p`, the primary scientific object is `(T_p, e_p)` with
   auxiliary object `R_{p,ij} = A_{p,ij} / (1 - d_{p,i})` when
   `1 - d_{p,i} > 0`; `A_p` remains the canonical STRIDE object.
 - `d_p` is pre-side depletion tendency.
-- `e_p` is post-side emergence tendency.
+- `e_p` is target-side incoming open-entry tendency. It is not direct evidence
+  of true biological emergence.
 - Patient-level pre/post burden vectors live on a pseudo-mass / burden scale;
   normalized compositions are derived views only.
 - Cohort-level meaning is defined through recurrence across patient-level
@@ -88,9 +92,10 @@ single-timepoint cohort.
 Task A asks the following bounded question:
 
 > Under the ordered tissue-domain proxy `TC -> IM -> PT`, can STRIDE recover
-> non-random relation structure, biologically interpretable patterns, robust
-> repeatable findings, and evidence that these findings are not reducible to
-> simpler baselines or accidental component choices?
+> non-random relation structure, relation patterns that can support downstream
+> biological interpretation, and evidence that
+> these findings are not reducible to simpler baselines or accidental component
+> choices?
 
 This question is stronger than the earlier continuity-only framing, but it is
 still narrower than full validation of the complete longitudinal STRIDE object
@@ -99,7 +104,8 @@ and does not justify direct temporal event claims.
 ## 4. Scientific Evidence Stack
 
 The Task A scientific stack is ordered. The blocks are not interchangeable, and
-downstream interpretation depends on upstream passage.
+downstream interpretation depends on upstream context. Block 1 reads Stage 0
+plus config directly.
 
 ### 4.1 Descriptive Atlas
 
@@ -127,131 +133,146 @@ Role:
   findings.
 - The atlas is descriptive only and is not itself a hypothesis-testing layer.
 
-### 4.2 Block 0: STRIDE-Native Null Gate
+### 4.2 Block 0: TC-IM Empirical Null Calibration
 
-Block 0 is the entry gate for Task A discovery.
+Block 0 is the empirical calibration layer for the `TC-IM` relation surface.
 
 Biological logic:
 
 - An ordered tissue proxy is not automatically an informative relation surface.
-- Before interpreting real biological structure, Task A must show that the
-  near-proxy family behaves differently from an appropriate null family that
-  breaks the proxy relation.
+- Before interpreting downstream real-data patterns, Task A records whether
+  the real `TC-IM` STRIDE relation structure differs from an empirical
+  count-preserving permutation null that breaks the proxy relation.
 
 Frozen scope:
 
 - Real family: `TC-IM`
-- Null family: a count-preserving randomized family that breaks the intended
-  ordered proxy relation while keeping the Task A observation surface honest
+- Null family: patient-level empirical count-preserving `TC-IM` permutation
+  null that permutes TC/IM labels within each patient while preserving exact
+  per-patient `n_TC`/`n_IM` counts
+- Hard inputs: Stage 0 h5ad plus Task A config. Prepare and descriptive-atlas
+  artifacts may not be read as evidence or hard inputs.
+- Formal full calibration uses `B=199` permutations. `B` remains configurable
+  for diagnostics; smaller checks use smaller `B` or subsets rather than a
+  separate smoke-mode contract.
 
-Main summary types:
+Execution and analysis layers:
 
-- continuity-like matched summary derived from `A`
-- depletion burden derived from `d`
-- emergence burden derived from `e`
+- execution layer: run real `TC-IM` and B permutation-null full STRIDE fits and
+  persist a reusable per-fit cache over `A`, `d`, `e`, `mu_minus`, and
+  `mu_plus`
+- analysis layer: derive calibration tables from an existing cache without
+  rerunning `fit_stride(...)`
+- analysis uses a fixed Block 1-facing family-summary calibration surface over
+  `self_retention`, `depletion`, `off_diagonal_remodeling`, and `emergence`;
+  those outputs must remain traceable to the source execution cache
 
 Role:
 
 - Block 0 does not interpret biology.
-- Block 0 asks whether the real `TC-IM` family is meaningfully different from a
-  broken-proxy null family on a small set of STRIDE-native derived summaries.
-- If Block 0 does not pass, Task A does not advance to Block 1.
+- Block 0 execution emits cache/provenance artifacts only, not p-values or
+  derived scientific metrics.
+- Block 0 analysis reports cache-derived calibration statistics only.
+  Interpretation and downstream scientific judgement are performed in later
+  review stages.
 
-### 4.3 Block 1: Real-Data Biological Discovery
+### 4.3 Block 1: Real-Data Discovery
 
-Block 1 is the main real-data biological discovery layer.
+Block 1 is the descriptive real-data discovery layer for the approved Stage 0
+shared community basis.
 
 Biological logic:
 
-- After Block 0 establishes that the near-proxy surface is not behaving like a
-  broken null, Task A asks whether real cross-tissue families show organized,
-  interpretable patterns that align with tissue context.
+- Block 1 asks what patient-level and cohort-level full STRIDE relation
+  structure is observed for the prespecified real-data families `TC-IM` and
+  `TC-PT`.
+- `TC-IM` and `TC-PT` retain their near/far ordered-proxy design labels, but
+  those labels do not authorize engineering filters or direct biological
+  interpretation inside Block 1.
+- Block 1 reads Stage 0 h5ad and Task A config directly. It does not read
+  Block 0 outputs, descriptive-atlas outputs, result packets, or proxy-history
+  artifacts.
 
 Frozen family-level scope:
 
 - confirmatory comparison: `TC-IM` versus `TC-PT`
-- `TC-IM` is the nearer real family
-- `TC-PT` is the farther real family
+- `TC-IM` is the nearer design-label family
+- `TC-PT` is the farther design-label family
 - `IM-PT` is not a confirmatory family in this block
 - family-level estimands are exported on two frozen scales:
   `burden_weighted` and `community_mean`
 - source-side summary names are fixed to:
   - `SR` for self-retention
-  - `D` for depletion burden
-  - `R` for off-diagonal remodeling burden, with
+  - `D` for source-open depletion tendency, with a burden counterpart
+  - `R` for off-diagonal remodeling tendency, with a burden counterpart and
     `R_i = sum_{j != i} A_ij` at community level
-- target-side `E` remains exported as a supportive summary and carries more
-  cautious interpretation than the source-side primary summaries
+- Target-side `E` remains a supportive family-level target-open accounting
+  rollup. It is not evidence of true biological emergence.
 
 Required community-level scope:
 
-- source-community `SR_i`
-- source-community `D_i`
-- source-community `R_i`
-- source-community `TopTargets_i`
-- target-community `I_j`
-- target-community `E_j`
+- source-community `SR_i`, `D_i`, and `R_i` with burden-scale counterparts
+- target-community `target_burden`
+- target-community `target_weight`, a normalized target composition helper
+- target-community `matched_incoming_burden`
+- target-community `open_incoming_tendency`
+- target-community `open_incoming_burden`
+
+The Block 1 core schema does not export top-k target rankings. It does not
+export unweighted target incoming operator column sums. Off-diagonal
+destinations remain reconstructable from native `A` and `state_ids`; an
+R-friendly full source-target long CSV is deferred until after 3.6 diagnostic
+validation.
+
+Block 1 also emits a statistical supplement over the frozen comparison
+surfaces. This supplement is a review surface over already exported
+patient-level paired `TC-IM` versus `TC-PT` contrasts; it does not change the
+core descriptive comparison contract and does not rerun STRIDE fits. The
+family, source-community, and target-community supplement tables use
+patient-paired Wilcoxon signed-rank tests, two-sided sign tests, BH-adjusted
+`q` values within their declared surfaces, and an absolute median-delta effect
+floor of `0.05`. The native relation-element supplement applies the same
+paired-patient logic to `A`, `d`, and `e` elements, with separate BH correction
+for `A`, `d`, and `e`. Cohort relation comparison remains a cohort-level
+effect map only; it does not carry cohort-level p-values or significance
+labels.
 
 Main outputs:
 
+- raw full STRIDE fit outputs and raw cohort recurrence/common-structure
+  outputs from the execution phase
 - patient-level family summaries on frozen `summary_name x scale x pair_family`
   axes
 - patient-level source-community summaries on frozen
   `patient_id x pair_family x source_community` axes
 - patient-level target-community summaries on frozen
   `patient_id x pair_family x target_community` axes
-- paired confirmatory comparisons between `TC-IM` and `TC-PT`
+- descriptive `TC-IM` versus `TC-PT` contrast tables
+- statistical supplement tables over the paired-patient family,
+  source-community, target-community, and native relation-element surfaces
 
 Role:
 
-- Block 1 carries the primary biological discovery claim for Task A.
-- Residual or open-channel interpretation is not a separate block here; it is
-  incorporated into the same real-data discovery layer through `d` and `e`.
+- Block 1 records observed real-data STRIDE relation structure. Its core
+  comparison tables remain descriptive. Its statistical supplement may emit
+  p-values, BH-adjusted `q` values, effect-floor flags, and review-candidate
+  flags. It does not emit figures, descriptive community annotation tables,
+  biological interpretation prose, or textual significance labels.
+- Formal full execution fails fast if any expected patient/family fit is
+  non-ok. Diagnostic subsets are readiness checks only and cannot become
+  formal Block 1 evidence.
 
-### 4.4 Block 2: Robustness of Biological Findings
+### 4.4 Block 3: Semisynthetic Truth-Recovery Benchmark on the Full STRIDE Reference
 
-Block 2 is the robustness validation layer for Block 1 findings.
-
-Biological logic:
-
-- Whether a pattern exists and whether it is stable are separate questions.
-- Task A should not promote Block 1 discoveries unless they repeat under
-  reasonable data perturbations.
-
-Recommended robustness routes:
-
-- repeated patient subsampling
-- leave-some-patients-out analyses
-- seed robustness
-- ROI/FOV subsampling when needed
-- all Block 2 comparisons must stay aligned to the frozen Block 1 summary axes:
-  `summary_name x scale x pair_family`, plus matching source/target community
-  dimensions when community-level summaries are consumed
-
-Main outputs:
-
-- robustness summaries over the frozen Block 1 family-level summaries
-- robustness summaries over the frozen source-community and target-community
-  Block 1 exports
-- repeatability of directions, rankings, and top patterns
-
-Role:
-
-- Block 2 does not compare STRIDE against baselines.
-- Block 2 does not assess method superiority.
-- Block 2 asks whether Block 1 discoveries are stable enough to trust.
-
-### 4.5 Block 3: Semisynthetic Truth-Recovery Benchmark on the Full STRIDE Reference
-
-Block 3 is the Task A method-validation layer. It is not a new biology block,
-and it does not reopen the Block 0-2 biological interpretation stack.
+Block 3 is a standalone cost-based semi-synthetic benchmark in the Task A
+Stage0/TC-IM context. It is not a new biology block, and it does not reopen the
+Block 0/1 biological interpretation stack.
 
 Under the Step 1 freeze, the currently existing live Block 3 packet remains
 proxy execution history rather than final full-STRIDE validation closure.
 
-The rebuilt Block 3 reference method is the canonical full STRIDE method as
-currently defined in `docs/stride_design_freeze.md` and realized in the
-canonical Step 3 rerun:
+The rebuilt Block 3 reference method targets the canonical full STRIDE method as
+currently defined in `docs/stride_design_freeze.md`:
 
 - patient-level relation objects `(A_p, d_p, e_p)` on the shared `K`-state
   basis
@@ -261,64 +282,95 @@ canonical Step 3 rerun:
 - cohort-level common/recurrent structure defined on patient relations rather
   than on pooled observations
 
-Block 3 sits strictly downstream of the canonical Block 0-2 evidence stack.
-Its role is to test, through semi-synthetic truth-recovery benchmarks anchored
-to that evidence chain, whether the already established Block 1 / Block 2
-finding pattern is genuinely method-specific under the full STRIDE design
-rather than recoverable from simpler alternatives or preserved after key
-component removals.
+This is a formal reference-method target. The current repository implements the
+bounded first-pass PyTorch/AdamW full-estimator support envelope, compact
+successful-fit provenance, and recurrence/geometry/consistency refit switches
+described in `docs/state.md`; inputs outside that envelope remain explicit
+non-`ok` or compatibility-route surfaces rather than successful full-objective
+fits.
 
-#### 4.5.1 Frozen scientific role and hypotheses
+Block 3 execution is driven by Stage 0 h5ad plus Task A config only. The
+Block 3 runtime contract does not consume Block 0, Block 1,
+descriptive-atlas, result-packet, or proxy-history artifacts as hard inputs.
+Block 3 shares Stage0, TC-IM, the K-state surface, and identity-derived
+geometry with Task A, but it does not validate Block 1 biological findings.
+Its role is to test method behavior under bounded semi-synthetic
+truth-recovery questions.
+
+#### 4.4.1 Frozen scientific role and hypotheses
 
 The user-approved scientific framing is binding for rebuilt Block 3.
 
-Block 3 tests two method-level hypotheses:
+Block 3 records two method-level benchmark questions:
 
-- `H1`: relation-aware modeling with explicit fitted open relation is
-  biologically and methodologically valuable. The main Block 1 / Block 2
-  finding pattern should weaken when STRIDE is compared against endpoint-only,
-  no-`d/e`, no-open-channel, closed, balanced, or transport-style comparator
-  arms. The frozen evidence route is `3B baseline comparison`.
-- `H2`: core full-STRIDE objective terms should materially support native
-  patient-level recovery under matched rerun-specific patient-level
-  semi-synthetic realizations. When recurrence, geometry, or consistency terms
-  are removed or zeroed and the estimator is refit, recovered patient-level
-  `A_p`, `d_p`, and `e_p` should degrade relative to the full reference fit.
-  The frozen evidence route is `3C ablation study`.
+- `H1`: Under the shared train-template multi-FOV semi-synthetic realization,
+  how do `stride_reference` and transport-style comparator arms differ on
+  relation and open-profile recovery? The benchmark route is
+  `3B baseline comparison`.
+- `H2`: Under the shared multi-FOV generated realization, how do consistency,
+  geometry, and recurrence refit ablations differ from `stride_reference` on
+  native patient-level recovery of `A_p`, `d_p`, and `e_p`? The benchmark route
+  is `3C ablation study`.
 
-Block 3 therefore validates all of the following and no broader claim:
+Block 3 therefore evaluates method behavior under the following bounded
+questions and no broader claim:
 
-- why relation-aware modeling matters
-- why explicit open relation matters under external comparator pressure
-- why recurrence, geometry, and consistency objective terms matter after
-  refitting the full patient relation
-- why the established Block 0-2 evidence stack should be read as full-STRIDE
-  method evidence rather than as a proxy-era artifact
+- relation and open-profile recovery under the shared train-template
+  multi-FOV realization
+- recovery changes after consistency, geometry, and recurrence refit ablations
+- whether exported metrics warrant later interpretation against explicit
+  benchmark questions
 
 Block 3 does not:
 
 - generate a new biology claim that supersedes Block 1
 - reinterpret the descriptive atlas as proof
-- redefine or overwrite canonical Block 0, Block 1, or Block 2 outputs
+- redefine or overwrite canonical Block 0 or Block 1 outputs
+- validate Block 1 biological findings
 - create a standalone semi-synthetic discovery block
 
-#### 4.5.2 Frozen Block 3 subexperiments
+#### 4.4.2 Frozen Block 3 subexperiments
 
 Rebuilt Block 3 is frozen as three Task A Block 3 sections:
 `3A generator validation`, `3B baseline comparison`, and
-`3C ablation study`. `3B` carries no-`d/e`, no-open-channel, closed,
-balanced, and transport-style comparator semantics. `3C` contains the core
-STRIDE refit ablations: `3C-1 recurrence ablation`,
-`3C-2 geometry ablation`, and `3C-3 consistency ablation`.
+`3C ablation study`. The executable subexperiment structure is:
+
+- `3A = generator validation`
+- `3B-1 = A benchmark`
+- `3B-2 = d/e benchmark`
+- `3C-1 = subbag consistency ablation`
+- `3C-2 = geometry ablation`
+- `3C-3 = recurrence ablation`
+
+`3B` carries no-`d/e`, no-open-channel, closed, balanced, and transport-style
+comparator semantics. `3C` contains only core STRIDE refit ablations under the
+consistency / geometry / recurrence ordering above.
 This section structure is exhaustive for the rebuilt Block 3 public surface.
+
+Hard inputs: Stage 0 h5ad and Task A config only.
+
+Block 3 must not read Block 0, Block 1, descriptive-atlas outputs,
+result packets, or preserved proxy-history artifacts as hard inputs. Result
+interpretation is deferred until exported metrics are reviewed against explicit
+benchmark questions, but execution inputs are Stage 0 plus config only.
+
+Block 3 derives community identity vectors `g_k` internally from the Stage 0
+shared-state/cell-subtype surface. The descriptive atlas may explain community
+meaning but is not a hard input.
+
+`block3.benchmark_pair_family: "TC-IM"` is the single explicit Task A config
+field for the Block 3 benchmark family. Current validation accepts only
+`TC-IM`.
 
 The rebuilt benchmark now uses one shared hidden-program design:
 
 - a real-data-derived baseline composition `x_p` on the shared `K`-state axis
 - a hidden patient program `(A_p, d_p, e_p)` used only as the latent generator
 - a method-facing target composition `y_p` derived from `(x_p, A_p, d_p, e_p)`
-- method inputs restricted to paired endpoint fractions `x_p` and `y_p` on the
-  same shared `K`-state axis
+- endpoint-only baselines consume deterministic endpoint projections of the
+  generated multi-FOV observations on the same shared `K`-state axis
+- `stride_reference` and STRIDE ablation arms consume generated source/target
+  FOV observations
 - Task A resolves source/target endpoint comparisons and valid domain strata,
   then passes the resolved comparison plan and source/target observation
   evidence blocks to the formal `fit_stride(...)` surface for
@@ -327,16 +379,19 @@ The rebuilt benchmark now uses one shared hidden-program design:
   instantiation; they must not substitute a task-local observation solver or
   task-local STRIDE estimator. Domain resolution remains task-layer
   provenance and does not become a core loss/state/relation/recurrence axis.
+- If `fit_stride(...)` emits compact successful-fit provenance for
+  `stride_reference`, Task A receives and preserves that full-estimator
+  provenance as provenance attached to the reference fit. Task A does not
+  expand it into a per-patient or per-evidence-block status hierarchy.
 
 No ranked benchmark method, including `stride_reference`, may read hidden
-`(A_p, d_p, e_p)` or any additional non-public truth companion. `x_p` and
-`y_p` are the method-facing endpoint observations in Block 3 v1. Any exact
-truth companion
-may exist only as an internal scoring/debugging object and must not appear as a
-ranked benchmark arm.
+`(A_p, d_p, e_p)` or any additional non-public truth companion. Deterministic
+endpoint projections and generated FOV observations are the only method-facing
+inputs in Block 3. Any exact truth companion may exist only as an internal
+scoring/debugging object and must not appear as a ranked benchmark arm.
 
 The detailed alignment note for this transitional redesign lives in
-[`docs/task_A_block3_redesign_v1_1.md`](/home/lenislin/Experiment/projects/STRIDE/docs/task_A_block3_redesign_v1_1.md).
+[`docs/task_A/block3/scientific_contract.md`](/home/lenislin/Experiment/projects/STRIDE/docs/task_A/block3/scientific_contract.md).
 
 The rebuilt benchmark is additionally frozen around one held-out outer design:
 
@@ -348,28 +403,34 @@ The rebuilt benchmark is additionally frozen around one held-out outer design:
   unit
 
 To keep the semi-synthetic benchmark scientifically interpretable rather than
-turning it into a large hyperparameter surface, Block 3 now exposes two
-section-specific public controls plus one internal generator layer:
+turning it into a large hyperparameter surface, Block 3 uses one
+train-template multi-FOV generator realization shared by `3A`, `3B`, and
+`3C-*`:
 
-- `relation_strength_grid = [0.00, 0.05, 0.15, 0.30]` is the public
-  matched-structure control used by `3B-1`
-- `relation_strength` denotes the off-diagonal matched-mass fraction on the
-  shared `K`-community axis
-- `max_offdiag_targets_per_source` is deterministically derived from
-  `relation_strength` as `(0.00 -> 0, 0.05 -> 1, 0.15 -> 1, 0.30 -> 2)`
-- `open_mass_scale_grid = [0.0, 0.1, ..., 1.0]` is the public open-burden
-  control used by `3B-2`
-- patient-level open burden remains a rerun-specific generator realization.
-  Within each rerun, `P(m)` is estimated on the `train` split from
-  `m_proxy = 0.5 * || q_TC - q_IM ||_1`, used to sample held-out patient
-  `m_p`, and then realized as patient-level semi-synthetic open burden
+- train TC-IM endpoint residuals are decomposed into geometry-gated
+  off-diagonal remodeling and open residuals using the normalized state cost
+  matrix with fixed generator gate `tau=2.0`
+- each train patient contributes a row-simplex template
+  `[A^(q) | d^(q)]` plus an emergence-shape template `s^(q)`
+- source rows that are not identifiable in an individual train template are
+  filled from train-row pooled templates, with diagonal no-remodeling fallback
+  only when no train patient identifies that row
+- held-out patient truth mixes the train-bank medoid template with one sampled
+  individual train template using `lambda_individual=0.10`
+- the held-out patient's open emergence vector is
+  `e_p = (x_p * d_p).sum() * s_p`, where `s_p` is the medoid/individual
+  emergence-shape mixture
+- generated source FOVs are deterministic shrinkage mixtures of the held-out
+  source endpoint and the real held-out source FOVs with `eta=0.3`
+- generated target FOVs are patient-level truth projections from generated
+  source-FOV anchors with no target noise
 - benchmark comparison and ablation study reuse the same rerun-specific
-  patient-level semi-synthetic realizations; `P(m)` is therefore a generator
-  quantity rather than a section-facing comparison target or benchmark metric
-- each shared community `k` is assigned a frozen community-identity vector
-  `g_k` from the upstream atlas/community-correspondence
-  `community x cell subtype` row-fraction surface; `g_k` retains the
-  `UNKNOWN` subtype with no removal or reweighting in the main contract
+  patient-level semi-synthetic realizations; generator settings are recorded
+  for provenance and diagnostics, not promoted to public benchmark axes
+- each shared community `k` receives a frozen community-identity vector `g_k`
+  computed internally from the Stage 0 shared-state/cell-subtype surface;
+  `g_k` retains the `UNKNOWN` subtype with no removal or reweighting in the
+  main contract
 - the shared-axis biological cost precursor is
   `C_raw[i,j] = sqrt(JS(g_i, g_j))`, with `C_raw[i,i] = 0`
 - let `s_C` be the median of the positive off-diagonal entries of `C_raw`;
@@ -378,108 +439,37 @@ section-specific public controls plus one internal generator layer:
   reused both as the shared-axis biological neighborhood for relation support
   and as the comparator-facing OT cost matrix; it is not a rerun-specific or
   train-estimated pairwise topology
+- for `stride_reference`, `C_raw`, `s_C`, and `C` are the Task A
+  adapter/benchmark cost source passed into the full-estimator shared-state
+  cost contract; they do not define a task-local geometry prior
+- the full estimator owns the `L_geometry` contract over raw canonical `A_p`;
+  Task A mirrors that contract for `stride_reference` and
+  `geometry_ablation`
 
-All other generator quantities, including the empirical turnover distribution,
-depletion/emergence propensities, and the shared train-derived cohort-level
-generation quantities reused within the recurrence-ablation realization set,
-are estimated from the `train` split and are not treated as free public
-benchmark hyperparameters.
-`train` therefore continues to estimate only `P(m)`, `pi_d`, `pi_e`,
-`kappa_d`, and `kappa_e`. The
-compatibility label `shared hidden cohort effect` used in the
-recurrence-ablation arm therefore means only that all held-out `test` patients
-in the same rerun are generated under the same train-derived cohort-level
-generator quantities. It is recorded for reproducibility only, is not a public
-benchmark axis, and does not define a separate scientific open question. These
-train-derived quantities are
-generator calibration / diagnostics-side quantities only, not formal Block 3
-headline benchmark metrics.
-
-Within each rerun, weak train calibration is frozen to state-level and
-open-level priors only:
-
-- define the train-side open-mass proxy as
-  `m_proxy = 0.5 * || q_TC - q_IM ||_1`; the factor `0.5` is definitional,
-  not a tuned hyperparameter
-- `P(m)` is the empirical distribution of `m_proxy` over the `train`
-  patients, and each held-out `test` patient samples `m_p` from that
-  empirical distribution with replacement
-- the resulting patient-level semi-synthetic open burden is reused across the
-  benchmark and ablation evaluations in that rerun rather than exposed as a
-  public fixed-`m` section axis
-- `pi_d` and `pi_e` are the mean normalized positive-part depletion and
-  emergence changes over informative `train` patients
-- `kappa_d` and `kappa_e` are train-estimated cohort-level dispersion scalars
-  for depletion/emergence shape heterogeneity around `pi_d` and `pi_e`; in v1
-  first compute the robust median total-variation deviation `tv` of
-  informative `train` patients from the corresponding channel centroid, then
-  map that dispersion to the `Gamma -> normalize` concentration by
-  `kappa = clip(1 / max(tv, 1e-8), 1, 200)`. They are not total
-  change-magnitude parameters
-- train calibration may not estimate state-pair relation templates,
-  off-diagonal motifs, or source-target mapping rules
-
-For each held-out `test` carrier `x_p`, the frozen v1 open scaffold is:
-
-- depletion base measure
-  `b_p^- = normalize(x_p ⊙ pi_d)`
-- emergence base measure
-  `b_p^+ = normalize((x_p + epsilon_fixed) ⊙ pi_e)`, where
-  `epsilon_fixed = 0.01` is a fixed smoothing pseudocount / soft floor rather
-  than a train-estimated biological random quantity or Gaussian-style noise
-  term
-- `d_p` is hard patient-anchored through `b_p^-`
-- `e_p` is soft patient-anchored through `b_p^+`
-- `Delta_p^-` and `Delta_p^+` are the direct generator objects and satisfy
-  `sum(Delta_p^-) = sum(Delta_p^+) = m_p`
-- `d_p` and `e_p` are derived from `Delta_p^-` and `Delta_p^+`; they are not
-  independently sampled total-mass vectors
-- the default v1 sampling family is `Gamma -> normalize`, with capped
-  allocation on depletion so that `Delta_{p,i}^- <= x_{p,i}` by construction
-- matched source mass is
-  `u_p = x_p - Delta_p^-`
-- the latent target is
-  `y_p = colsum(M_p) + Delta_p^+`
-
-Across `relation_strength_grid = [0.00, 0.05, 0.15, 0.30]`, only the matched
-component changes:
-
-- `relation_strength = 0.00` keeps the matched component diagonal-only and
-  sets `max_offdiag_targets_per_source = 0`
-- `relation_strength = 0.05` sets `max_offdiag_targets_per_source = 1` with
-  off-diagonal matched-mass fraction `0.05`
-- `relation_strength = 0.15` sets `max_offdiag_targets_per_source = 1` with
-  off-diagonal matched-mass fraction `0.15`
-- `relation_strength = 0.30` sets `max_offdiag_targets_per_source = 2` with
-  off-diagonal matched-mass fraction `0.30`
-- if `max_offdiag_targets_per_source = 1`, all off-diagonal matched mass is
-  allocated to the nearest neighbor under `C`
-- if `max_offdiag_targets_per_source = 2`, off-diagonal matched mass is
-  allocated across the `2` nearest neighbors by normalized `exp(-C[i,j])`
-  weights with no extra temperature parameter
-- off-diagonal support is nested across
-  `relation_strength = 0.05 -> 0.15 -> 0.30`
-- these predeclared relation-strength levels are benchmark regimes rather than
-  empirical biological subclasses
-- off-diagonal support must be induced only by predeclared shared-axis
-  geometry or cost rules and never by train-derived state-pair frequencies
+The train-derived templates are generator objects, not biological truth claims
+and not outputs of STRIDE or any comparator. Their role is to create a known
+hidden `(A_p, d_p, e_p)` surface with controlled cohort structure while
+preserving the method-facing input boundary. The formal Block 3 contract does
+not expose additional generator-grid axes.
 
 ##### 3A. Generator validation
 
-Scientific question:
+Manual sanity-check question:
 
-- Does the frozen semi-synthetic generator produce held-out cohort-level
-  target-fraction objects that are realistic, biologically plausible, and
-  stable enough to support downstream `3B/3C` evaluation?
+- Do the exported generator-validation raw and review surfaces show finite
+  metrics, no evident real/synthetic target-surface anomaly, and no evident
+  uncontrolled rerun variability before `3B/3C` are run?
 
 Generator-validation surface:
 
-- `3A` validates the same rerun-specific patient-level semi-synthetic
+- `3A` exports generator-validation raw and review surfaces for manual
+  inspection before running `3B/3C`; it is not a formal pass/fail gate
+- `3A` exports the same rerun-specific patient-level semi-synthetic
   realizations that are later consumed by `3B` and `3C`
-- fixed `m_p` strata are not part of the public `3A` contract
-- if implementation exports descriptive slices by realized open burden or by
-  `relation_strength`, those slices are diagnostics only and are not
-  section-defining benchmark axes
+- additional generator strata are not part of the public `3A` contract
+- if implementation exports descriptive slices by realized generator
+  quantities, those slices are diagnostics only and are not section-defining
+  benchmark axes
 - `3A` has two frozen formal validation objects on the held-out `test`
   cohort of rerun `r`:
   - the `community-space` target fraction surface
@@ -502,18 +492,19 @@ Formal metrics and stability summary:
 
 Interpretive role:
 
-- `3A` absorbs the earlier generator-validity layer and keeps it continuous
-  and descriptive rather than turning it into a single pass/fail gate
-- `3A` validates the generator in the same fraction-space semantic layer used
+- `3A` is a manual generator sanity check and has no thresholded gate,
+  pass/fail label, or standalone scientific conclusion
+- `3A` reviews generator outputs in the same fraction-space semantic layer used
   by the rest of Task A, not method superiority, not patient reconstruction,
-  not a forecasting-style accuracy benchmark, and not a comparison of `P(m)`
+  and not a forecasting-style accuracy benchmark
 - intuitive `real TC -> IM` versus `synthetic TC -> y` change language may
   still be used for explanation, but the formal contract is the held-out
   cohort `community-space` target fraction surface and the corresponding
   `g_k`-projected identity-aware surface
 - `3A` does not claim to isolate or prove the marginal contribution of
-  train-derived cohort priors; `P(m)`, `pi_d`, `pi_e`, `kappa_d`, and
-  `kappa_e` remain generator quantities rather than public `3A` axes
+  train-derived template structure; template identity, row-imputation mass,
+  endpoint closure, and evidence-block counts remain diagnostics rather than
+  public `3A` axes
 - compatibility-era sanity exports may still be emitted when useful for packet
   continuity, but `3A` has no dedicated formal null/random baseline contract;
   such exports are optional sidecars only, not new sections, comparators, or
@@ -534,7 +525,7 @@ Scientific question:
 
 - Under shared rerun-specific semi-synthetic comparison conditions, how do full
   STRIDE and the transport-family comparators differ on recovery of the shared
-  relation surface `A_p` from the same paired endpoint-fraction inputs?
+  relation surface `A_p` from their generated method-facing inputs?
 
 Reference versus baselines:
 
@@ -546,39 +537,37 @@ Reference versus baselines:
 
 Formal metrics:
 
+- `F_L1_total`
+- `g_L1_total`
+- `e_L1_total`
+- `offdiag_mass_abs_error`
+- `depletion_mass_abs_error`
+- `emergence_mass_abs_error`
+- `offdiag_ratio`
+- `depletion_capture`
+- `emergence_capture`
+- `endpoint_y_MAE`
 - `A_MAE_active`
 - `A_MSE_active`
 - `target_recall_at_k`
+- `open_support_F1`
+- `d_MAE`
+- `d_MSE`
+- `e_MAE`
+- `e_MSE`
 
 Metric rules:
 
-- `3B-1` uses `relation_strength_grid = [0.00, 0.05, 0.15, 0.30]`
-- `3B-1` fixes `open_mass_scale = 1.0`, the canonical open regime
+- `3B-1` uses one shared generated condition,
+  `a_benchmark_shared_realization_set`
 - the fixed shared-axis cost matrix `C`, derived from community-identity
-  vectors `g_k`, is reused to define nearest-neighbor relation support and to
-  define the comparator-facing OT cost for
+  vectors `g_k`, defines the comparator-facing OT cost for
   `balanced_ot_baseline`, `uot_baseline`, and `partial_ot_baseline`
-- the same rerun-specific held-out patients, endpoint fractions `x_p` and
-  `y_p`, and hidden patient-level truth are reused across all `3B-1` methods
-- for the same patient within the same rerun, sampled `m_p`, derived `d_p`,
-  derived `e_p`, and `open_mass_scale` remain fixed across `3B-1`; only
-  `relation_strength` changes inside the `3B-1` grid
-- `relation_strength` controls the off-diagonal matched-mass fraction on the
-  shared `K`-community axis
-- `max_offdiag_targets_per_source` is deterministically derived from
-  `relation_strength` as `(0.00 -> 0, 0.05 -> 1, 0.15 -> 1, 0.30 -> 2)`
-- `relation_strength = 0.00` keeps the matched mass diagonal-only
-- `relation_strength = 0.05` and `relation_strength = 0.15` use the nearest
-  `1` off-diagonal target under `C`
-- `relation_strength = 0.30` uses the nearest `2` off-diagonal targets under
-  `C`
-- if `max_offdiag_targets_per_source = 1`, all off-diagonal matched mass goes
-  to the nearest neighbor under `C`
-- if `max_offdiag_targets_per_source = 2`, off-diagonal matched mass is split
-  across the `2` nearest neighbors by normalized `exp(-C[i,j])` weights with
-  no extra temperature parameter
-- these relation-strength levels are the reviewer-facing benchmark challenge
-  levels for `3B-1`
+- the same rerun-specific held-out patients, generated endpoint projections,
+  generated FOV observations, and hidden patient-level truth are reused across
+  all `3B-1` methods
+- off-diagonal relation structure is inherited from the train-template
+  generator and is recorded through diagnostics and provenance
 - transported-mass scoring is truth-anchored:
   `T_true[i,j] = x_true[i] * A_true[i,j]` and
   `T_hat[i,j] = x_true[i] * A_hat[i,j]`
@@ -587,20 +576,20 @@ Metric rules:
   transported-mass error metrics
 - `target_recall_at_k` scores truth-anchored off-diagonal transported-mass
   target-priority recovery rather than generic endpoint reconstruction
-- at `relation_strength = 0.00`, `target_recall_at_k` is `not_applicable`
-  because truth contains no off-diagonal target set (`k = 0`); any
-  compatibility-only numeric display must be labeled as a structural ceiling
-  rather than evidence of recovery quality
+- `open_support_F1` is the support-level recovery metric on burden-scale
+  depletion/emergence carriers; `d_MAE`, `d_MSE`, `e_MAE`, and `e_MSE` are the
+  corresponding quantitative open-profile fidelity metrics
+- `target_recall_at_k` is `not_applicable` for any patient whose hidden truth
+  contains no off-diagonal target set
 
 Interpretive role:
 
 - `3B-1` is the relation-surface benchmark for `A_p`
 - the phase-1 engineering contract is to compute and export the frozen
-  `3B-1` metric set for each evaluated method, relation-strength level, and
-  rerun
+  shared 18-metric vocabulary for each evaluated method and rerun
 - judgments about competitiveness, acceptable loss, or headline ranking are
   deferred to post-processing and result interpretation
-- this is the reviewer-facing relation-gradient benchmark arm for `H1`
+- this is the relation-recovery benchmark arm for `H1`
 
 ###### 3B-2. d/e benchmark
 
@@ -617,43 +606,54 @@ Reference versus baselines:
 - baseline: `partial_ot_baseline`
 - baseline: `diagonal_transport_baseline`
 
+`balanced_ot_baseline` is intentionally excluded from `3B-2`. Its closed
+marginal constraints force `P 1 = x` and `P^T 1 = y`; under the shared
+`P -> A/d/e` analysis layer this implies `d_hat = 0` and `e_hat = 0` by
+construction. It is therefore retained only in `3B-1` as a closed relation
+comparator, not as an open-profile comparator. `diagonal_transport_baseline`
+remains the simple transport negative-control baseline for `3B-2` because its
+unmatched residuals produce auditable `d_hat/e_hat` surfaces.
+
 Formal metrics:
 
+- `F_L1_total`
+- `g_L1_total`
+- `e_L1_total`
+- `offdiag_mass_abs_error`
+- `depletion_mass_abs_error`
+- `emergence_mass_abs_error`
+- `offdiag_ratio`
+- `depletion_capture`
+- `emergence_capture`
+- `endpoint_y_MAE`
+- `A_MAE_active`
+- `A_MSE_active`
+- `target_recall_at_k`
 - `open_support_F1`
 - `d_MAE`
-- `e_MAE`
 - `d_MSE`
+- `e_MAE`
 - `e_MSE`
 
 Metric rules:
 
 - `3B-2` reuses the same rerun-specific held-out patient identities, endpoint
   fractions, and hidden truth construction flow used by `3B-1`
-- `3B-2` fixes `relation_strength = 0.15` and therefore
-  `max_offdiag_targets_per_source = 1`
-- `3B-2` uses `open_mass_scale_grid = [0.0, 0.1, ..., 1.0]` as its public
-  open-burden gradient
-- within each rerun, held-out patients are reused across the full
-  `open_mass_scale_grid` at fixed `relation_strength = 0.15`
 - in `3B-2`, reused means shared patient identities, shared `x_p`, shared
-  matched-structure setting, shared support rule, shared `C`, and shared
-  `pi_d / pi_e` ratio
-- the truth-side open quantities `delta_minus_scaled`, `delta_plus_scaled`,
-  and the derived `d_p`, `e_p`, `y_p` vary with `open_mass_scale`
+  generated source/target FOV observations, shared endpoint projections,
+  shared `C`, shared train-template provenance, and shared hidden
+  patient-level `(A_p, d_p, e_p)` truth
 - each method first emits its native matched/unmatched representation, and the
   shared `3B` analysis layer then derives the common `A/d/e` scoring surfaces
+- `3B-2` is open-focused, but it retains the full relation, open-channel, mass,
+  and endpoint metric vocabulary for direct comparison with `3B-1` and `3C-*`
 - `open_support_F1` is the support-level recovery metric on the derived
   burden-scale depletion/emergence carriers
-- `d_MAE`, `e_MAE`, `d_MSE`, and `e_MSE` are the quantitative profile-recovery
+- `d_MAE`, `d_MSE`, `e_MAE`, and `e_MSE` are the quantitative profile-recovery
   metrics on the same derived open surfaces
 - `3B-2` reuses the full shared `3C` `open_support_F1` contract, including
   the burden-scale support definition and the channel-level / patient-level
   status semantics
-- because `open_mass_scale = 0.0` implies zero truth depletion and zero truth
-  emergence by construction, `open_support_F1` is `not_applicable` under that
-  condition
-- `d_MAE`, `e_MAE`, `d_MSE`, and `e_MSE` remain reported under
-  `open_mass_scale = 0.0`
 - `profile TV` may still be exported as a diagnostic sidecar, but it is not a
   phase-1 headline `3B-2` metric
 
@@ -661,9 +661,9 @@ Interpretive role:
 
 - `3B-2` is the open-surface benchmark for the shared analysis-layer `d/e`
   recovery problem
-- its fixed evidential target is whether STRIDE provides more accurate `d/e`
-  recovery than the open comparator set under matched rerun-specific
-  realizations
+- its fixed evidential target is whether STRIDE provides more accurate open
+  support and quantitative open-profile recovery than the open comparator set
+  under matched rerun-specific realizations
 - it is an analysis-layer comparison of recovered `d/e` surfaces and is not a
   biological-truth-equivalence claim about literal disappearance or emergence
 
@@ -681,7 +681,27 @@ Interpretive role:
 - all `3C` method arms are loss/regularization-level STRIDE reruns that
   remove or zero one core objective term and then refit `A_p`, `d_p`, and
   `e_p`
-- the core `3C` ablation set is recurrence, geometry, and consistency
+- the core `3C` ablation set is subbag consistency, geometry, and recurrence
+- all `3C` ablations use the three-block reference objective with the ablated
+  term set to zero and do not reweight retained objective terms
+- Each `3C` arm is an independent refit of `A_p`, `d_p`, `e_p` under the
+  corresponding `ablation_mode`. The arm must not mask reference output, must
+  not perform post-hoc rescoring only, and must preserve fixed denominators
+  without reweighting retained objective terms.
+- each `3C` arm uses the same rerun-specific multi-FOV generated realization,
+  resolved evidence blocks, deterministic initialization, and optimizer
+  protocol as the reference fit; the only objective change is the corresponding
+  consistency, geometry, or recurrence term removal or zero-weighting
+- `3C` reuses the same generated realization for all three ablations
+- three-block ablation objective semantics are:
+  `geometry_ablation` uses
+  `L_prior = mean(normalized_L_open, 0)`,
+  `recurrence_ablation` uses
+  `L_total = mean(L_fit, L_prior, 0)`, and
+  `consistency_ablation` uses
+  `L_fit = normalized_L_obs + 0`
+- `3C` arms must not be implemented by masking `stride_reference` outputs or
+  by post-hoc rescoring only
 - no-`d/e`, open-channel-removal, closed, balanced, and transport-style
   comparisons belong to `3B` baseline/comparator semantics rather than to
   core STRIDE ablations
@@ -689,33 +709,39 @@ Interpretive role:
   historical/proxy execution context only and is not the normative `3C`
   scientific contract
 
-###### 3C-1. Recurrence ablation
+###### 3C-1. Subbag consistency ablation
 
 Scientific question:
 
-- What is lost when cohort consensus recurrence/common-structure feedback is removed
-  from the STRIDE objective and the patient relation is refit?
+- What is lost when the subbag consistency term is removed from
+  the STRIDE objective and the patient relation is refit?
 
 Reference versus ablation:
 
 - reference: `stride_reference`
-- ablation: `recurrence_ablation`
+- ablation: `consistency_ablation`
 
 Ablation semantics:
 
 - `3C-1` is a within-STRIDE module-necessity test, not an external baseline
-  comparison, not an open-gradient benchmark, and not a comparison of `P(m)`
-- `recurrence_ablation` removes or zeroes only the cohort consensus
-  recurrence/common-structure term in the objective
+  comparison and not a generator-gradient benchmark
+- `3C-1` display name is `subbag consistency ablation`
+- the method key remains `consistency_ablation`
+- the core `ablation_mode` is `consistency`
+- `consistency_ablation` removes or zeroes only the subbag consistency term in
+  the objective
 - observation discrepancy terms are retained
 - explicit open-channel terms are retained
 - geometry/locality terms are retained
-- patient consistency terms are retained
+- cohort recurrence/common-structure terms are retained
+- retained terms keep the same objective coefficients as the reference fit;
+  the retained terms are not reweighted
 - audit / plausibility handling is retained
 - `A_p`, `d_p`, and `e_p` are refit under the ablated objective
-- the comparison reuses the same rerun-specific patient-level semi-synthetic
-  realizations generated for Block 3 and does not introduce a separate public
-  fixed-`m` axis
+- the ablation must not be implemented by masking `stride_reference` outputs
+  or by post-hoc rescoring only
+- the comparison reuses the same rerun-specific multi-FOV generated realization
+  used across Block 3 and does not introduce a separate public generator axis
 
 ###### 3C-2. Geometry ablation
 
@@ -733,50 +759,69 @@ Ablation semantics:
 
 - `geometry_ablation` removes or zeroes only the geometry/locality term in the
   objective
+- `stride_reference` and `geometry_ablation` use the full-estimator
+  `L_geometry` contract over raw canonical `A_p`
 - observation discrepancy terms are retained
 - explicit open-channel terms are retained
-- patient consistency terms are retained
-- cohort consensus recurrence/common-structure terms are retained
+- subbag consistency terms are retained
+- cohort recurrence/common-structure terms are retained
+- retained terms keep the same objective coefficients as the reference fit;
+  the retained terms are not reweighted
 - audit / plausibility handling is retained
 - `A_p`, `d_p`, and `e_p` are refit under the ablated objective
-- the comparison reuses the same rerun-specific patient-level semi-synthetic
-  realizations generated for Block 3 and does not introduce a separate public
-  fixed-`m` axis
+- the ablation must not be implemented by masking `stride_reference` outputs
+  or by post-hoc rescoring only
+- the comparison reuses the same rerun-specific multi-FOV generated realization
+  used across Block 3 and does not introduce a separate public generator axis
 
-###### 3C-3. Consistency ablation
+###### 3C-3. Recurrence ablation
 
 Scientific question:
 
-- What is lost when the patient-consistency term is removed from the STRIDE
-  objective and the patient relation is refit?
+- What is lost when cohort recurrence/common-structure feedback is removed from
+  the STRIDE objective and the patient relation is refit?
 
 Reference versus ablation:
 
 - reference: `stride_reference`
-- ablation: `consistency_ablation`
+- ablation: `recurrence_ablation`
 
 Ablation semantics:
 
-- `consistency_ablation` removes or zeroes only the patient-consistency term in
-  the objective
+- `recurrence_ablation` removes or zeroes only the cohort
+  recurrence/common-structure term in the objective
 - observation discrepancy terms are retained
 - explicit open-channel terms are retained
 - geometry/locality terms are retained
-- cohort consensus recurrence/common-structure terms are retained
+- subbag consistency terms are retained
+- retained terms keep the same objective coefficients as the reference fit;
+  the retained terms are not reweighted
 - audit / plausibility handling is retained
 - `A_p`, `d_p`, and `e_p` are refit under the ablated objective
-- the comparison reuses the same rerun-specific patient-level semi-synthetic
-  realizations generated for Block 3 and does not introduce a separate public
-  fixed-`m` axis
+- the ablation must not be implemented by masking `stride_reference` outputs
+  or by post-hoc rescoring only
+- the comparison reuses the same rerun-specific multi-FOV generated realization
+  used across Block 3 and does not introduce a separate public generator axis
 
 Formal metrics:
 
+- `F_L1_total`
+- `g_L1_total`
+- `e_L1_total`
+- `offdiag_mass_abs_error`
+- `depletion_mass_abs_error`
+- `emergence_mass_abs_error`
+- `offdiag_ratio`
+- `depletion_capture`
+- `emergence_capture`
+- `endpoint_y_MAE`
 - `A_MAE_active`
 - `A_MSE_active`
+- `target_recall_at_k`
 - `open_support_F1`
 - `d_MAE`
-- `e_MAE`
 - `d_MSE`
+- `e_MAE`
 - `e_MSE`
 
 Metric rules:
@@ -797,7 +842,7 @@ Metric rules:
 - `open_support_F1` is the support-level recovery metric for the burden-scale
   depletion/emergence carriers; it should not be read on its own as full
   open-profile fidelity
-- `d_MAE`, `e_MAE`, `d_MSE`, and `e_MSE` remain reported throughout the
+- `d_MAE`, `d_MSE`, `e_MAE`, and `e_MSE` remain reported throughout the
   `3C` evaluation surface as
   quantitative profile-recovery metrics for the depletion/emergence magnitude
   profiles
@@ -809,10 +854,9 @@ Metric rules:
   internal generator detail recorded for reproducibility only, not a public
   benchmark axis
 - here `shared` means that all held-out `test` patients in one rerun reuse the
-  same train-derived cohort-level generator quantities
-  (`P(m)`, `pi_d`, `pi_e`, `kappa_d`, `kappa_e`), while each patient's
-  realized hidden truth still depends on that patient's own `x_p` plus
-  patient-level sampling
+  same train-derived template bank and medoid, while each patient's realized
+  hidden truth still depends on that patient's own `x_p` and sampled
+  individual template
 - `stride_reference` and each `3C` ablation arm are compared on the same
   held-out patients and the same native truth outputs under matched
   rerun-specific realizations
@@ -824,7 +868,7 @@ Metric rules:
 Interpretive role:
 
 - `3C` is centered on loss of native patient-level `A_p`, `d_p`, and `e_p`
-  recovery after recurrence, geometry, or consistency terms are removed and the
+  recovery after consistency, geometry, or recurrence terms are removed and the
   estimator is refit
 - `3C` does not create a separate public sensitivity axis over shared
   train-derived cohort-level generation and therefore does not by itself
@@ -835,7 +879,7 @@ Interpretive role:
 - patient-level helper quantities may still be exported as diagnostics, but
   they are not part of the formal Block 3 metric contract
 
-#### 4.5.3 Frozen comparator registry
+#### 4.4.3 Frozen comparator registry
 
 The rebuilt Block 3 method registry is frozen as follows.
 
@@ -848,6 +892,15 @@ The rebuilt Block 3 method registry is frozen as follows.
   Task A-resolved source/target endpoint comparison evidence blocks and the
   resolved comparison plan; Task A adapters only convert inputs and instantiate
   the comparison plan.
+- Uses the canonical full-estimator observation discrepancy operator
+  `D_obs^BalancedSinkhornDivergence-v1`; UOT is not the reference operator and
+  appears only through the `3B` comparator/legacy diagnostic surface.
+- Emits native fitted `A/d/e` and preserves compact successful-fit provenance
+  from `fit_stride(...)` when that provenance is emitted.
+- This registry entry is a formal method target. Successful `stride_reference`
+  runs must preserve the full-estimator provenance/status emitted by
+  `fit_stride(...)`; unsupported or compatibility-route outputs are not a
+  replacement definition of `stride_reference`.
 - This is the only reference method for Block 3.
 
 `balanced_ot_baseline`
@@ -866,21 +919,31 @@ The rebuilt Block 3 method registry is frozen as follows.
   fractions and fixed shared cost matrix `C`.
 - The rerun-specific `24`-patient `train` split calibrates one shared
   `lambda_match` value from endpoint-fraction statistics and then reuses it
-  across the full `3B-1 relation_strength_grid`, the full `3B-2`
-  `open_mass_scale_grid`, and all `8` held-out `test` patients in that rerun.
+  across the shared `3B-1` and `3B-2` realizations and all `8` held-out
+  `test` patients in that rerun.
+- Uses the frozen internal lambda grid
+  `[0.05, 0.1, 0.5, 1.0, 2.0, 5.0, 10.0]`. Boundary selection is reported as
+  native metadata through `boundary_hit`; it is a diagnostic and does not
+  trigger automatic grid expansion before the formal Block 3 run.
 - The native method output is the matched plan `P`, which is later converted
   by the shared `3B` analysis layer into `A/d/e`.
 
 `partial_ot_baseline`
 
-- Uses a hard-budget partial transport comparator on the same paired endpoint
-  fractions and fixed shared cost matrix `C`.
+- Uses an exact fixed-mass partial optimal transport comparator on the same
+  paired endpoint fractions and fixed shared cost matrix `C`.
 - The rerun-specific `24`-patient `train` split calibrates one shared
-  `matched_mass_budget` value from endpoint-fraction statistics and then
-  reuses it across the full `3B-1 relation_strength_grid`, the full `3B-2`
-  `open_mass_scale_grid`, and all `8` held-out `test` patients in that rerun.
-- The native method output is the matched plan `P`, which is later converted
-  by the shared `3B` analysis layer into `A/d/e`.
+  `matched_mass_budget = mean(sum(min(x_train, y_train)))` from real train
+  endpoint profiles.
+- That budget is reused across the shared `3B-1` and `3B-2` realizations and
+  all `8` held-out `test` patients in that rerun.
+- For each test patient, the requested budget is clipped only to the feasible
+  source/target mass bound.
+- The native method output is the exact partial OT matched plan `P`, solving
+  `min <P, C>` subject to `P 1 <= x`, `P^T 1 <= y`, `P >= 0`, and
+  `sum(P) = effective_budget`.
+- The shared `3B` analysis layer then derives `A/d/e` from `P`; no hidden
+  `A/d/e` truth is exposed to the comparator.
 
 `diagonal_transport_baseline`
 
@@ -932,40 +995,26 @@ def run_uot_baseline(x, y, C, lambda_match, solver_cfg):
 
 ```python
 def run_partial_ot_baseline(x, y, C, matched_mass_budget):
-    P = solve_partial_ot_plan(
-        source=x,
-        target=y,
-        cost=C,
-        matched_mass_budget=matched_mass_budget,
+    effective_budget = min(matched_mass_budget, sum(x), sum(y))
+    P = ot.partial.partial_wasserstein(
+        x,
+        y,
+        C,
+        m=effective_budget,
     )
-    r = row_sum(P)
-    c = col_sum(P)
-
-    A = zeros_like(P)
-    for i in range(k):
-        if x[i] > 0:
-            A[i, :] = P[i, :] / x[i]
-
-    d = zeros(k)
-    for i in range(k):
-        if x[i] > 0:
-            d[i] = max((x[i] - r[i]) / x[i], 0.0)
-
-    e = maximum(y - c, 0.0)
-    return A, d, e, P
+    return derive_A_d_e_from_plan(x=x, y=y, P=P)
 ```
 
 Train-side shared calibration minimums:
 
 - `uot_baseline`: estimate one rerun-shared `lambda_match` from the `24`
   `train` patients using endpoint-fraction statistics and reuse that same
-  scalar across the full `3B-1 relation_strength_grid`, the full
-  `3B-2 open_mass_scale_grid`, and all `test` patients in that rerun
-- `partial_ot_baseline`: estimate one rerun-shared
-  `matched_mass_budget` from the `24` `train` patients using
-  endpoint-fraction statistics and reuse that same scalar across the full
-  `3B-1 relation_strength_grid`, the full `3B-2 open_mass_scale_grid`, and
-  all `test` patients in that rerun
+  scalar across the shared `3B-1` and `3B-2` realizations and all `test`
+  patients in that rerun
+- `partial_ot_baseline`: estimate one rerun-shared `matched_mass_budget` from
+  the `24` `train` patients using endpoint-fraction statistics and reuse that
+  same scalar across the shared `3B-1` and `3B-2` realizations and all `test`
+  patients in that rerun
 - the shared calibration target is the train-side mean endpoint overlap proxy
   on the shared `K`-community axis
 
@@ -1002,33 +1051,41 @@ def calibrate_partial_ot_budget(train_patients):
     )
 ```
 
-`recurrence_ablation`
+`consistency_ablation`
 
-- Removes or zeroes only the cohort consensus recurrence/common-structure term and
-  refits `A_p`, `d_p`, and `e_p`.
+- Removes or zeroes only the subbag consistency term and refits `A_p`, `d_p`,
+  and `e_p`.
+- Uses `L_fit = normalized_L_obs + 0` and does not reweight retained
+  objective terms.
 - Preserves observation discrepancy, explicit open-channel terms,
-  geometry/locality, patient consistency, and audit/plausibility handling.
-- This is the fixed `3C-1 recurrence ablation` arm.
+  geometry/locality, cohort recurrence/common structure, and
+  audit/plausibility handling.
+- This is the fixed `3C-1 subbag consistency ablation` arm.
 
 `geometry_ablation`
 
 - Removes or zeroes only the geometry/locality term and refits `A_p`, `d_p`,
   and `e_p`.
-- Preserves observation discrepancy, explicit open-channel terms, patient
-  consistency, cohort consensus recurrence/common structure, and
+- Uses the full-estimator `L_geometry` contract over raw canonical `A_p` for
+  the reference arm and removes or zeroes that term in the ablation arm.
+- Uses `L_prior = mean(normalized_L_open, 0)` and does not reweight retained
+  objective terms.
+- Preserves observation discrepancy, explicit open-channel terms, subbag
+  consistency, cohort recurrence/common structure, and
   audit/plausibility handling.
 - This is the fixed `3C-2 geometry ablation` arm.
 
-`consistency_ablation`
+`recurrence_ablation`
 
-- Removes or zeroes only the patient-consistency term and refits `A_p`, `d_p`,
-  and `e_p`.
+- Removes or zeroes only the cohort consensus recurrence/common-structure term and
+  refits `A_p`, `d_p`, and `e_p`.
+- Uses `L_total = mean(L_fit, L_prior, 0)` and does not reweight retained
+  terms.
 - Preserves observation discrepancy, explicit open-channel terms,
-  geometry/locality, cohort consensus recurrence/common structure, and
-  audit/plausibility handling.
-- This is the fixed `3C-3 consistency ablation` arm.
+  geometry/locality, subbag consistency, and audit/plausibility handling.
+- This is the fixed `3C-3 recurrence ablation` arm.
 
-#### 4.5.4 Embedded semi-synthetic companion design
+#### 4.4.4 Embedded semi-synthetic companion design
 
 Semi-synthetic benchmark conditions remain embedded inside the relevant Block 3
 subexperiments. There is no standalone Block 3E.
@@ -1036,7 +1093,8 @@ subexperiments. There is no standalone Block 3E.
 All Block 3 companion conditions must expose the same hidden-truth interface:
 
 - patient-level truth: `(A_p, d_p, e_p)`
-- patient-level paired endpoint fractions `x_p` and `y_p`
+- patient-level generated endpoint projections and generated source/target FOV
+  observations
 - section-specific native truth outputs needed for scoring on the live metric
   contract
 - section-specific internal helper quantities may exist for scoring/debugging,
@@ -1080,69 +1138,44 @@ def derive_surfaces_from_native(native, x, y):
 
 The frozen companion-design flow is:
 
-1. derive a real-data-grounded baseline composition `x_p`
-2. estimate weak empirical priors from the `train` split only for generator
-   calibration / diagnostics:
-   `P(m)`, `pi_d`, `pi_e`, and `kappa_d`, `kappa_e`
-3. sample `m_p` for each held-out patient from the empirical train-side
-   `P(m)` distribution with replacement
-4. treat the resulting patient-level semi-synthetic open burden as a
-   rerun-specific generator realization that is reused across `3B` and `3C`
-   rather than promoted to a public benchmark axis
-5. construct the weak patient-anchored open scaffold
-   `F_open(x_p) -> (b_p^-, b_p^+)`
-6. sample `Delta_p^-` and `Delta_p^+` around that scaffold, derive
-   `(d_p, e_p)`, and define matched source mass `u_p = x_p - Delta_p^-`
-7. apply the frozen relation scenario to the matched mass only, producing
-   `M_p`
-8. construct a latent target composition
-   `y_p = colsum(M_p) + Delta_p^+`
-9. expose paired endpoint fractions `x_p` and `y_p` to ranked methods only
+1. derive the held-out source endpoint `x_p` from real TC source FOVs
+2. build train-derived templates from real train TC-IM endpoint residuals using
+   the fixed geometry gate `tau=2.0`
+3. fill unidentifiable source rows through train-row pooled templates
+4. choose the train-bank medoid and sample one individual train template for
+   each held-out patient
+5. mix medoid and sampled individual templates with
+   `lambda_individual=0.10` to define hidden `(A_p, d_p, s_p)`
+6. set `e_p = (x_p * d_p).sum() * s_p` and
+   `y_p = normalize(x_p A_p + e_p)`
+7. generate source FOVs by deterministic shrinkage toward real held-out source
+   FOVs with `eta=0.3`
+8. generate target FOVs by projecting generated source-FOV anchors through the
+   hidden patient-level truth with no target noise
+9. expose generated endpoint projections to endpoint-only baselines and
+   generated source/target FOV observations to STRIDE reference/ablation arms
 10. evaluate recovered objects against hidden truth only after inference
 
-The frozen matched-structure control uses the parameter name
-`relation_strength`:
+The open and off-diagonal relation burdens are realized by the train-template
+generator and recorded through diagnostics and provenance.
 
-- `relation_strength_grid = [0.00, 0.05, 0.15, 0.30]`
-- `3B-1` uses the full `relation_strength_grid`
-- `3B-2` fixes `relation_strength = 0.15`
-- `relation_strength` sets the off-diagonal matched-mass fraction
-- `max_offdiag_targets_per_source` is derived from `relation_strength` as
-  `(0.00 -> 0, 0.05 -> 1, 0.15 -> 1, 0.30 -> 2)`
+`3B-2` preserves the following quantities within each rerun:
 
-The frozen open-burden control uses the existing parameter name
-`open_mass_scale`:
-
-- `open_mass_scale_grid = [0.0, 0.1, ..., 1.0]`
-- `3B-1` fixes `open_mass_scale = 1.0`
-- `3B-2` uses the full `open_mass_scale_grid`
-- `0.0` is the near-closed limit
-- `1.0` is the canonical open regime
-- the first frozen phase does not extend the public grid above `1.0`
-
-```python
-delta_minus_scaled = open_mass_scale * delta_minus
-delta_plus_scaled = open_mass_scale * delta_plus
-```
-
-The dense `open_mass_scale` sweep in `3B-2` preserves the following
-quantities:
-
-- `x`
-- `relation_strength = 0.15`
-- support rule
+- held-out patient identities
+- generated source and target FOV observations
+- hidden patient-level `(A_p, d_p, e_p)` truth
 - `C`
-- `pi_d / pi_e` ratio
+- train-template provenance
 
 The frozen companion condition families are:
 
 - held-out cohort-level `3A` summaries on the `community-space` target
   fraction surface, the `g_k`-projected identity-aware target fraction
   surface, and rerun stability of those same objects
-- `3B-1`: `relation_strength_grid = [0.00, 0.05, 0.15, 0.30]` at fixed
-  `open_mass_scale = 1.0`
-- `3B-2`: `open_mass_scale_grid = [0.0, 0.1, ..., 1.0]` at fixed
-  `relation_strength = 0.15`
+- `3B-1`: the shared generated realization scored with the `A` benchmark
+  comparator set and full shared metric vocabulary
+- `3B-2`: the shared generated realization scored with the open-focused
+  comparator set and full shared metric vocabulary
 - rerun-specific patient-level semi-synthetic realizations reused for all
   `3C` refit ablations
 - rerun-specific patient-level semi-synthetic realizations with
@@ -1173,11 +1206,11 @@ comparison. Patients are nested within one generator realization, and
 The outer rerun design remains frozen to `10` reruns with `24 train / 8 test`
 patients in each rerun.
 
-#### 4.5.5 Frozen Block 3 metric contract
+#### 4.4.5 Frozen Block 3 metric contract
 
 Block 3 must continue to reuse the current Task A real-data summary language
 for raw supportive exports, but the canonical benchmark contract is now the
-fixed section-wise metric set below.
+fixed generator-validation set plus one shared method-bearing metric vocabulary.
 
 `3A`
 
@@ -1191,15 +1224,34 @@ fixed section-wise metric set below.
 - `3A` has no dedicated null/random comparator requirement; any compatibility
   sanity export remains optional sidecar context only
 
+Shared method-bearing metrics for `3B-1`, `3B-2`, and `3C-*`:
+
+- `F_L1_total`
+- `g_L1_total`
+- `e_L1_total`
+- `offdiag_mass_abs_error`
+- `depletion_mass_abs_error`
+- `emergence_mass_abs_error`
+- `offdiag_ratio`
+- `depletion_capture`
+- `emergence_capture`
+- `endpoint_y_MAE`
+- `A_MAE_active`
+- `A_MSE_active`
+- `target_recall_at_k`
+- `open_support_F1`
+- `d_MAE`
+- `d_MSE`
+- `e_MAE`
+- `e_MSE`
+
 `3B-1`
 
-- formal metrics: `A_MAE_active`, `A_MSE_active`, and
-  `target_recall_at_k`
-- engineering-facing rerun summary rows must remain stratified by
-  `relation_strength`
-- the minimum fixed `3B-1` summary cell is
-  `(relation_strength, method_name, metric_name)` under fixed
-  `open_mass_scale = 1.0`
+- formal metrics: the shared method-bearing vocabulary above
+- engineering-facing rerun summary rows are stratified by generated
+  realization, method name, and metric name
+- the minimum fixed `3B-1` summary cell is `(method_name, metric_name)` within
+  a generator rerun and shared realization
 - mean, 95% bootstrap CI, and paired difference versus `stride_reference`
   are post-processing summaries computed from those fixed-cell rerun summaries
 - `A_MAE_active` and `A_MSE_active` remain active-row conditional
@@ -1207,66 +1259,65 @@ fixed section-wise metric set below.
   metrics
 - `target_recall_at_k` remains a truth-anchored off-diagonal target-priority
   metric and is `reported` only when truth off-diagonal targets exist
-- at `relation_strength = 0.00`, `target_recall_at_k` is `not_applicable`
-  because truth contains no off-diagonal target set (`k = 0`); any
-  compatibility-only numeric display must be labeled as a structural ceiling
-  rather than evidence of recovery quality
+- `target_recall_at_k` is `not_applicable` for patient-level truth rows with
+  no off-diagonal target set
 
 `3B-2`
 
-- formal metrics: `open_support_F1`, `d_MAE`, `e_MAE`, `d_MSE`,
-  and `e_MSE`
-- engineering-facing rerun summary rows must remain stratified by
-  `open_mass_scale`
-- the minimum fixed `3B-2` summary cell is
-  `(open_mass_scale, method_name, metric_name)` under fixed
-  `relation_strength = 0.15`
+- formal metrics: the shared method-bearing vocabulary above
+- engineering-facing rerun summary rows are stratified by generated realization,
+  method name, and metric name
+- the minimum fixed `3B-2` summary cell is `(method_name, metric_name)` within a
+  generator rerun and shared realization
 - mean, 95% bootstrap CI, and paired difference versus `stride_reference`
   are post-processing summaries computed from those fixed-cell rerun summaries
 - `open_support_F1` is the support-level recovery metric, whereas `d_MAE`,
-  `e_MAE`, `d_MSE`, and `e_MSE` carry the quantitative profile-fidelity role
+  `d_MSE`, `e_MAE`, and `e_MSE` carry the quantitative profile-fidelity role
 - `profile TV` stays outside the phase-1 `3B-2` headline set
-- the live `3B-2` readout surface is fully determined by
-  `open_support_F1`, `d_MAE`, `e_MAE`, `d_MSE`, and `e_MSE`
+- the live `3B-2` readout surface is open-focused but retains the complete
+  shared metric vocabulary for horizontal comparison
 
 `3C-1`
 
-- ablation: recurrence
-- formal metrics: `A_MAE_active`, `A_MSE_active`, `open_support_F1`,
-  `d_MAE`, `e_MAE`, `d_MSE`, and `e_MSE`
+- ablation: `consistency_ablation`
+- ablation_mode: `consistency`
+- formal metrics: the shared method-bearing vocabulary above
 - evaluation-surface summary table: mean, 95% bootstrap CI, and paired
   difference versus `stride_reference` over the shared realization set
-- the ablation removes or zeroes the cohort consensus recurrence term and
-  refits `A_p`, `d_p`, and `e_p`
+- the ablation removes or zeroes the subbag consistency term and refits `A_p`,
+  `d_p`, and `e_p`
+- retained objective terms are not reweighted
 
 `3C-2`
 
-- ablation: geometry
-- formal metrics: `A_MAE_active`, `A_MSE_active`, `open_support_F1`, `d_MAE`,
-  `e_MAE`, `d_MSE`, and `e_MSE`
+- ablation: `geometry_ablation`
+- ablation_mode: `geometry`
+- formal metrics: the shared method-bearing vocabulary above
 - evaluation surface: the same rerun-specific realizations are reused for
   reference and ablation scoring
 - the ablation removes or zeroes the geometry/locality term and refits
   `A_p`, `d_p`, and `e_p`
+- retained objective terms are not reweighted
 - evaluation-surface summary table: mean, 95% bootstrap CI, and paired
   difference versus `stride_reference`
 
 `3C-3`
 
-- ablation: consistency
-- formal metrics: `A_MAE_active`, `A_MSE_active`, `open_support_F1`, `d_MAE`,
-  `e_MAE`, `d_MSE`, and `e_MSE`
+- ablation: `recurrence_ablation`
+- ablation_mode: `recurrence`
+- formal metrics: the shared method-bearing vocabulary above
 - evaluation surface: the same rerun-specific realizations are reused for
   reference and ablation scoring
-- the ablation removes or zeroes the patient-consistency term and refits
+- the ablation removes or zeroes the cohort recurrence term and refits
   `A_p`, `d_p`, and `e_p`
+- retained objective terms are not reweighted
 - evaluation-surface summary table: mean, 95% bootstrap CI, and paired
   difference versus `stride_reference`
 
 For all `3C` arms, `A_MAE_active` and `A_MSE_active` refer to patient-level
 relation-operator `A_p` recovery on the shared `K`-state axis.
 `open_support_F1` is the support-level recovery metric, whereas `d_MAE`,
-`e_MAE`, `d_MSE`, and `e_MSE` carry the quantitative profile-fidelity role;
+`d_MSE`, `e_MAE`, and `e_MSE` carry the quantitative profile-fidelity role;
 `open_support_F1` alone is not full open-profile recovery.
 
 Metric-level hierarchy is frozen:
@@ -1278,10 +1329,10 @@ Metric-level hierarchy is frozen:
   quantities are condition-level only
 - the live Block 3 hierarchy is fully determined by the section and metric
   structure above
-- for `3B-1`, `relation_strength` is the public evaluation axis and is part of
-  the fixed engineering result key; `open_mass_scale` is fixed to `1.0`
-- for `3B-2`, `open_mass_scale` is the public evaluation axis and is part of
-  the fixed engineering result key; `relation_strength` is fixed to `0.15`
+- for `3B-1`, the generated realization is shared and no separate generator
+  axis is part of the fixed engineering result key
+- for `3B-2`, the generated realization is shared and no separate public
+  open-burden axis is part of the fixed engineering result key
 - any later pooled, collapsed, or headline summary across multiple public
   evaluation-axis values is post-processing only and is not part of the
   phase-1 engineering contract
@@ -1299,7 +1350,7 @@ Metric-level hierarchy is frozen:
 - JSON surfaces must encode non-reported numeric metrics as `null` plus an
   explicit status field
 
-#### 4.5.6 Frozen Block 3 reporting logic
+#### 4.4.6 Frozen Block 3 reporting logic
 
 Block 3 no longer uses a predeclared review-policy label surface as its
 scientific contract.
@@ -1307,27 +1358,27 @@ scientific contract.
 The canonical result-facing organization is now the three frozen sections
 `3A generator validation`, `3B baseline comparison`, and
 `3C ablation study`, with `3B-1 A benchmark`, `3B-2 d/e benchmark`,
-`3C-1 recurrence ablation`, `3C-2 geometry ablation`, and
-`3C-3 consistency ablation` nested inside the umbrella sections. Supporting
+`3C-1 subbag consistency ablation`, `3C-2 geometry ablation`, and
+`3C-3 recurrence ablation` nested inside the umbrella sections. Supporting
 sidecars may be exported, but they are not a separate scientific section.
 
 Presentation discipline is frozen:
 
 - `3A` carries generator-validation context only, remains continuous rather
-  than a gate, and is defined by held-out cohort `community-space` realism,
+  than a gate, and exports held-out cohort `community-space` realism,
   `g_k`-projected identity-aware plausibility, and rerun stability on those
-  same objects
+  same objects for manual inspection
 - `3B-1` answers how STRIDE compares to transport-family baselines on the
   shared `A` surface
 - `3B-2` answers how STRIDE compares to open-comparator baselines on the
   shared analysis-layer `d/e` surface
-- `3C-1`, `3C-2`, and `3C-3` answer what happens when recurrence, geometry,
-  or consistency objective terms are removed and `A/d/e` is refit
+- `3C-1`, `3C-2`, and `3C-3` answer what happens when consistency, geometry,
+  or recurrence objective terms are removed and `A/d/e` is refit
 - `balanced_ot_baseline`, `uot_baseline`, `partial_ot_baseline`, and
   `diagonal_transport_baseline` belong only to `3B`
 - no-`d/e`, no-open-channel, closed, balanced, and transport-style comparisons
   belong only to `3B`
-- recurrence, geometry, and consistency refit ablations belong only to `3C`
+- consistency, geometry, and recurrence refit ablations belong only to `3C`
 
 The canonical reporting order for section-level comparison summaries is:
 
@@ -1338,29 +1389,20 @@ The canonical reporting order for section-level comparison summaries is:
 Median and rank-based tests may still be exported as supportive diagnostics,
 but they are not the primary contract.
 
-Evidence for `H1` should therefore be argued from the executed `3B` raw metric
-tables, while evidence for `H2` should be argued from the executed `3C`
-recurrence, geometry, and consistency refit-ablation tables rather than from an
-aggregate pass/fail label.
+Interpretation for the `3B` and `3C` benchmark questions should be written only
+after exported raw metric tables and summaries are reviewed. Block 3 does not
+produce an aggregate pass/fail label.
 
-#### 4.5.7 Relation to the canonical Step 3 outputs
+#### 4.4.7 Relation to the canonical Step 3 outputs
 
-Block 3 is allowed to test only the now-established canonical Step 3 evidence
-stack through Block 2:
-
-- the descriptive atlas as biological context only
-- the Block 0 near-proxy real-versus-null gate
-- the Block 1 family-level proof-carrying contrast on `self_retention` and
-  `depletion`
-- the carried source-community and target-community patterns already scoped by
-  Block 1 and sharpened by Block 2
-- the canonical cohort consensus recurrence/common-structure outputs present in the
-  Block 1 bundle
-- the Block 2 robustness calls over those same carried findings
+Block 3 shares the Stage0/TC-IM/K-state Task A context, but it does not consume
+or validate the Block 0/1 biological result stack. Its live relation to the
+canonical Step 3 outputs is limited to method-facing semi-synthetic benchmark
+artifacts exported through the internal semantic CLI.
 
 Block 3 is not allowed to:
 
-- redefine the canonical Block 0-2 results
+- redefine the canonical Block 0/1 results
 - elevate the preserved proxy-era Block 3 packet into canonical authority
 - backfill new biology that was not already established upstream
 - treat comparator success as a substitute for the primary Block 1 discovery
@@ -1371,10 +1413,9 @@ Block 3 is not allowed to:
 The canonical Task A scientific order is:
 
 1. Descriptive atlas
-2. Block 0: STRIDE-native real-versus-null gate
-3. Block 1: real-data biological discovery
-4. Block 2: robustness of findings
-5. Block 3: semisynthetic truth-recovery benchmark with
+2. Block 0: `TC-IM` empirical null calibration
+3. Block 1: real-data discovery
+4. Block 3: semisynthetic truth-recovery benchmark with
    `3A generator validation`, `3B baseline comparison`, and
    `3C ablation study`, plus supporting sidecars
 
@@ -1389,11 +1430,9 @@ For every execution block, the disciplined order is:
 Codex is responsible for the first four steps. Human interpretation is outside
 the implementation path.
 
-Current task-local engineering contracts preserve the legacy block identifiers
-`block1_continuity_backbone` and `block2_bounded_audit` as compatibility
-labels, but the scientific role and output contract are now tied to the frozen
-Block 1 summary surfaces and the Block 2 robustness-over-summaries consumer
-surface.
+Current task-local engineering contracts use `block1_real_data_discovery` as
+the live Block 1 identifier. Active config, workflow routing, registry, and
+Block 1-owned tests are aligned to this identifier.
 
 ### 5.1 Step 4 multi-phase execution plan
 
@@ -1518,7 +1557,7 @@ Completion criteria:
 Objective:
 
 - summarize the rebuilt Block 3 objective outputs and integrate them into Task
-  A reporting without redefining Block 0-2
+  A reporting without redefining Block 0/1
 
 Expected artifacts:
 
@@ -1536,8 +1575,8 @@ Out of scope:
 
 Completion criteria:
 
-- Block 3 is reportable as a downstream method-validation layer over the
-  canonical evidence stack
+- Block 3 exports the rapid semi-synthetic raw and review surfaces required
+  for later metric review against explicit benchmark questions
 
 ## 6. Freeze Status and Remaining Deferred Decisions
 
@@ -1545,7 +1584,7 @@ The following items separate what is now frozen from what remains intentionally
 deferred before the new scientific framing becomes a fully
 decision-complete engineering and statistical contract.
 
-### 6.1 Frozen Block 1 / Block 2 Summary Definitions
+### 6.1 Frozen Block 1 Summary Definitions
 
 Frozen items:
 
@@ -1553,11 +1592,22 @@ Frozen items:
   pass does not introduce a neighborhood-based `N(i)` continuity definition.
 - Family-level summaries export two frozen estimands:
   `burden_weighted` and `community_mean`.
-- Source-side family summaries are fixed to `SR`, `D`, and `R`, where
+- Source-side family summaries are fixed to `SR`, `D`, and `R`; `D` is a
+  source-open depletion tendency with a burden counterpart, and `R` is an
+  off-diagonal remodeling tendency with a burden counterpart, where
   `R = sum_{j != i} A_ij`.
-- Target-side `E` remains exported but is explicitly supportive rather than a
-  primary proof-carrying summary.
-- Community-level exports are fixed to `SR_i / D_i / R_i / TopTargets_i / I_j / E_j`.
+- Target-side `E` remains a supportive family-level target-open accounting
+  rollup. It is not evidence of true biological emergence.
+- Community-level exports are fixed to source-community `SR_i`, `D_i`, and
+  `R_i` with burden-scale counterparts, and target-community `target_burden`,
+  `target_weight`, `matched_incoming_burden`, `open_incoming_tendency`, and
+  `open_incoming_burden`. `target_weight` is a normalized target composition
+  helper.
+- The Block 1 core schema does not export top-k target rankings or unweighted
+  target incoming operator column sums.
+- Off-diagonal destinations remain reconstructable from native `A` and
+  `state_ids`; an R-friendly full source-target long CSV is deferred until
+  after 3.6 diagnostic validation.
 - Source eligibility defaults to non-zero source burden only; this pass does
   not introduce a threshold `tau`.
 - `burden_weighted` aggregation uses the same patient's `TC` source-burden
@@ -1571,31 +1621,33 @@ Still deferred inside this frozen summary layer:
 
 - multiplicity treatment for these summaries
 - confirmatory versus exploratory labeling below the frozen axes
-- final resampling-based Block 2 stability estimands
 
-### 6.2 Block 0 Null and Gate Protocol
+### 6.2 Block 0 Empirical Null Calibration Protocol
 
 Frozen items:
 
 - The real family is `TC-IM`.
-- The null family is `TC-IM_randomized_target`, constructed by holding each
-  anchor patient's `TC` observations fixed and reassigning the `IM` group from
-  a different patient in the same exact `(n_TC, n_IM)` count stratum.
-- Null-family donor assignment is seeded and reproducible.
-- Singleton strata emit deferred null fits rather than relaxing to a looser
-  control.
-- The live Block 0 exported summaries are derived directly from realized `A`,
-  `d`, and `e`.
-- Current pass/fail is driven by paired deltas on `sum(A)` and `sum(e)`; the
-  `sum(d)` layer remains exported context rather than a primary decision
-  statistic.
+- The null model is a patient-level empirical permutation null that preserves
+  Stage 0 observation surface, patient identity, ROI count structure, and
+  domain count structure.
+- The permutation policy is within-patient TC/IM domain-label permutation with
+  exact per-patient `n_TC`/`n_IM` counts. Identity permutations are allowed;
+  cross-patient borrowing and relaxed fallback are disallowed.
+- Formal full calibration uses `B=199` permutations. `B` is configurable for
+  diagnostics.
+- Randomness uses a `master_seed` with deterministic patient/permutation-level
+  derived seeds, recorded in the execution manifest.
+- Formal full execution fail-fast blocks cache output if the real fit or any
+  null fit fails.
+- Execution output is a reusable fit cache over `A`, `d`, `e`, `mu_minus`, and
+  `mu_plus`; execution does not derive p-values or scientific metrics.
+- Calibration analysis is a fixed cache-derived family-summary surface over
+  `self_retention`, `depletion`, `off_diagonal_remodeling`, and `emergence`,
+  derived from the cache without rerunning permutations.
 
-Still deferred around this gate:
+Still deferred around this calibration:
 
-- whether later robustness rounds should add repeated-null sensitivity analyses
-  beyond the current seeded gate
-- how future resampling depth should be reported once the later robustness pass
-  is implemented
+- result interpretation and plotting from cache-derived calibration outputs
 
 ### 6.3 Confirmatory Scope and Multiplicity
 
@@ -1604,7 +1656,6 @@ Pending items:
 - which family-level outputs are confirmatory versus secondary
 - which community-level outputs are confirmatory versus exploratory
 - how multiplicity will be controlled
-- when stability can substitute for formal multiplicity control
 
 Why this is pending:
 
@@ -1626,17 +1677,17 @@ Still deferred:
 
 - whether additional normalization is needed for later comparator-facing
   interfaces
-- how these paired comparisons feed the final Block 2 resampling summaries
 
 ### 6.5 Frozen Block 3 comparator and summary interface
 
 Frozen items:
 
-- generator validation, baseline comparison, and ablation sections should all
-  consume one common paired endpoint-fraction interface on the shared
-  `K`-state axis, with `x_p` and `y_p` as the only method-facing inputs
+- generator validation, baseline comparison, and ablation sections share one
+  generated multi-FOV realization on the shared `K`-state axis; endpoint-only
+  baselines consume deterministic endpoint projections, while STRIDE reference
+  and ablation arms consume generated source/target FOV observations
 - Block 3 may still export supportive family-level, source-community, and
-  target-community summaries aligned to the frozen Block 1 / Block 2 language,
+  target-community summaries aligned to the frozen Block 1 language,
   but those supportive summaries are downstream reporting surfaces rather than
   the method-facing benchmark input contract
 - Block 3 implementation must export full objective result surfaces for all
@@ -1647,9 +1698,12 @@ Frozen items:
   suppress full output generation
 - the reference method is `stride_reference`, meaning the canonical full
   patient-plus-cohort STRIDE path with explicit open relation and cohort
-  consensus recurrence/common structure, inferred from paired endpoint
-  fractions rather than from hidden truth through the formal `fit_stride(...)`
-  estimator
+  consensus recurrence/common structure, inferred from generated FOV
+  observations rather than from hidden truth through the formal
+  `fit_stride(...)` estimator
+- this names the formal reference target; current implementation lag in
+  optimizer/objective/provenance/refit switches does not redefine the Block 3
+  scientific contract
 - Task A resolves source/target endpoint comparisons and valid domain strata;
   its adapters only convert inputs and instantiate the comparison plan and
   source/target evidence blocks for `stride_reference`
@@ -1661,6 +1715,9 @@ Frozen items:
   `s_C`, and `C` are fixed once from the upstream community-identity surface
   with `UNKNOWN` retained, and that same `C` serves both relation-support
   derivation and the comparator-facing OT cost matrix
+- for `stride_reference`, that fixed Task A cost source is routed into the
+  full-estimator shared-state cost contract rather than into a task-local
+  geometry prior
 - no ranked Block 3 method may consume hidden `(A, d, e)`, the latent target,
   or a noiseless baseline carrier; any exact truth companion remains internal
   only
@@ -1671,8 +1728,8 @@ Frozen items:
 - `3C` is the only core STRIDE ablation section; recurrence, geometry, and
   consistency refit ablations stay there as loss/regularization-level STRIDE
   ablations
-- the reviewer-facing relation gradient belongs only to `3B`; `3C` does not
-  introduce a separate public open-gradient axis and instead reuses the same
+- relation and open-comparator semantics belong only to `3B`; `3C` does not
+  introduce a separate public generator axis and instead reuses the same
   rerun-specific patient-level semi-synthetic realizations
 - `3A` is generator validation only and remains continuous/descriptive rather
   than a separate gate; its public objects are held-out cohort
@@ -1684,12 +1741,10 @@ Frozen items:
   the held-out real versus synthetic `community-space` target fraction
   surfaces and to their `g_k`-projected identity-aware surfaces, then
   summarizes rerun stability of those same object-level validations;
-  `3B-1` uses `A_MAE_active`, `A_MSE_active`, and
-  `target_recall_at_k`;
-  `3B-2` uses `open_support_F1`, `d_MAE`, `e_MAE`, `d_MSE`, and `e_MSE`;
-  `3C-1`, `3C-2`, and `3C-3` use `A_MAE_active`, `A_MSE_active`,
-  `open_support_F1`, `d_MAE`, `e_MAE`, `d_MSE`, and `e_MSE` under matched
-  rerun-specific semi-synthetic realizations after refitting `A/d/e`
+  `3B-1`, `3B-2`, `3C-1`, `3C-2`, and `3C-3` use the shared method-bearing
+  metric vocabulary under matched rerun-specific semi-synthetic realizations,
+  with `3B-2` interpreted as open-focused and `3C-*` interpreted as refit
+  ablation readouts
 - any compatibility-era `pair_family` / `evaluation_family` labels are
   reporting-only containers rather than formal truth/scoring-layer objects
 - Block 3 must still export the broader real-data and semi-synthetic summary
@@ -1713,34 +1768,34 @@ Still deferred:
 
 Why this is now frozen at the design level:
 
-- Block 3 should validate the same scientific objects as Block 1 / Block 2
-  rather than introducing a disconnected benchmark language.
+- `3B` and `3C` export readout surfaces for later interpretation of the same
+  patient-level relation object scale used elsewhere in Task A. These surfaces
+  do not by themselves validate Block 1 biological findings.
 
 ### 6.6 Frozen Block 3 decision logic and remaining deferred items
 
 Frozen items:
 
-- `H1` is argued from the executed `3B` primary metrics rather than from
+- `H1` is evaluated from the executed `3B` primary metrics rather than from
   review-policy labels
-- `H2` is argued from the executed `3C` recurrence, geometry, and consistency
-  refit-ablation native patient-level recovery metrics `A_MAE_active`,
-  `A_MSE_active`, `open_support_F1`, `d_MAE`, `e_MAE`, `d_MSE`, and `e_MSE`
-  under matched rerun-specific semi-synthetic realizations
-- that `H2` evidence remains tied to rerun-specific realizations whose
+- `H2` is evaluated from the executed `3C` consistency, geometry, and
+  recurrence refit-ablation native patient-level recovery metrics under the
+  shared method-bearing vocabulary and matched rerun-specific semi-synthetic
+  realizations
+- that `H2` readout remains tied to rerun-specific realizations whose
   generator uses one shared train-derived cohort-level generation context
   across held-out patients; it is not by itself a robustness-gradient claim
 - `3A` remains descriptive generator-validation context and does not by itself
   satisfy `H1` or `H2`
 - interpretation remains attached to executed raw metric tables rather than to
   a frozen pass/fail policy surface
-- Block 3 remains a downstream method-validation layer and does not replace the
-  Block 1 discovery layer in final Task A pass logic
+- Block 3 remains a bounded semi-synthetic method benchmark and does not
+  replace the Block 1 discovery layer in final Task A pass logic
 
 Still deferred:
 
 - exact Task A overall pass logic wording after the rebuilt Block 3 execution
   is complete
-- final Block 2 resampling/stability closure language
 - final packet-level artifact closure text after rebuilt Block 3 outputs exist
 
 Why these items remain deferred:
@@ -1754,17 +1809,17 @@ Why these items remain deferred:
 Task A passes only as a bounded proxy-validation statement, not as full
 validation of the complete longitudinal STRIDE method.
 
-At the scientific level, Task A pass requires all of the following:
+At the scientific level, any final Task A pass statement requires all of the
+following:
 
 - the descriptive atlas establishes coherent tissue and community context
-- Block 0 supports a non-random STRIDE-native signal on the near-proxy family
-- Block 1 shows organized and biologically interpretable family-level and
-  community-level patterns on real data
-- Block 2 shows that the main Block 1 findings are stable under reasonable
-  perturbations
-- Block 3 shows that the main finding pattern is not reducible to simpler
-  baselines, weakens under the relevant ablations, and remains informative on
-  the embedded semi-synthetic truth-recovery benchmarks
+- Block 0 calibration reports whether the `TC-IM` relation structure departs
+  from the empirical count-preserving permutation null
+- Block 1 shows organized family-level and community-level relation patterns
+  on real data that can support downstream biological interpretation
+- Block 3 first exports rapid semi-synthetic raw and review surfaces;
+  scientific interpretation is deferred until metrics are reviewed against
+  explicit questions
 
 Task A pass does not require:
 
@@ -1782,8 +1837,8 @@ Task A pass does not require:
 - Task A does not turn `TC`, `IM`, or `PT` into canonical state identities.
 - The descriptive atlas does not itself carry a confirmatory claim.
 - Comparator results cannot, by themselves, carry the primary biological claim.
-- Block 3 supports method validation, but it does not replace Block 1 as the
-  primary real-data biological discovery layer.
+- Block 3 does not support or negate Block 1 biological conclusions by
+  itself; it remains a bounded method benchmark.
 - Endpoint-transport summaries and assignment surfaces are not themselves the
   primary STRIDE scientific object.
 - Task A does not by itself close the evidence gap from endpoint-fraction
@@ -1791,50 +1846,35 @@ Task A pass does not require:
 
 ## 9. Block 3 Parameter Freeze Notes
 
-The shared-axis geometry/cost freeze, the recurrence-ablation shared
-train-derived cohort-level generation role (compatibility label:
-`shared hidden cohort effect`), the `3B-1/3B-2` split, the dense
-`open_mass_scale` sweep, and the transport-comparator definitions are now all
-resolved in the live contract.
+The shared-axis geometry/cost freeze, the train-template multi-FOV generator,
+the `3B-1/3B-2` split, the shared generated realization, and the
+transport-comparator definitions are now all resolved in the live contract.
 The remaining items from the earlier Block 3 open-question list are therefore
 treated as frozen parameter notes rather than as reasons to reopen the adopted
 scientific design.
 
-- The compatibility label `shared hidden cohort effect` used in the
-  recurrence-ablation arm
-  describes one rerun-specific shared train-derived cohort-level generation
-  context across held-out patients. It is recorded for reproducibility only,
-  is not a public benchmark axis, and does not constitute a separate
-  scientific design question.
-- `P(m)`, `pi_d`, `pi_e`, `kappa_d`, and `kappa_e` are frozen as train-derived
-  generator calibration / diagnostics-side quantities. They parameterize the
-  hidden generator and its diagnostic checks, but they are not formal Block 3
-  headline benchmark metrics.
-- `3B-1` is frozen as the shared-`A` benchmark over
-  `relation_strength_grid = [0.00, 0.05, 0.15, 0.30]` at fixed
-  `open_mass_scale = 1.0`.
-- `3B-2` is frozen as the shared analysis-layer `d/e` benchmark over
-  `open_mass_scale_grid = [0.0, 0.1, ..., 1.0]` at fixed
-  `relation_strength = 0.15`.
+- `3B-1` is frozen as the shared-`A` benchmark on the same train-template
+  generated realization used by the rest of Block 3.
+- `3B-2` is frozen as the open-focused shared analysis-layer `d/e` benchmark on
+  the same generated realization, with the complete shared metric vocabulary
+  retained for comparison.
+- The generator builds train-derived templates from real train TC-IM endpoint
+  residuals using geometry-gated residual coupling with `tau=2.0`.
+- Held-out truth mixes the train-bank medoid and one sampled individual train
+  template using `lambda_individual=0.10`.
+- Generated source FOVs use deterministic shrinkage toward real held-out
+  source FOVs with `eta=0.3`; generated target FOVs are patient-level truth
+  projections with no target noise.
+- Template identity, row-imputation mass, endpoint closure, evidence-block
+  count, and geometry locality are generator diagnostics and provenance
+  fields, not public benchmark axes.
 - `balanced_ot_baseline` is frozen as the closed exact OT comparator on the
   fixed cost matrix `C`.
 - `uot_baseline` is frozen as the soft-unbalanced transport comparator with
   rerun-shared train-side endpoint-fraction-statistics `lambda_match`
   calibration.
 - `partial_ot_baseline` is frozen as the hard-budget transport comparator with
-  rerun-shared train-side endpoint-fraction-statistics
-  `matched_mass_budget` calibration.
+  exact fixed-mass partial OT solves and rerun-shared train-side
+  endpoint-fraction-statistics `matched_mass_budget` calibration.
 - `diagonal_transport_baseline` is frozen as strict diagonal matched transport
   plus residual open mass.
-- `epsilon_fixed` is frozen as a fixed smoothing pseudocount / soft floor used
-  only in the emergence base measure
-  `b_p^+ = normalize((x_p + epsilon_fixed) ⊙ pi_e)`. It is not a
-  train-estimated biological random quantity and not a Gaussian-style noise
-  term. The recommended v1 fixed value is `0.01`.
-- `kappa_d` and `kappa_e` are frozen as train-estimated cohort-level
-  dispersion scalars for depletion/emergence shape heterogeneity around
-  `pi_d` and `pi_e`, not total change-magnitude parameters. The recommended v1
-  estimator first computes the robust median total-variation deviation `tv` of
-  informative `train` patients from the corresponding channel centroid, then
-  maps that dispersion to the `Gamma -> normalize` concentration by
-  `kappa = clip(1 / max(tv, 1e-8), 1, 200)`.
