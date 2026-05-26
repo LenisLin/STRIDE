@@ -39,27 +39,28 @@ For ambiguities, use this source-of-truth order:
    [Data Contracts](data_contracts.md), [Overall Validation Plan](overall_validation_plan.md),
    and [Constraints](constraints.md)
 3. [Migration Status](state.md)
-4. [Task A Rewiring Plan](task_A_rewiring_plan.md)
-5. [Task A Spec](task_A_spec.md) for the live Task A specification
-6. [Task A Block 3 Redesign Alignment](task_A_block3_redesign_v1_1.md) for the
-   adopted Block 3 alignment within Task A
-7. [Task A Results Memo](task_A_result.md) and
+4. [Task A Spec](task_A/spec.md) for the live Task A specification
+5. [Task A Block 3 Scientific Contract](task_A/block3/scientific_contract.md)
+   and stage docs under `task_A/block3/`
+6. [Task A Block 3 Refactor Contract Map](task_A/block3/refactor_contract_map.md)
+   for migration mapping only
+7. [Task A Results Memo](task_A/result.md) and
    [Task A Operations README](../tasks/task_A/README.md) as derived Task A
-   result/operational docs, including the Block 0-2 results memo and the
+   result/operational docs, including the Block 0/1 results memo and the
    current rerun runbook
-8. Task-local operational docs under `tasks/` as execution companions
+8. Historical/proxy references only
 
 ## Task Docs
 
-- [Task A Rewiring Plan](task_A_rewiring_plan.md) freezes how Task A should be
-  rewired onto full STRIDE.
-- [Task A Spec](task_A_spec.md) is the live Task A specification.
-- [Task A Block 3 Redesign Alignment](task_A_block3_redesign_v1_1.md) records
-  the adopted Block 3 redesign and contract repairs.
-- [Task A Results Memo](task_A_result.md) records the Task A result layer
-  through Block 2.
+- [Task A Spec](task_A/spec.md) is the top-level live Task A design document.
+- [Task A Block 3 Scientific Contract](task_A/block3/scientific_contract.md)
+  records the live Block 3 generator, benchmark, and ablation contract.
+- [Task A Block 3 Refactor Contract Map](task_A/block3/refactor_contract_map.md)
+  is the migration map for retired live paths and artifact roots.
+- [Task A Results Memo](task_A/result.md) records the Task A result layer
+  through Block 1.
 - [Task A Operations README](../tasks/task_A/README.md) is the operational
-  companion for Block 0-2 workflows and the internal Block 3 rebuild surface.
+  companion for Block 0/1 workflows and the internal Block 3 rebuild surface.
 - [Task B Background Note](task_B_spec.md) and
   [Task B TONIC Audit](task_B_tonic_data_ecosystem_audit.md) remain
   task-specific background only.
