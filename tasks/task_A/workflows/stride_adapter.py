@@ -13,8 +13,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from stride import BasisSpec, DatasetHandle
-from stride.api.fit import STRIDEFitConfig, fit_stride
+from stride import BasisSpec, DatasetHandle, fit_stride
 from stride.basis import load_state_basis
 from stride.errors import ContractError
 from stride.observation import FovObservation
@@ -38,7 +37,12 @@ except ModuleNotFoundError:  # pragma: no cover
 SEMANTIC_ALIGNMENT_ERROR_PREFIX = "Task A semantic alignment failed:"
 
 
-def load_task_a_dataset_handle(stage0_h5ad_or_adata: str | Path | Any) -> DatasetHandle:
+def load_task_a_dataset_handle(
+    stage0_h5ad_or_adata: str | Path | Any,
+    *,
+    backed: bool = False,
+) -> DatasetHandle:
+    """Load a Task A Stage 0 surface, optionally keeping h5ad arrays backed."""
     if isinstance(stage0_h5ad_or_adata, DatasetHandle):
         return stage0_h5ad_or_adata
     if hasattr(stage0_h5ad_or_adata, "obs") and hasattr(stage0_h5ad_or_adata, "obsm"):
@@ -46,7 +50,8 @@ def load_task_a_dataset_handle(stage0_h5ad_or_adata: str | Path | Any) -> Datase
     if ad is None:
         raise ModuleNotFoundError("anndata is required to load Task-A stage0 h5ad artifacts")
     path = Path(stage0_h5ad_or_adata).expanduser().resolve()
-    return DatasetHandle(adata=ad.read_h5ad(path))
+    read_kwargs = {"backed": "r"} if backed else {}
+    return DatasetHandle(adata=ad.read_h5ad(path, **read_kwargs))
 
 
 def resolve_task_a_state_basis(
@@ -382,31 +387,19 @@ def run_task_a_family_core_fit_dry_run(
         )
         if not observations:
             continue
-        metadata = dict(fit_metadata or {})
-        metadata.update(
-            {
-                "task_pair_family": family_spec.name,
-                "task_claim_role": family_spec.claim_role,
-                "task_source_domain": family_spec.source_domain,
-                "task_target_domain": family_spec.target_domain,
-            }
-        )
         result = fit_stride(
             observations,
+            source=family_spec.source_domain,
+            target=family_spec.target_domain,
+            K=int(resolved_basis.n_states),
+            timepoint_order=family_spec.ordered_group_labels,
             state_basis=resolved_basis,
-            config=STRIDEFitConfig(
-                timepoint_order=family_spec.ordered_group_labels,
-                metadata=metadata,
-            ),
         )
+        cohort_relation = result.cohort_relation
         recurrence_used_patient_ids = tuple(
-            str(patient_id)
-            for patient_id in (
-                result.recurrence.used_patient_ids
-                if result.recurrence.used_patient_ids
-                else result.recurrence.patient_ids
-            )
+            str(patient_id) for patient_id in cohort_relation.support_patient_ids
         )
+        n_recurrence_families = 1 if cohort_relation.fit_status == "ok" else 0
         results[family_spec.name] = result
         for patient_result in result.patient_results:
             uncertainty_status = None
@@ -429,8 +422,8 @@ def run_task_a_family_core_fit_dry_run(
                     bridge_realized=bool(patient_result.is_ok),
                     defer_reason=defer_reason,
                     uncertainty_status=uncertainty_status,
-                    cohort_recurrence_fit_status=str(result.recurrence.fit_status),
-                    n_recurrence_families=int(len(result.recurrence.families)),
+                    cohort_recurrence_fit_status=str(cohort_relation.fit_status),
+                    n_recurrence_families=n_recurrence_families,
                     n_recurrence_used_patients=int(len(recurrence_used_patient_ids)),
                     source_domain=family_spec.source_domain,
                     target_domain=family_spec.target_domain,
