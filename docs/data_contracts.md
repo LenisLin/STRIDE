@@ -253,7 +253,7 @@ Contract boundary:
 - `s_G_init` is not recomputed dynamically during optimization,
 - compact successful-fit provenance records backend `torch`, dtype `float64`,
   log-domain balanced/debiased Sinkhorn settings, inner and outer epsilon
-  schedules `(0.5, 0.2, 0.1)`, `max_iter = 1000` per epsilon stage,
+  schedules `(0.5, 0.2, 0.1)`, `max_iter = 100` per epsilon stage,
   `tol = 1e-6`, `warning_tol = 1e-4`, and the state-geometry normalization
   used by the fit,
 - tiny negative inner composition-distance values in `[-1e-10, 0)` are clamped
@@ -261,11 +261,12 @@ Contract boundary:
 - empty source or target FOV bags, invalid simplexes, negative entries,
   NaN/Inf values, invalid cost matrices, or unavailable `torch` for the
   canonical full estimator fail explicitly; padding is not allowed,
-- reaching `max_iter` with finite values and final update `<= warning_tol` is
-  usable with warning; final update above `warning_tol` is numerical failure,
+- reaching `max_iter` with finite values is usable with warning; updates larger
+  than `warning_tol` are recorded convergence warnings on diagnostic/profiling
+  surfaces, not necessarily every production optimizer forward,
 - canonical `L_obs` has no observation-layer unbalanced unmatched residual;
   open behavior is expressed only by fitted biological `d/e`,
-- legacy UOT, `D_pos/B_pos`, and unbalanced observation residual diagnostics
+- retired UOT, `D_pos/B_pos`, and unbalanced observation residual diagnostics
   may be emitted only as diagnostic or comparator fields; Task A Block 3
   preserves `uot_baseline` as an external comparator name,
 - docs should not promote raw histogram collapse as the default canonical
@@ -363,7 +364,7 @@ Fitted-output reconstruction semantics:
   `y_hat_f = normalize(v_source_f @ A_p + e_p)`,
 - predicted target-side FOV vectors induce the predicted target-side
   bag-of-FOV empirical measure used by `L_obs`,
-- legacy `D_pos/B_pos` and other residual diagnostics may be emitted only as
+- retired `D_pos/B_pos` and other residual diagnostics may be emitted only as
   diagnostic or comparator fields. They are not canonical `L_obs` outputs, not
   fitted biological `d/e`, and not independently weighted fitted-output
   components.
@@ -465,7 +466,7 @@ contract remains the full `A_p` matrix rather than a selected derived subset.
 
 Cohort-level recurrence acts on patient-level objects. It does not act on
 pooled FOV vectors as the primary contract. Full-estimator v1 recurrence uses a
-single cohort consensus relation `R_bar = (A_bar, d_bar, e_bar)` and reports
+cohort-supported consensus over `T_p = [A_p | d_p]` and `e_p` and reports
 dispersion around that consensus.
 
 Any cohort-level recurrence output must report:
@@ -473,7 +474,7 @@ Any cohort-level recurrence output must report:
 - which patient-level objects were used,
 - the recurrence unit (`patient`),
 - patient support count for the consensus summary,
-- cohort consensus `A/d/e` defined on the same shared `K`-state basis,
+- cohort consensus `T/e` defined on the same shared `K`-state basis,
 - dispersion around the consensus,
 - recurrence-layer fit status.
 
