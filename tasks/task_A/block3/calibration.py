@@ -5,8 +5,8 @@ Task and purpose:
     `3B-1` and `3B-2` baseline scaffold.
 
 Relevant document anchors:
-    - docs/task_A_spec.md §4.5.5-§4.5.6 and UOT calibration pseudocode
-    - docs/task_A_block3_redesign_v1_1.md §4.3 and calibration closure notes
+    - docs/task_A/spec.md §4.5.5-§4.5.6 and UOT calibration pseudocode
+    - docs/task_A/block3/scientific_contract.md §4.3 and calibration closure notes
 
 Expected inputs and outputs:
     Step 3 calibration will consume train-side patient profiles and return one
