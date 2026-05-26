@@ -8,7 +8,7 @@ This file records the live repository structure for STRIDE.
 | `src/stride/` | active core package | canonical task-insensitive core package and live first-pass implementation surface |
 | `tasks/` | active | task-specific workflows, operational docs, and benchmark code |
 | `tasks/_shared/benchmarks/` | active | shared benchmark helpers |
-| `tasks/task_A/` | active task surface | Task A Block 0-2 workflows and internal Block 3 rebuild package |
+| `tasks/task_A/` | active task surface | Task A Block 0/1 workflows and internal Block 3 rebuild package |
 
 ## Placement Rules
 
