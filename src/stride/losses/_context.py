@@ -1,9 +1,12 @@
 """Private objective context construction for STRIDE loss assembly."""
 from __future__ import annotations
 
+import hashlib
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any
+
+import numpy as np
 
 from ..errors import ContractError
 from ..geometry.state_geometry import StateGeometry
@@ -33,9 +36,12 @@ from ._totals import CohortLossLedger, _ObservationRawResult, _scale_from_baseli
 from .cohort import compute_recurrence_raw
 from .fit import (
     compute_consistency_raw_from_block_losses,
+)
+from .fit import (
     compute_observation_raw as _compute_observation_raw,
 )
 from .prior import compute_geometry_raw
+
 
 @dataclass(frozen=True)
 class ObjectiveContext:
@@ -68,14 +74,20 @@ class ObjectiveContext:
         geometry: StateGeometry,
         epsilon_norm: float = EPSILON_NORM,
         config: BalancedSinkhornDivergenceConfig | None = None,
-    ) -> "ObjectiveContext":
+    ) -> ObjectiveContext:
         """Compute fixed baseline quantities for repeated objective evaluations."""
         _, _, _, patient_ids = _validate_parameters(params)
         init, init_params = _initial_parameters_for(params)
         resolved_config = _resolve_observation_config(config)
         resolved_epsilon = _validate_epsilon_norm(epsilon_norm)
         fov_cost_scales = tuple(
-            _resolve_block_fov_cost_scale(block, geometry, K=init.K, config=resolved_config)
+            _resolve_block_fov_cost_scale(
+                block,
+                geometry,
+                K=init.K,
+                config=resolved_config,
+                device=init.A.device,
+            )
             for block in evidence_blocks
         )
         observation_ground_cost_cache: dict[tuple[object, ...], Any] = {}
@@ -129,11 +141,35 @@ def _evidence_block_keys(
     evidence_blocks: Sequence[EvidenceBlock],
 ) -> tuple[tuple[object, ...], ...]:
     keys: list[tuple[object, ...]] = []
+
+    def _array_content_key(value: Any) -> tuple[object, ...]:
+        torch_module = _require_torch()
+        if torch_module.is_tensor(value):
+            tensor = value.detach()
+            array = np.ascontiguousarray(tensor.cpu().numpy())
+            digest = hashlib.sha256(array.view(np.uint8)).hexdigest()
+            return (
+                tuple(int(item) for item in tensor.shape),
+                str(tensor.dtype),
+                str(tensor.device),
+                _tensor_data_ptr(value),
+                _tensor_mutation_version(value),
+                digest,
+            )
+        array = np.ascontiguousarray(np.asarray(value))
+        digest = hashlib.sha256(array.view(np.uint8)).hexdigest()
+        return (
+            tuple(int(item) for item in array.shape),
+            str(array.dtype),
+            "numpy",
+            None,
+            None,
+            digest,
+        )
+
     for block in evidence_blocks:
         if not isinstance(block, EvidenceBlock):
             raise ContractError("evidence_blocks must contain EvidenceBlock objects")
-        source = _as_float64_tensor(block.source_bag, name="source_bag")
-        target = _as_float64_tensor(block.target_bag, name="target_bag", device=source.device)
         fov_cost_scale = (
             None if block.fov_cost_scale is None else float(block.fov_cost_scale)
         )
@@ -143,12 +179,8 @@ def _evidence_block_keys(
                 block.block_id,
                 id(block.source_bag),
                 id(block.target_bag),
-                _tensor_data_ptr(block.source_bag),
-                _tensor_data_ptr(block.target_bag),
-                _tensor_mutation_version(block.source_bag),
-                _tensor_mutation_version(block.target_bag),
-                tuple(int(item) for item in source.shape),
-                tuple(int(item) for item in target.shape),
+                _array_content_key(block.source_bag),
+                _array_content_key(block.target_bag),
                 fov_cost_scale,
                 bool(block.fov_cost_scale_floor_used),
             )
