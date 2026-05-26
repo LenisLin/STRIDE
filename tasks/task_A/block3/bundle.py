@@ -5,8 +5,8 @@ Role:
     internal Block 3 subexperiment.
 
 Authority anchors:
-    - docs/task_A_spec.md §4.5.5, §4.5.6, §5.1 Phase 3
-    - docs/task_A_block3_redesign_v1_1.md §5.5, §5.6
+    - docs/task_A/spec.md §4.5.5, §4.5.6, §5.1 Phase 3
+    - docs/task_A/block3/scientific_contract.md §5.5, §5.6
 
 Local boundary:
     - This module owns raw bundle schema layout and raw artifact writing only.
@@ -36,7 +36,8 @@ import pandas as pd
 from stride.errors import ContractError
 
 from .contracts import Block3SubexperimentRawRows
-from .execution import BLOCK3_PACKET_BRIDGE_POLICY, Block3ExecutionPlan
+
+BLOCK3_PACKET_BRIDGE_POLICY = "deferred_non_authority_pending_clean_bridge_spec"
 
 
 @dataclass(frozen=True)
@@ -59,6 +60,9 @@ class Block3BundleLayout:
     scientific_interpretation_allowed: bool
     packet_bridge_enabled: bool
     packet_bridge_policy: str
+    execution_scope: str
+    n_generator_reruns: int
+    n_test_patients: int
     manifest_name: str
     raw_index_name: str
 
@@ -99,8 +103,9 @@ def build_raw_table_schema(subexperiment_id: str, artifact_role: str) -> tuple[s
     Inputs:
         subexperiment_id: Executable Block 3 subexperiment whose raw artifact is
             being described.
-        artifact_role: Raw artifact role such as `3a_object_scores`,
-            `3b1_patient_metrics`, or `3b2_patient_metrics`.
+        artifact_role: Semantic raw artifact role such as
+            `generator_validation_object_scores`,
+            `a_benchmark_patient_metrics`, or `de_benchmark_patient_metrics`.
 
     Returns:
         The ordered tuple of flat column names expected in the corresponding raw
@@ -121,8 +126,8 @@ def build_raw_table_schema(subexperiment_id: str, artifact_role: str) -> tuple[s
         5. Fail fast for unsupported artifact roles.
 
     Notes:
-        `3A` is the only non-method-bearing subexperiment. `3B`, `3C-1`, and
-        `3C-2` retain method columns on patient and condition summary rows.
+        `3A` is the only non-method-bearing subexperiment. `3B` and `3C-*`
+        retain method columns on patient and condition summary rows.
     """
     if artifact_role == "generator_rerun_registry":
         return (
@@ -131,6 +136,8 @@ def build_raw_table_schema(subexperiment_id: str, artifact_role: str) -> tuple[s
             "n_train_patients",
             "n_test_patients",
             "hidden_relation_condition_id",
+            "template_medoid_patient_id",
+            "generator_parameters_json",
         )
     if artifact_role == "generator_split_registry":
         return (
@@ -152,6 +159,35 @@ def build_raw_table_schema(subexperiment_id: str, artifact_role: str) -> tuple[s
             "e_json",
             "open_mass",
             "open_mass_scale",
+            "y_endpoint_json",
+            "sampled_template_patient_id",
+            "medoid_template_patient_id",
+            "row_imputed_mask_json",
+            "endpoint_closure_l1",
+        )
+    if artifact_role == "generator_diagnostics":
+        return (
+            "rerun_id",
+            "patient_id",
+            "sampled_template_patient_id",
+            "medoid_template_patient_id",
+            "row_accounting_max_abs_error",
+            "truth_y_simplex_error",
+            "source_fov_simplex_max_error",
+            "target_fov_simplex_max_error",
+            "retained_diagonal_mass",
+            "offdiag_remodeling_mass",
+            "open_mass",
+            "emergence_mass",
+            "burden_ordering_status",
+            "endpoint_closure_l1",
+            "imputed_row_source_mass",
+            "n_source_fovs",
+            "n_target_fovs",
+            "n_expected_evidence_blocks",
+            "has_multiple_expected_evidence_blocks",
+            "offdiag_geometry_locality",
+            "truth_finite",
         )
     if artifact_role == "method_native_output_store":
         return (
@@ -171,9 +207,9 @@ def build_raw_table_schema(subexperiment_id: str, artifact_role: str) -> tuple[s
             "metadata_json",
             "open_mass_scale",
         )
-    if subexperiment_id == "3A" and artifact_role == "3a_object_scores":
+    if subexperiment_id == "3A" and artifact_role == "generator_validation_object_scores":
         return _BASE_ROUTING_COLUMNS[:4] + ("validation_object_id",) + _BASE_ROUTING_COLUMNS[4:]
-    if subexperiment_id == "3A" and artifact_role == "3a_rerun_stability":
+    if subexperiment_id == "3A" and artifact_role == "generator_validation_rerun_stability":
         return (
             _BASE_ROUTING_COLUMNS[:4]
             + ("validation_object_id",)
@@ -237,7 +273,7 @@ def _filter_bundle_artifacts(
 
 
 def build_block3_bundle_layout(
-    plan: Block3ExecutionPlan,
+    plan: Any,
     *,
     manifest_name: str | None = None,
     raw_index_name: str | None = None,
@@ -267,8 +303,8 @@ def build_block3_bundle_layout(
 
     Core flow:
         1. Pick manifest and raw-index filenames.
-        2. Construct the full raw artifact inventory for `3A`, `3B`, `3C-1`,
-           and `3C-2`.
+        2. Construct the full raw artifact inventory for `3A`, `3B`, and
+           `3C-*`.
         3. Filter that inventory to the requested subexperiment subset.
         4. Attach artifact-state and boundary flags from the execution plan.
         5. Fail fast if review-surface artifacts accidentally appear here.
@@ -304,6 +340,12 @@ def build_block3_bundle_layout(
             schema_columns=build_raw_table_schema("3A", "generator_split_registry"),
         ),
         Block3ArtifactLayout(
+            role="generator_diagnostics",
+            relative_path="raw/generator_diagnostics.csv",
+            format="csv",
+            schema_columns=build_raw_table_schema("3A", "generator_diagnostics"),
+        ),
+        Block3ArtifactLayout(
             role="patient_truth_store",
             relative_path="raw/patient_truth_store.csv",
             format="csv",
@@ -316,74 +358,88 @@ def build_block3_bundle_layout(
             schema_columns=build_raw_table_schema("3B", "method_native_output_store"),
         ),
         Block3ArtifactLayout(
-            role="3a_object_scores",
-            relative_path="raw/3a_object_scores.csv",
+            role="generator_validation_object_scores",
+            relative_path="raw/generator_validation/object_scores.csv",
             format="csv",
-            schema_columns=build_raw_table_schema("3A", "3a_object_scores"),
+            schema_columns=build_raw_table_schema("3A", "generator_validation_object_scores"),
             subexperiment_id="3A",
         ),
         Block3ArtifactLayout(
-            role="3a_rerun_stability",
-            relative_path="raw/3a_rerun_stability.csv",
+            role="generator_validation_rerun_stability",
+            relative_path="raw/generator_validation/rerun_stability.csv",
             format="csv",
-            schema_columns=build_raw_table_schema("3A", "3a_rerun_stability"),
+            schema_columns=build_raw_table_schema("3A", "generator_validation_rerun_stability"),
             subexperiment_id="3A",
         ),
         Block3ArtifactLayout(
-            role="3b1_patient_metrics",
-            relative_path="raw/3b1_patient_metrics.csv",
+            role="a_benchmark_patient_metrics",
+            relative_path="raw/a_benchmark/patient_metrics.csv",
             format="csv",
-            schema_columns=build_raw_table_schema("3B-1", "3b1_patient_metrics"),
+            schema_columns=build_raw_table_schema("3B-1", "a_benchmark_patient_metrics"),
             subexperiment_id="3B-1",
         ),
         Block3ArtifactLayout(
-            role="3b1_condition_summary",
-            relative_path="raw/3b1_condition_summary.csv",
+            role="a_benchmark_condition_summary",
+            relative_path="raw/a_benchmark/condition_summary.csv",
             format="csv",
-            schema_columns=build_raw_table_schema("3B-1", "3b1_condition_summary"),
+            schema_columns=build_raw_table_schema("3B-1", "a_benchmark_condition_summary"),
             subexperiment_id="3B-1",
         ),
         Block3ArtifactLayout(
-            role="3b2_patient_metrics",
-            relative_path="raw/3b2_patient_metrics.csv",
+            role="de_benchmark_patient_metrics",
+            relative_path="raw/de_benchmark/patient_metrics.csv",
             format="csv",
-            schema_columns=build_raw_table_schema("3B-2", "3b2_patient_metrics"),
+            schema_columns=build_raw_table_schema("3B-2", "de_benchmark_patient_metrics"),
             subexperiment_id="3B-2",
         ),
         Block3ArtifactLayout(
-            role="3b2_condition_summary",
-            relative_path="raw/3b2_condition_summary.csv",
+            role="de_benchmark_condition_summary",
+            relative_path="raw/de_benchmark/condition_summary.csv",
             format="csv",
-            schema_columns=build_raw_table_schema("3B-2", "3b2_condition_summary"),
+            schema_columns=build_raw_table_schema("3B-2", "de_benchmark_condition_summary"),
             subexperiment_id="3B-2",
         ),
         Block3ArtifactLayout(
-            role="3c1_patient_metrics",
-            relative_path="raw/3c1_patient_metrics.csv",
+            role="subbag_consistency_ablation_patient_metrics",
+            relative_path="raw/subbag_consistency_ablation/patient_metrics.csv",
             format="csv",
-            schema_columns=build_raw_table_schema("3C-1", "3c1_patient_metrics"),
+            schema_columns=build_raw_table_schema("3C-1", "subbag_consistency_ablation_patient_metrics"),
             subexperiment_id="3C-1",
         ),
         Block3ArtifactLayout(
-            role="3c1_condition_summary",
-            relative_path="raw/3c1_condition_summary.csv",
+            role="subbag_consistency_ablation_condition_summary",
+            relative_path="raw/subbag_consistency_ablation/condition_summary.csv",
             format="csv",
-            schema_columns=build_raw_table_schema("3C-1", "3c1_condition_summary"),
+            schema_columns=build_raw_table_schema("3C-1", "subbag_consistency_ablation_condition_summary"),
             subexperiment_id="3C-1",
         ),
         Block3ArtifactLayout(
-            role="3c2_patient_metrics",
-            relative_path="raw/3c2_patient_metrics.csv",
+            role="geometry_ablation_patient_metrics",
+            relative_path="raw/geometry_ablation/patient_metrics.csv",
             format="csv",
-            schema_columns=build_raw_table_schema("3C-2", "3c2_patient_metrics"),
+            schema_columns=build_raw_table_schema("3C-2", "geometry_ablation_patient_metrics"),
             subexperiment_id="3C-2",
         ),
         Block3ArtifactLayout(
-            role="3c2_condition_summary",
-            relative_path="raw/3c2_condition_summary.csv",
+            role="geometry_ablation_condition_summary",
+            relative_path="raw/geometry_ablation/condition_summary.csv",
             format="csv",
-            schema_columns=build_raw_table_schema("3C-2", "3c2_condition_summary"),
+            schema_columns=build_raw_table_schema("3C-2", "geometry_ablation_condition_summary"),
             subexperiment_id="3C-2",
+        ),
+        Block3ArtifactLayout(
+            role="recurrence_ablation_patient_metrics",
+            relative_path="raw/recurrence_ablation/patient_metrics.csv",
+            format="csv",
+            schema_columns=build_raw_table_schema("3C-3", "recurrence_ablation_patient_metrics"),
+            subexperiment_id="3C-3",
+        ),
+        Block3ArtifactLayout(
+            role="recurrence_ablation_condition_summary",
+            relative_path="raw/recurrence_ablation/condition_summary.csv",
+            format="csv",
+            schema_columns=build_raw_table_schema("3C-3", "recurrence_ablation_condition_summary"),
+            subexperiment_id="3C-3",
         ),
     )
     artifacts = _filter_bundle_artifacts(all_artifacts, subexperiment_ids=subexperiment_ids)
@@ -393,6 +449,9 @@ def build_block3_bundle_layout(
         scientific_interpretation_allowed=plan.scientific_interpretation_allowed,
         packet_bridge_enabled=plan.packet_bridge_enabled,
         packet_bridge_policy=BLOCK3_PACKET_BRIDGE_POLICY,
+        execution_scope=str(plan.execution_scope),
+        n_generator_reruns=int(plan.n_generator_reruns),
+        n_test_patients=int(plan.n_test_patients),
         manifest_name=manifest_filename,
         raw_index_name=raw_index_filename,
     )
@@ -436,6 +495,9 @@ def build_bundle_manifest_payload(
         "scientific_interpretation_allowed": layout.scientific_interpretation_allowed,
         "packet_bridge_enabled": layout.packet_bridge_enabled,
         "packet_bridge_policy": layout.packet_bridge_policy,
+        "execution_scope": layout.execution_scope,
+        "n_generator_reruns": layout.n_generator_reruns,
+        "n_test_patients": layout.n_test_patients,
         "raw_index_name": layout.raw_index_name,
         "artifacts": [
             {
@@ -552,7 +614,7 @@ def _raw_role_records(
         1. Route `3A` to object-score and rerun-stability records only.
         2. Reject method-bearing rows on `3A`.
         3. Reject `3A` validation-object rows on method-bearing sections.
-        4. Route `3B`, `3C-1`, and `3C-2` to patient-metric and
+        4. Route `3B` and `3C-*` to patient-metric and
            condition-summary artifact roles.
         5. Fail fast for unsupported subexperiment ids.
 
@@ -566,8 +628,8 @@ def _raw_role_records(
         if not raw_rows.object_scores or not raw_rows.rerun_stability:
             raise ContractError("3A raw artifacts require object scores and rerun stability rows")
         role_records = {
-            "3a_object_scores": [row.to_record() for row in raw_rows.object_scores],
-            "3a_rerun_stability": [row.to_record() for row in raw_rows.rerun_stability],
+            "generator_validation_object_scores": [row.to_record() for row in raw_rows.object_scores],
+            "generator_validation_rerun_stability": [row.to_record() for row in raw_rows.rerun_stability],
         }
         role_records.update({role: list(records) for role, records in raw_rows.shared_tables.items()})
         return role_records
@@ -576,10 +638,11 @@ def _raw_role_records(
     if not raw_rows.patient_metrics or not raw_rows.condition_summaries:
         raise ContractError(f"{subexperiment_id} raw artifacts require patient rows and condition summaries")
     suffix = {
-        "3B-1": "3b1",
-        "3B-2": "3b2",
-        "3C-1": "3c1",
-        "3C-2": "3c2",
+        "3B-1": "a_benchmark",
+        "3B-2": "de_benchmark",
+        "3C-1": "subbag_consistency_ablation",
+        "3C-2": "geometry_ablation",
+        "3C-3": "recurrence_ablation",
     }.get(subexperiment_id)
     if suffix is None:
         raise ContractError(f"Unsupported Block 3 raw subexperiment {subexperiment_id!r}")
@@ -594,7 +657,7 @@ def _raw_role_records(
 def write_block3_subexperiment_raw_bundle(
     *,
     output_dir: str | Path,
-    plan: Block3ExecutionPlan,
+    plan: Any,
     subexperiment_id: str,
     raw_rows: Block3SubexperimentRawRows,
 ) -> Block3WrittenRawBundle:
