@@ -5,8 +5,8 @@ Task and purpose:
     plan-based comparator output `P` for `3B-1` and `3B-2` scoring surfaces.
 
 Relevant document anchors:
-    - docs/task_A_spec.md §4.5.5-§4.5.6 and §5.1 Phase 3
-    - docs/task_A_block3_redesign_v1_1.md §4.3.2, §5.5, §5.6
+    - docs/task_A/spec.md §4.5.5-§4.5.6 and §5.1 Phase 3
+    - docs/task_A/block3/scientific_contract.md §4.3.2, §5.5, §5.6
 
 Expected inputs and outputs:
     Inputs are source profile `x`, target profile `y`, and matched plan `P`.

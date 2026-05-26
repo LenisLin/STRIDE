@@ -20,7 +20,7 @@ from typing import Any
 import pandas as pd
 from stride.errors import ContractError
 
-from .block0.schemas import (
+from .block0.functions.schemas import (
     BLOCK0_ANALYSIS_SPEC_VERSION,
     CALIBRATION_MANIFEST_FILENAME,
     CALIBRATION_READY_STATUS,
@@ -33,8 +33,7 @@ from .block0.schemas import (
     PATIENT_CALIBRATION_FILENAME,
     REAL_FAMILY as BLOCK0_REAL_FAMILY,
 )
-from .block0.writers import validate_block0_frame_columns
-from .block2.review import write_block2_review_surface
+from .block0.functions.writers import validate_block0_frame_columns
 
 
 PACKET_ROLE = "objective_task_a_result_packet"
@@ -43,10 +42,6 @@ PACKET_MANIFEST_FILENAME = "task_a_result_packet_manifest.json"
 PACKET_INDEX_FILENAME = "task_a_result_packet_index.csv"
 HUMAN_INDEX_FILENAME = "RESULTS_INDEX.md"
 BLOCK1_CONTRACT_PATH = Path(__file__).resolve().parent / "contracts" / "artifact_contracts.md"
-BLOCK2_CONTRACT_PATH = BLOCK1_CONTRACT_PATH
-BLOCK3_PACKET_DEFERRED_MESSAGE = (
-    "Block 3 packet integration is deferred / non-authority / pending clean bridge spec"
-)
 BLOCK0_CALIBRATION_CONTEXT = "calibration_context"
 BLOCK0_ALLOWED_READINESS_STATUSES = {
     CALIBRATION_READY_STATUS,
@@ -92,7 +87,7 @@ INDEX_COLUMNS: tuple[str, ...] = (
     "review_rank",
 )
 
-LAYER_ORDER: tuple[str, ...] = ("atlas", "block0", "block1", "block2", "block3")
+LAYER_ORDER: tuple[str, ...] = ("atlas", "block0", "block1", "block3")
 STEP3_DEFERRED_LAYERS: tuple[str, ...] = ("block3",)
 
 
@@ -146,7 +141,6 @@ def _surface_lineage_summary(
     prepare_manifest: Path,
     block0_calibration_manifest: Path,
     block1_bundle: Path | None,
-    block2_manifest: Path | None,
 ) -> dict[str, dict[str, Any]]:
     atlas_payload = _load_json_dict(atlas_manifest, label="Task A atlas manifest")
     prepare_payload = _load_json_dict(prepare_manifest, label="Task A prepare manifest")
@@ -181,16 +175,6 @@ def _surface_lineage_summary(
             "fit_surface": str(block1_payload.get("fit_surface", "")),
             "cohort_recurrence_fit_status": str(
                 block1_payload.get("cohort_recurrence_fit_status", "")
-            ),
-        }
-    if block2_manifest is not None:
-        block2_payload = _load_json_dict(block2_manifest, label="Task A Block 2 manifest")
-        lineage["block2"] = {
-            "implementation_tier": str(block2_payload.get("implementation_tier", "")),
-            "evidence_lineage": str(block2_payload.get("evidence_lineage", "")),
-            "fit_surface": str(block2_payload.get("fit_surface", "")),
-            "upstream_block1_cohort_recurrence_fit_status": str(
-                block2_payload.get("block1_cohort_recurrence_fit_status", "")
             ),
         }
     return lineage
@@ -1143,217 +1127,6 @@ def _collect_block1_plans(block1_bundle_path: Path | None) -> list[ArtifactPlan]
     return plans
 
 
-BLOCK2_EXPECTED_ARTIFACTS: tuple[dict[str, Any], ...] = (
-    {
-        "relative_path": "block2_bounded_audit_manifest.json",
-        "artifact_kind": "manifest",
-        "format": "json",
-        "rows_represent": "Single JSON object for one Block 2 robustness run.",
-        "columns_represent": "Top-level keys record Block 2 provenance, linked Block 1 inputs, linked Block 2 outputs, route scope, and replicate counts.",
-        "claim_scope": "provenance",
-        "proof_carrying_status": "none",
-        "review_rank": 10,
-    },
-    {
-        "relative_path": "block2_bounded_audit_summary.csv",
-        "artifact_kind": "table",
-        "format": "csv",
-        "rows_represent": "Rows represent one frozen Block 1 finding summarized across the primary Block 2 routes.",
-        "columns_represent": "Columns record scope, finding priority, overall robustness call, and worst-case primary-route support quantities.",
-        "claim_scope": "robustness",
-        "proof_carrying_status": "partial",
-        "review_rank": 20,
-    },
-    {
-        "relative_path": "block2_family_robustness.csv",
-        "artifact_kind": "table",
-        "format": "csv",
-        "rows_represent": "Rows represent route-level family robustness summaries for the frozen Block 1 family findings.",
-        "columns_represent": "Columns record route identity, full-data direction, recovery rates, estimability, support fractions, and the route-level robustness call.",
-        "claim_scope": "robustness",
-        "proof_carrying_status": "all",
-        "review_rank": 21,
-    },
-    {
-        "relative_path": "block2_source_community_robustness.csv",
-        "artifact_kind": "table",
-        "format": "csv",
-        "rows_represent": "Rows represent route-level source-community robustness summaries for the scoped Block 1 source findings.",
-        "columns_represent": "Columns record route identity, community id, full-data direction, recovery rates, estimability, support fractions, rank stability, and the route-level robustness call.",
-        "claim_scope": "robustness",
-        "proof_carrying_status": "partial",
-        "review_rank": 22,
-    },
-    {
-        "relative_path": "block2_target_community_robustness.csv",
-        "artifact_kind": "table",
-        "format": "csv",
-        "rows_represent": "Rows represent route-level target-community robustness summaries for the scoped Block 1 target findings.",
-        "columns_represent": "Columns record route identity, community id, full-data direction, recovery rates, estimability, support fractions, rank stability, and the route-level robustness call.",
-        "claim_scope": "robustness",
-        "proof_carrying_status": "partial",
-        "review_rank": 23,
-    },
-    {
-        "relative_path": "block2_replicate_manifest.csv",
-        "artifact_kind": "table",
-        "format": "csv",
-        "rows_represent": "Rows represent one attempted Block 2 perturbation replicate.",
-        "columns_represent": "Columns record route identity, retained patient/ROI/cell counts, encoded perturbation membership, and any replicate-level failure reason.",
-        "claim_scope": "provenance",
-        "proof_carrying_status": "none",
-        "review_rank": 24,
-    },
-    {
-        "relative_path": "block2_contract_audit.csv",
-        "artifact_kind": "table",
-        "format": "csv",
-        "rows_represent": "Rows represent one Block 2 provenance or contract check.",
-        "columns_represent": "Columns record the check name, pass/fail state, and supporting detail.",
-        "claim_scope": "provenance",
-        "proof_carrying_status": "none",
-        "review_rank": 25,
-    },
-)
-
-
-def _block2_plan_from_spec(
-    *,
-    spec: dict[str, Any],
-    source_path: Path | None,
-    artifact_status: str,
-    source_manifest_or_bundle: str,
-    notes: str,
-) -> ArtifactPlan:
-    relative_path = str(spec["relative_path"])
-    return ArtifactPlan(
-        layer="block2",
-        artifact_name=Path(relative_path).name,
-        expected_relative_path=relative_path,
-        packet_relative_path=f"block2/bundle/{relative_path}" if source_path is not None else None,
-        source_path=source_path,
-        artifact_kind=str(spec["artifact_kind"]),
-        artifact_status=artifact_status,
-        contract_alignment=(
-            "current_contract_available" if source_path is not None else "current_contract_missing"
-        ),
-        format=str(spec["format"]),
-        rows_represent=str(spec["rows_represent"]),
-        columns_represent=str(spec["columns_represent"]),
-        claim_scope=str(spec["claim_scope"]),
-        proof_carrying_status=str(spec["proof_carrying_status"]),
-        source_workflow="write_block2_bundle",
-        source_manifest_or_bundle=source_manifest_or_bundle,
-        notes=notes,
-        review_rank=int(spec["review_rank"]),
-        review_role=(
-            "proof_carrying"
-            if str(spec["proof_carrying_status"]) in {"all", "partial"}
-            else "provenance"
-        ),
-        analysis_level=(
-            "replicate"
-            if relative_path == "block2_replicate_manifest.csv"
-            else (
-                "source_community"
-                if relative_path == "block2_source_community_robustness.csv"
-                else (
-                    "target_community"
-                    if relative_path == "block2_target_community_robustness.csv"
-                    else (
-                        "family"
-                        if relative_path == "block2_family_robustness.csv"
-                        else "cohort_decision"
-                    )
-                )
-            )
-        ),
-        family_surface_role=(
-            "comparison_surface"
-            if relative_path in {
-                "block2_bounded_audit_summary.csv",
-                "block2_family_robustness.csv",
-            }
-            else "not_applicable"
-        ),
-    )
-
-
-def _collect_block2_plans(block2_manifest_path: Path | None) -> list[ArtifactPlan]:
-    if block2_manifest_path is None:
-        return [
-            _block2_plan_from_spec(
-                spec=spec,
-                source_path=None,
-                artifact_status="missing_on_disk",
-                source_manifest_or_bundle=str(BLOCK2_CONTRACT_PATH),
-                notes="Expected by the frozen Block 2 contract; no live Block 2 manifest was supplied or found on disk.",
-            )
-            for spec in BLOCK2_EXPECTED_ARTIFACTS
-        ]
-
-    block2_payload = _load_json_dict(block2_manifest_path, label="Task A Block 2 manifest")
-    _require_fields(
-        block2_payload,
-        required_fields=(
-            "summary_path",
-            "contract_path",
-            "replicate_manifest_path",
-            "family_robustness_path",
-            "source_community_robustness_path",
-            "target_community_robustness_path",
-        ),
-        label="Task A Block 2 manifest",
-    )
-    path_map: dict[str, Path] = {
-        "block2_bounded_audit_manifest.json": block2_manifest_path,
-        "block2_bounded_audit_summary.csv": _resolve_path(block2_payload["summary_path"]),
-        "block2_contract_audit.csv": _resolve_path(block2_payload["contract_path"]),
-        "block2_replicate_manifest.csv": _resolve_path(block2_payload["replicate_manifest_path"]),
-        "block2_family_robustness.csv": _resolve_path(block2_payload["family_robustness_path"]),
-        "block2_source_community_robustness.csv": _resolve_path(
-            block2_payload["source_community_robustness_path"]
-        ),
-        "block2_target_community_robustness.csv": _resolve_path(
-            block2_payload["target_community_robustness_path"]
-        ),
-    }
-
-    plans: list[ArtifactPlan] = []
-    for spec in BLOCK2_EXPECTED_ARTIFACTS:
-        relative_path = str(spec["relative_path"])
-        source_path = path_map.get(relative_path)
-        if source_path is not None and source_path.exists():
-            plans.append(
-                _block2_plan_from_spec(
-                    spec=spec,
-                    source_path=source_path.resolve(),
-                    artifact_status="available",
-                    source_manifest_or_bundle=str(block2_manifest_path),
-                    notes="Mirrored from the supplied live Block 2 robustness manifest.",
-                )
-            )
-        else:
-            plans.append(
-                _block2_plan_from_spec(
-                    spec=spec,
-                    source_path=None,
-                    artifact_status="missing_on_disk",
-                    source_manifest_or_bundle=str(block2_manifest_path),
-                    notes="Expected by the supplied Block 2 manifest surface, but the file was not present on disk.",
-                )
-            )
-    return plans
-
-
-BLOCK3_EXPECTED_ARTIFACTS: tuple[dict[str, Any], ...] = ()
-
-
-def _collect_block3_plans(block3_manifest_path: Path | None) -> list[ArtifactPlan]:
-    _ = block3_manifest_path
-    return []
-
-
 def _materialize_plan(
     plan: ArtifactPlan,
     *,
@@ -1597,19 +1370,6 @@ def _write_layer_manifests(
                 "Block 1 rows describe the frozen discovery-layer contract surface on the canonical full STRIDE "
                 "path, including the cohort-level recurrence exports added by the Step 3 rerun."
             )
-        elif layer == "block2":
-            if "write_block2_review_surface" in set(layer_df["source_workflow"].astype(str).tolist()):
-                payload["notes"] = (
-                    "Block 2 rows describe the frozen robustness-layer contract surface and packet-local review-only "
-                    "reorganizations. Raw files remain mirrored faithfully, while the review tables clarify route "
-                    "coverage, call semantics, and primary review order without changing scientific contents. "
-                    "This layer is attached to the canonical Block 1 rerun."
-                )
-            else:
-                payload["notes"] = (
-                    "Block 2 rows describe the frozen robustness-layer contract surface over the canonical Block 1 "
-                    "rerun. Available files are mirrored when supplied; otherwise missing surfaces remain explicit."
-                )
         else:
             payload["notes"] = (
                 "Block 3 rows describe packet-local mirrors of the supplied method-validation bundle surface. "
@@ -1633,7 +1393,6 @@ def _write_human_index(
     atlas_df = index_df.loc[index_df["layer"] == "atlas"].copy()
     block0_df = index_df.loc[index_df["layer"] == "block0"].copy()
     block1_df = index_df.loc[index_df["layer"] == "block1"].copy()
-    block2_df = index_df.loc[index_df["layer"] == "block2"].copy()
     inspect_first = [
         "atlas/bundle/task_a_descriptive_atlas_manifest.json",
         "atlas/bundle/tables/community_cell_subtype_row_fractions.csv",
@@ -1643,16 +1402,11 @@ def _write_human_index(
         "block0/calibration/block0_patient_calibration.csv",
         "block0/calibration/block0_metric_summary.csv",
         "block1/block1_review_index.csv",
-        "block2/BLOCK2_RESULTS_INDEX.md",
-        "block2/review/block2_primary_finding_review_table.csv",
-        "block2/review/block2_route_summary.csv",
-        "block2/bundle/block2_bounded_audit_summary.csv",
-        "block2/block2_review_index.csv",
     ]
     lines = [
         "# Task A Objective Result Packet",
         "",
-        "This packet mirrors the canonical Task A rerun surface through Block 2 without biological interpretation.",
+        "This packet mirrors the canonical Task A rerun surface through Block 1 without biological interpretation.",
         "Block 3 is explicitly deferred from this packet because the active Block 3 engineering surface has been removed pending rebuild.",
         "Proxy-era Block 0 outputs are not accepted or repackaged here.",
         "",
@@ -1667,14 +1421,11 @@ def _write_human_index(
         f"- Block 0 available artifacts: {int((block0_df['artifact_status'] == 'available').sum())}",
         f"- Block 1 available artifacts: {int((block1_df['artifact_status'] == 'available').sum())}",
         f"- Block 1 missing artifacts: {int((block1_df['artifact_status'] == 'missing_on_disk').sum())}",
-        f"- Block 2 available artifacts: {int((block2_df['artifact_status'] == 'available').sum())}",
-        f"- Block 2 missing artifacts: {int((block2_df['artifact_status'] == 'missing_on_disk').sum())}",
         "",
         "## Surface Lineage",
         f"- Prepare: `{surface_lineage.get('prepare', {}).get('implementation_tier', '')}` / `{surface_lineage.get('prepare', {}).get('evidence_lineage', '')}`",
         f"- Block 0: `{surface_lineage.get('block0', {}).get('implementation_tier', '')}` / `{surface_lineage.get('block0', {}).get('evidence_lineage', '')}`",
         f"- Block 1: `{surface_lineage.get('block1', {}).get('implementation_tier', '')}` / `{surface_lineage.get('block1', {}).get('evidence_lineage', '')}`",
-        f"- Block 2: `{surface_lineage.get('block2', {}).get('implementation_tier', '')}` / `{surface_lineage.get('block2', {}).get('evidence_lineage', '')}`",
         "",
         "## Inspect First",
     ]
@@ -1697,10 +1448,6 @@ def _write_human_index(
             f"- Review index: `block1/block1_review_index.csv`",
             f"- Layer manifest: `block1/block1_layer_manifest.json`",
             "",
-            "## Block 2",
-            f"- Review index: `block2/block2_review_index.csv`",
-            f"- Layer manifest: `block2/block2_layer_manifest.json`",
-            "",
             "## Missing Block 1 Surfaces",
         ]
     )
@@ -1713,17 +1460,6 @@ def _write_human_index(
         lines.append("- None.")
     else:
         for expected_path in missing_block1:
-            lines.append(f"- `{expected_path}`")
-    lines.extend(["", "## Missing Block 2 Surfaces"])
-    missing_block2 = (
-        block2_df.loc[block2_df["artifact_status"] == "missing_on_disk", "expected_relative_path"]
-        .astype(str)
-        .tolist()
-    )
-    if not missing_block2:
-        lines.append("- None.")
-    else:
-        for expected_path in missing_block2:
             lines.append(f"- `{expected_path}`")
     human_index_path = packet_root / HUMAN_INDEX_FILENAME
     human_index_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
@@ -1814,17 +1550,11 @@ def write_task_a_result_packet(
     block0_calibration_manifest_path: str | Path,
     output_dir: str | Path,
     block1_bundle_path: str | Path | None = None,
-    block2_manifest_path: str | Path | None = None,
-    block3_manifest_path: str | Path | None = None,
 ) -> TaskAResultPacket:
-    if block3_manifest_path is not None:
-        raise ContractError(BLOCK3_PACKET_DEFERRED_MESSAGE)
-
     atlas_manifest = _resolve_path(atlas_manifest_path)
     prepare_manifest = _resolve_path(prepare_manifest_path)
     block0_calibration_manifest = _resolve_path(block0_calibration_manifest_path)
     block1_bundle = None if block1_bundle_path is None else _resolve_path(block1_bundle_path)
-    block2_manifest = None if block2_manifest_path is None else _resolve_path(block2_manifest_path)
     layers = _included_layers(include_block3=False)
 
     packet_root = _resolve_path(output_dir)
@@ -1834,7 +1564,6 @@ def write_task_a_result_packet(
         prepare_manifest=prepare_manifest,
         block0_calibration_manifest=block0_calibration_manifest,
         block1_bundle=block1_bundle,
-        block2_manifest=block2_manifest,
     )
 
     plans: list[ArtifactPlan] = []
@@ -1846,10 +1575,8 @@ def write_task_a_result_packet(
         )
     )
     block1_plans = _collect_block1_plans(block1_bundle)
-    block2_plans = _collect_block2_plans(block2_manifest)
     block3_plans: list[ArtifactPlan] = []
     plans.extend(block1_plans)
-    plans.extend(block2_plans)
     plans.extend(block3_plans)
 
     records = [
@@ -1860,40 +1587,6 @@ def write_task_a_result_packet(
         )
         for plan in plans
     ]
-    block2_review_surface = None
-    if block2_manifest is not None and all(plan.artifact_status == "available" for plan in block2_plans):
-        block2_review_surface = write_block2_review_surface(
-            block2_manifest_path=block2_manifest,
-            output_dir=packet_root / "block2",
-        )
-        records.extend(
-            [
-                _record_existing_packet_artifact(
-                    packet_root=packet_root,
-                    layer="block2",
-                    artifact_name=artifact.artifact_name,
-                    expected_relative_path=artifact.packet_relative_path.removeprefix("block2/"),
-                    packet_relative_path=artifact.packet_relative_path,
-                    artifact_kind=artifact.artifact_kind,
-                    contract_alignment="current_contract_review_surface",
-                    format_name=artifact.format,
-                    rows_represent=artifact.rows_represent,
-                    columns_represent=artifact.columns_represent,
-                    claim_scope=artifact.claim_scope,
-                    review_role=artifact.review_role,
-                    analysis_level=artifact.analysis_level,
-                    family_surface_role=artifact.family_surface_role,
-                    proof_carrying_status=artifact.proof_carrying_status,
-                    source_workflow=artifact.source_workflow,
-                    source_manifest_or_bundle=artifact.source_manifest_or_bundle,
-                    notes=artifact.notes,
-                    review_rank=artifact.review_rank,
-                    surface_lineage=surface_lineage,
-                    source_path=artifact.source_path,
-                )
-                for artifact in block2_review_surface.artifacts
-            ]
-        )
     index_df = pd.DataFrame.from_records(records, columns=INDEX_COLUMNS)
     layer_order = {layer: idx for idx, layer in enumerate(layers)}
     index_df = (
@@ -1946,11 +1639,8 @@ def write_task_a_result_packet(
             "prepare_manifest_path": str(prepare_manifest),
             "block0_calibration_manifest_path": str(block0_calibration_manifest),
             "block1_bundle_path": str(block1_bundle) if block1_bundle is not None else None,
-            "block2_manifest_path": str(block2_manifest) if block2_manifest is not None else None,
-            "block3_manifest_path": None,
         },
         "block1_surface_policy": "faithful_current_state",
-        "block2_surface_policy": "faithful_current_state",
         "block3_surface_policy": "deferred_non_authority_pending_clean_bridge_spec",
         "historical_proxy_output_policy": (
             "proxy-history Block 0 artifacts are rejected and must not be relabeled as canonical rerun evidence"

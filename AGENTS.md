@@ -19,10 +19,11 @@ Use the same source-of-truth order already established in the repository:
 2. `docs/decisions.md`, `docs/api_specs.md`, `docs/data_contracts.md`,
    `docs/overall_validation_plan.md`, and `docs/constraints.md`
 3. `docs/state.md`
-4. `docs/task_A_rewiring_plan.md`
-5. `docs/task_A_spec.md`
-6. `docs/task_A_block3_redesign_v1_1.md`
-7. `docs/task_A_result.md` and `tasks/task_A/README.md`
+4. `docs/task_A/spec.md`
+5. `docs/task_A/block3/scientific_contract.md` and stage docs under
+   `docs/task_A/block3/`
+6. `docs/task_A/block3/refactor_contract_map.md` for migration mapping only
+7. `docs/task_A/result.md` and `tasks/task_A/README.md`
 8. `history/docs/` and `tasks/task_A/result_packets/` as historical/proxy
    reference only
 
@@ -61,6 +62,26 @@ Every non-trivial change should follow this lifecycle:
 - `Verify`: run the narrowest command that proves the change
 - `Sync docs/manifests`: update affected runbooks, packet docs, or README entry
   surfaces before claiming completion
+
+## Engineering Trials And Formal Development
+
+- For non-trivial workflow expansion, first classify the requested work as an
+  engineering trial or formal development before planning execution.
+- Treat unclear early-stage work as an engineering trial only when it does not
+  require new public workflow commands, runtime guarantees, stable APIs, or
+  changes to frozen or derived scientific contracts.
+- During engineering trials, prefer documentation-first reading, minimum
+  necessary integration points, and small staged experiments. Record
+  assumptions, observed behavior, and unresolved risks. Treat unknowns as
+  blockers only when they affect the stated trial goal or cross a repository
+  stop-and-ask boundary.
+- During formal development, define preconditions, environment probes,
+  validation gates, acceptance checks, and required docs/manifests sync before
+  claiming executable support.
+- Keep trial findings, prototype behavior, runtime support, production
+  readiness, stable architecture claims, and stable API claims clearly separate.
+- A successful trial may inform formal development, but does not by itself
+  establish stable APIs, supported runtime behavior, or production readiness.
 
 ## Allowed commands
 

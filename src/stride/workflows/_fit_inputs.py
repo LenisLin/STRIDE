@@ -59,7 +59,7 @@ def _resolve_ordered_group_labels(
     extras = [label for label in observed_labels if label not in declared_order]
     if extras:
         raise ContractError(
-            "Observed group labels are missing from STRIDEFitConfig.timepoint_order: "
+            "Observed group labels are missing from TaskConfig.timepoint_order: "
             f"{tuple(extras)}"
         )
 

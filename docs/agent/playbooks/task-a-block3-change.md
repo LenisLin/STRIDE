@@ -2,23 +2,23 @@
 
 ## Trigger
 
-Use this playbook when a change touches Block 3 authority wording, deferred
-`run_block3` / `review_block3` wrappers, Task A Block 3 docs, or any Task A
+Use this playbook when a change touches Block 3 authority wording, the
+internal `python -m tasks.task_A.block3` CLI, Task A Block 3 docs, or any Task A
 result-packet surface that mentions Block 3.
 
 ## Read First
 
 - [`../../../tasks/task_A/AGENTS.md`](../../../tasks/task_A/AGENTS.md)
-- [`../../../docs/task_A_spec.md`](../../../docs/task_A_spec.md)
-- [`../../../docs/task_A_block3_redesign_v1_1.md`](../../../docs/task_A_block3_redesign_v1_1.md)
+- [`../../../docs/task_A/spec.md`](../../../docs/task_A/spec.md)
+- [`../../../docs/task_A/block3/scientific_contract.md`](../../../docs/task_A/block3/scientific_contract.md)
+- [`../../../docs/task_A/block3/refactor_contract_map.md`](../../../docs/task_A/block3/refactor_contract_map.md)
 - [`../../../tasks/task_A/README.md`](../../../tasks/task_A/README.md)
 - [`../../../tasks/task_A/block3_execution_runbook.md`](../../../tasks/task_A/block3_execution_runbook.md)
 
 ## Allowed Commands
 
 - `rg` and `sed` against `tasks/task_A/`, `docs/`, and `tests/`
-- targeted `pytest -q tests/test_task_a_block3_deferred_surfaces.py`
-- targeted `pytest -q tests/test_task_a_canonical_step3_review.py`
+- targeted `pytest -q tests/test_task_a_block3_contract_migration.py`
 - targeted `pytest -q tests/test_task_a_result_packet.py`
 - targeted `pytest -q tests/test_task_a_design_freeze.py`
 
@@ -37,6 +37,11 @@ result-packet surface that mentions Block 3.
   changed.
 - Sync result-packet or review-surface docs when file names, packet-local
   semantics, or authority wording changed.
+- Live Block 3 routing is Stage0-only and cost-only. Do not reintroduce
+  Block1/2 manifest execution, motif-probe relation support, or diagnostic
+  matrix routes as live paths.
+- `3C-1`, `3C-2`, and `3C-3` use the shared multi-FOV hidden
+  `(A_p, d_p, e_p)` truth and full refits for both reference and ablation arms.
 
 ## Stop And Ask The User
 

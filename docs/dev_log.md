@@ -5,7 +5,7 @@ surface. For the current scientific framing use `README.md`,
 `docs/index.md`, and `docs/method_overview.md`; for live contracts use
 `docs/state.md`, `docs/decisions.md`, `docs/api_specs.md`,
 `docs/data_contracts.md`, and `docs/overall_validation_plan.md`; for Task A
-use `docs/task_A_spec.md`.
+use `docs/task_A/spec.md`.
 
 ## Unreleased
 - feat(task-a-block0): release cache-backed Block 0 exchangeability calibration surface and result-packet intake

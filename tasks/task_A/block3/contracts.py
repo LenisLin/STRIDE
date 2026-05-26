@@ -6,8 +6,8 @@ Role:
     review-surface writing.
 
 Authority anchors:
-    - docs/task_A_spec.md §4.5.2, §4.5.5, §4.5.6, §5.1 Phase 3
-    - docs/task_A_block3_redesign_v1_1.md §4.1-§4.4, §5.5, §5.6
+    - docs/task_A/spec.md §4.5.2, §4.5.5, §4.5.6, §5.1 Phase 3
+    - docs/task_A/block3/scientific_contract.md §4.1-§4.4, §5.5, §5.6
 
 Local boundary:
     - This module freezes identifiers, typed specs, and metric-status rules for
@@ -25,7 +25,7 @@ Why this module exists:
     Execution, registry, raw bundle, and review modules all need the same
     vocabulary and row types. Centralizing them here keeps the routing layer
     consistent and makes the split between non-method-bearing `3A` rows and the
-    method-bearing `3B`/`3C-1`/`3C-2` rows explicit in one place.
+    method-bearing `3B`/`3C-*` rows explicit in one place.
 """
 from __future__ import annotations
 
@@ -43,8 +43,9 @@ class Block3SubexperimentId(str, Enum):
     A_BENCHMARK = "3B-1"
     DE_BENCHMARK = "3B-2"
     ABLATION_STUDY = "3C"
-    OPEN_MODULE_ABLATION = "3C-1"
-    COHORT_MODULE_ABLATION = "3C-2"
+    CONSISTENCY_ABLATION = "3C-1"
+    GEOMETRY_ABLATION = "3C-2"
+    RECURRENCE_ABLATION = "3C-3"
 
 
 class Block3MethodName(str, Enum):
@@ -55,8 +56,9 @@ class Block3MethodName(str, Enum):
     UOT_BASELINE = "uot_baseline"
     PARTIAL_OT_BASELINE = "partial_ot_baseline"
     DIAGONAL_TRANSPORT_BASELINE = "diagonal_transport_baseline"
-    OPEN_CHANNEL_ABLATION = "open_channel_ablation"
-    COHORT_ABLATION = "cohort_ablation"
+    RECURRENCE_ABLATION = "recurrence_ablation"
+    GEOMETRY_ABLATION = "geometry_ablation"
+    CONSISTENCY_ABLATION = "consistency_ablation"
 
 
 class Block3MethodClass(str, Enum):
@@ -70,6 +72,16 @@ class Block3MethodClass(str, Enum):
 class Block3MetricName(str, Enum):
     """Frozen metric names reported across the live Block 3 sections."""
 
+    F_L1_TOTAL = "F_L1_total"
+    G_L1_TOTAL = "g_L1_total"
+    E_L1_TOTAL = "e_L1_total"
+    OFFDIAG_MASS_ABS_ERROR = "offdiag_mass_abs_error"
+    DEPLETION_MASS_ABS_ERROR = "depletion_mass_abs_error"
+    EMERGENCE_MASS_ABS_ERROR = "emergence_mass_abs_error"
+    OFFDIAG_RATIO = "offdiag_ratio"
+    DEPLETION_CAPTURE = "depletion_capture"
+    EMERGENCE_CAPTURE = "emergence_capture"
+    ENDPOINT_Y_MAE = "endpoint_y_MAE"
     A_MAE_ACTIVE = "A_MAE_active"
     A_MSE_ACTIVE = "A_MSE_active"
     TARGET_RECALL_AT_K = "target_recall_at_k"
@@ -98,6 +110,9 @@ class MetricRole(str, Enum):
 
     GENERATOR_VALIDATION = "generator_validation"
     STABILITY_SUMMARY = "stability_summary"
+    PRIMARY_MASS = "primary_mass"
+    PRIMARY_RATIO = "primary_ratio"
+    SECONDARY_ENDPOINT = "secondary_endpoint"
     RELATION_RECOVERY = "relation_recovery"
     OPEN_PROFILE_RECOVERY = "open_profile_recovery"
     OPEN_SUPPORT_RECOVERY = "open_support_recovery"
@@ -198,7 +213,7 @@ class Block3GeneratorObjectScoreRow:
 
         Purpose:
             Flatten the typed generator-object score row into the raw artifact
-            schema used by `3a_object_scores`.
+            schema used by `generator_validation_object_scores`.
 
         Inputs / Returns:
             Uses the current dataclass fields and returns a record that preserves
@@ -241,7 +256,7 @@ class Block3GeneratorStabilityRow:
 
         Purpose:
             Flatten the rerun-stability row into the raw artifact schema used by
-            `3a_rerun_stability`.
+            `generator_validation_rerun_stability`.
 
         Inputs / Returns:
             Uses the current dataclass fields and returns a record that adds the
@@ -391,7 +406,7 @@ class Block3GeneratorReviewRow:
 
         Purpose:
             Flatten a generator-validation review row into the schema used by
-            `3a_review_surface`.
+            `generator_validation_review_surface`.
 
         Inputs / Returns:
             Uses the current dataclass fields and returns a record that preserves
@@ -446,8 +461,8 @@ class Block3SectionReviewRow:
 
         Purpose:
             Flatten one method-bearing summary row into the schema used by
-            `3b1_review_surface`, `3b2_review_surface`, `3c1_review_surface`,
-            or `3c2_review_surface`.
+            semantic Block 3 review-surface artifact
+            surface.
 
         Inputs / Returns:
             Uses the current dataclass fields and returns a record that keeps the

@@ -3,7 +3,7 @@ requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "slotar"
+name = "stride"
 version = "0.1.0"
 description = "STRIDE longitudinal spatial remodeling analysis for patient-level open remodeling relations"
 readme = "README.md"
@@ -37,7 +37,7 @@ package-dir = { "" = "src" }
 
 [tool.setuptools.packages.find]
 where = ["src"]
-include = ["slotar", "slotar.*", "stride", "stride.*"]
+include = ["stride", "stride.*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

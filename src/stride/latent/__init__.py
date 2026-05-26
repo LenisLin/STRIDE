@@ -1,46 +1,26 @@
-"""Latent relation and recurrence surfaces for STRIDE."""
+"""Latent relation surfaces for STRIDE."""
 from __future__ import annotations
 
 from .emergence import EmergenceComponent
 from .operators import (
+    CohortRelation,
     ContinuityOperator,
     DepletionComponent,
     PatientRelation,
     PatientRelationAudit,
     initialize_patient_relation,
+    validate_cohort_relation,
     validate_patient_relation,
-)
-from .recurrence import (
-    PatientRecurrenceEmbedding,
-    RecurrenceConfig,
-    RecurrenceFamily,
-    RecurrenceParameters,
-    RecurrenceResult,
-    build_deferred_recurrence_result,
-    build_recurrence_result,
-    estimate_recurrence,
-    summarize_recurrence_support,
-    validate_recurrence_inputs,
-    vectorize_patient_relation,
 )
 
 __all__ = [
+    "CohortRelation",
     "ContinuityOperator",
     "DepletionComponent",
     "EmergenceComponent",
-    "PatientRecurrenceEmbedding",
     "PatientRelation",
     "PatientRelationAudit",
-    "RecurrenceConfig",
-    "RecurrenceFamily",
-    "RecurrenceParameters",
-    "RecurrenceResult",
-    "build_deferred_recurrence_result",
-    "build_recurrence_result",
-    "estimate_recurrence",
     "initialize_patient_relation",
-    "summarize_recurrence_support",
+    "validate_cohort_relation",
     "validate_patient_relation",
-    "validate_recurrence_inputs",
-    "vectorize_patient_relation",
 ]

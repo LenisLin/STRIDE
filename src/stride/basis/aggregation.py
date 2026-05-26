@@ -33,7 +33,7 @@ class CommunityAggregationConfig:
 
 
 def _build_identity_scaler_payload(feature_names: list[str]) -> dict[str, np.ndarray | list[str]]:
-    """Compatibility payload for legacy shims that still expect scaler metadata."""
+    """Optional payload for routes that still expect scaler metadata."""
     n_features = len(feature_names)
     return {
         "feature_names": feature_names,

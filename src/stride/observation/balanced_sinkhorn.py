@@ -1,8 +1,8 @@
 """Torch-native balanced Sinkhorn divergence observation operator."""
 from __future__ import annotations
 
-import math
 import hashlib
+import math
 from collections.abc import Mapping, MutableMapping
 from dataclasses import dataclass, field
 from typing import Any
@@ -20,7 +20,7 @@ except ImportError:  # pragma: no cover
 
 BALANCED_SINKHORN_OPERATOR_VERSION = "D_obs^BalancedSinkhornDivergence-v1"
 CANONICAL_EPSILON_SCHEDULE = (0.5, 0.2, 0.1)
-CANONICAL_MAX_ITER = 1000
+CANONICAL_MAX_ITER = 100
 CANONICAL_TOL = 1e-6
 CANONICAL_WARNING_TOL = 1e-4
 SMALL_NEGATIVE_TOL = 1e-10
@@ -202,12 +202,29 @@ class _BatchedSinkhornCostComputation:
 
 
 @dataclass(frozen=True)
+class _BatchedSinkhornValueComputation:
+    value: torch.Tensor
+    final_updates: torch.Tensor
+    iterations: torch.Tensor
+    max_iter_reached: torch.Tensor
+    row_sums: torch.Tensor
+    column_sums: torch.Tensor
+
+
+@dataclass(frozen=True)
 class _DivergenceComputation:
     value: torch.Tensor
     warnings: tuple[str, ...]
     final_updates: tuple[float, ...]
     iterations: tuple[int, ...]
     max_iter_reached: tuple[bool, ...]
+    cross_row_sums: torch.Tensor
+    cross_column_sums: torch.Tensor
+
+
+@dataclass(frozen=True)
+class _DivergenceValueComputation:
+    value: torch.Tensor
     cross_row_sums: torch.Tensor
     cross_column_sums: torch.Tensor
 
@@ -220,6 +237,13 @@ class _GroundCostComputation:
     final_updates: tuple[float, ...]
     iterations: tuple[int, ...]
     max_iter_reached: tuple[bool, ...]
+
+
+@dataclass(frozen=True)
+class _GroundCostValueComputation:
+    value: torch.Tensor
+    clipped_negative: bool
+    clipped_mask: torch.Tensor
 
 
 def _require_torch() -> Any:
@@ -383,152 +407,39 @@ def _sinkhorn_transport_cost(
     config: BalancedSinkhornDivergenceConfig,
     label: str,
 ) -> _SinkhornCostComputation:
-    """Return balanced entropic OT under the final epsilon stage.
-
-    Convention: this implementation reports the primal regularized objective
-    ``<P, C> + epsilon * sum_ij P_ij * (log(P_ij) - 1)`` for the final
-    epsilon in the schedule. The additive ``-epsilon`` term cancels in the
-    debiased Sinkhorn divergence, but keeping the full convention here makes
-    the low-level OT value explicit and auditable.
-    """
-    torch_module = _require_torch()
+    """Return balanced entropic OT under the final epsilon stage."""
     if left_mass.ndim != 1 or right_mass.ndim != 1:
         raise ContractError(f"{label} Sinkhorn masses must be 1D")
     if cost_matrix.shape != (left_mass.shape[0], right_mass.shape[0]):
         raise ContractError(f"{label} cost matrix shape must match Sinkhorn masses")
-
-    left_value = left_mass.detach()
-    right_value = right_mass.detach()
-    cost_value = cost_matrix.detach()
-    log_left = _safe_log_distribution(left_value)
-    log_right = _safe_log_distribution(right_value)
-    left_positive = left_value > 0.0
-    right_positive = right_value > 0.0
-    neg_inf_left = torch_module.full_like(left_value, -torch_module.inf)
-    neg_inf_right = torch_module.full_like(right_value, -torch_module.inf)
-
-    f = torch_module.zeros_like(left_value)
-    g = torch_module.zeros_like(right_value)
-    warnings: list[str] = []
-    final_updates: list[float] = []
-    iterations: list[int] = []
-    max_iter_reached: list[bool] = []
-
-    with torch_module.no_grad():
-        for epsilon in epsilon_schedule:
-            eps = float(epsilon)
-            stage_reached_max_iter = True
-            final_update = float("inf")
-            current_iteration = 0
-
-            for iteration in range(1, config.max_iter + 1):
-                current_iteration = iteration
-                previous_f = f
-                previous_g = g
-
-                masked_g = torch_module.where(right_positive, g, neg_inf_right)
-                proposed_f = eps * (
-                    log_left
-                    - torch_module.logsumexp(
-                        (masked_g.unsqueeze(0) - cost_value) / eps,
-                        dim=1,
-                    )
-                )
-                f = torch_module.where(left_positive, proposed_f, torch_module.zeros_like(proposed_f))
-
-                masked_f = torch_module.where(left_positive, f, neg_inf_left)
-                proposed_g = eps * (
-                    log_right
-                    - torch_module.logsumexp(
-                        (masked_f.unsqueeze(1) - cost_value) / eps,
-                        dim=0,
-                    )
-                )
-                g = torch_module.where(right_positive, proposed_g, torch_module.zeros_like(proposed_g))
-
-                update = torch_module.maximum(
-                    _max_update(f, previous_f, left_positive),
-                    _max_update(g, previous_g, right_positive),
-                )
-                potential_update = float(update.detach().cpu())
-                if not math.isfinite(potential_update):
-                    raise ContractError(f"{label} Sinkhorn iteration produced a non-finite update")
-                residual = _marginal_residual(
-                    f=f,
-                    g=g,
-                    cost_matrix=cost_value,
-                    epsilon=eps,
-                    left_mass=left_value,
-                    right_mass=right_value,
-                    left_positive=left_positive,
-                    right_positive=right_positive,
-                )
-                final_update = float(residual.detach().cpu())
-                if not math.isfinite(final_update):
-                    raise ContractError(f"{label} Sinkhorn iteration produced a non-finite residual")
-                if final_update <= config.tol:
-                    stage_reached_max_iter = False
-                    break
-
-            if stage_reached_max_iter:
-                if final_update <= config.warning_tol:
-                    warnings.append(
-                        f"{label} Sinkhorn epsilon={eps:g} reached max_iter with update={final_update:g}"
-                    )
-                else:
-                    raise ContractError(
-                        f"{label} Sinkhorn epsilon={eps:g} failed to converge: "
-                        f"final update {final_update:g} exceeds warning_tol {config.warning_tol:g}"
-                    )
-
-            iterations.append(current_iteration)
-            final_updates.append(final_update)
-            max_iter_reached.append(stage_reached_max_iter)
-
-    final_epsilon = float(epsilon_schedule[-1])
-    masked_f = torch_module.where(left_positive, f, neg_inf_left)
-    masked_g = torch_module.where(right_positive, g, neg_inf_right)
-    log_plan = (masked_f.unsqueeze(1) + masked_g.unsqueeze(0) - cost_value) / final_epsilon
-    plan = torch_module.exp(log_plan)
-    positive_plan = plan > 0.0
-    entropy = torch_module.zeros((), dtype=plan.dtype, device=plan.device)
-    if _ensure_bool(positive_plan.any()):
-        entropy = torch_module.sum(
-            plan[positive_plan] * (torch_module.log(plan[positive_plan]) - 1.0)
-        )
-    primal_value = torch_module.sum(plan * cost_value) + final_epsilon * entropy
-    value = _transport_value_with_envelope_gradient(
-        primal_value=primal_value,
-        plan=plan,
-        f=f,
-        g=g,
-        left_mass=left_mass,
-        right_mass=right_mass,
-        cost_matrix=cost_matrix,
+    transport = _batched_sinkhorn_transport_cost(
+        left_mass.unsqueeze(0),
+        right_mass.unsqueeze(0),
+        cost_matrix.unsqueeze(0),
+        epsilon_schedule=epsilon_schedule,
+        config=config,
+        labels=(label,),
     )
-    if not _ensure_bool(torch_module.isfinite(value)):
-        raise ContractError(f"{label} Sinkhorn transport cost is non-finite")
     return _SinkhornCostComputation(
-        value=value,
-        warnings=tuple(warnings),
-        final_updates=tuple(final_updates),
-        iterations=tuple(iterations),
-        max_iter_reached=tuple(max_iter_reached),
-        row_sums=torch_module.sum(plan, dim=1),
-        column_sums=torch_module.sum(plan, dim=0),
+        value=transport.value[0],
+        warnings=transport.warnings,
+        final_updates=transport.final_updates,
+        iterations=transport.iterations,
+        max_iter_reached=transport.max_iter_reached,
+        row_sums=transport.row_sums[0],
+        column_sums=transport.column_sums[0],
     )
 
 
-def _batched_sinkhorn_transport_cost(
+def _batched_sinkhorn_transport_value(
     left_mass: torch.Tensor,
     right_mass: torch.Tensor,
     cost_matrix: torch.Tensor,
     *,
     epsilon_schedule: tuple[float, ...],
     config: BalancedSinkhornDivergenceConfig,
-    labels: tuple[str, ...],
-) -> _BatchedSinkhornCostComputation:
-    """Vectorized batch of independent balanced entropic OT computations."""
+) -> _BatchedSinkhornValueComputation:
+    """Vectorized balanced entropic OT values without Python diagnostics."""
     torch_module = _require_torch()
     if left_mass.ndim != 2 or right_mass.ndim != 2 or cost_matrix.ndim != 3:
         raise ContractError("batched Sinkhorn masses/costs must be [B,N], [B,M], [B,N,M]")
@@ -537,8 +448,6 @@ def _batched_sinkhorn_transport_cost(
         raise ContractError("batched Sinkhorn requires at least one transport item")
     if right_mass.shape[0] != batch_size or cost_matrix.shape[0] != batch_size:
         raise ContractError("batched Sinkhorn batch dimensions must align")
-    if len(labels) != batch_size:
-        raise ContractError("batched Sinkhorn labels must align to the batch dimension")
     if cost_matrix.shape[1:] != (left_mass.shape[1], right_mass.shape[1]):
         raise ContractError("batched Sinkhorn cost matrix shape must match masses")
 
@@ -571,21 +480,39 @@ def _batched_sinkhorn_transport_cost(
         dtype=torch_module.bool,
         device=left_value.device,
     )
-    warnings: list[str] = []
 
     with torch_module.no_grad():
         for stage_index, epsilon in enumerate(epsilon_schedule):
             eps = float(epsilon)
             active = torch_module.ones(batch_size, dtype=torch_module.bool, device=left_value.device)
+            first_converged_residual = torch_module.full(
+                (batch_size,),
+                torch_module.inf,
+                dtype=left_value.dtype,
+                device=left_value.device,
+            )
+            first_converged_iteration = torch_module.zeros(
+                (batch_size,),
+                dtype=torch_module.int64,
+                device=left_value.device,
+            )
             last_residual = torch_module.full(
                 (batch_size,),
                 torch_module.inf,
                 dtype=left_value.dtype,
                 device=left_value.device,
             )
-            current_iteration = 0
+            saw_nonfinite_update = torch_module.zeros(
+                (batch_size,),
+                dtype=torch_module.bool,
+                device=left_value.device,
+            )
+            saw_nonfinite_residual = torch_module.zeros(
+                (batch_size,),
+                dtype=torch_module.bool,
+                device=left_value.device,
+            )
             for iteration in range(1, int(config.max_iter) + 1):
-                current_iteration = iteration
                 masked_g = torch_module.where(right_positive, g, neg_inf_right)
                 proposed_f = eps * (
                     log_left - torch_module.logsumexp(
@@ -594,6 +521,7 @@ def _batched_sinkhorn_transport_cost(
                     )
                 )
                 next_f = torch_module.where(left_positive, proposed_f, torch_module.zeros_like(proposed_f))
+                saw_nonfinite_update = saw_nonfinite_update | ~torch_module.isfinite(next_f).all(dim=1)
                 active_left = active.unsqueeze(1)
                 f = torch_module.where(active_left, next_f, f)
 
@@ -605,6 +533,7 @@ def _batched_sinkhorn_transport_cost(
                     )
                 )
                 next_g = torch_module.where(right_positive, proposed_g, torch_module.zeros_like(proposed_g))
+                saw_nonfinite_update = saw_nonfinite_update | ~torch_module.isfinite(next_g).all(dim=1)
                 active_right = active.unsqueeze(1)
                 g = torch_module.where(active_right, next_g, g)
 
@@ -615,56 +544,37 @@ def _batched_sinkhorn_transport_cost(
                 row_residual = torch_module.amax(torch_module.abs(plan.sum(dim=2) - left_value), dim=1)
                 column_residual = torch_module.amax(torch_module.abs(plan.sum(dim=1) - right_value), dim=1)
                 residual = torch_module.maximum(row_residual, column_residual)
-                if not _ensure_bool(torch_module.isfinite(residual).all()):
-                    raise ContractError("batched Sinkhorn iteration produced a non-finite residual")
+                saw_nonfinite_residual = saw_nonfinite_residual | ~torch_module.isfinite(residual)
                 last_residual = torch_module.where(active, residual, last_residual)
 
-                converged_now = active & (residual <= float(config.tol))
-                if _ensure_bool(converged_now.any()):
-                    final_updates_by_item[:, stage_index] = torch_module.where(
-                        converged_now,
-                        residual,
-                        final_updates_by_item[:, stage_index],
-                    )
-                    iterations_by_item[:, stage_index] = torch_module.where(
-                        converged_now,
-                        torch_module.full_like(iterations_by_item[:, stage_index], iteration),
-                        iterations_by_item[:, stage_index],
-                    )
-                    active = active & ~converged_now
-                if not _ensure_bool(active.any()):
-                    break
+                converged_now = active & torch_module.isfinite(residual) & (residual <= float(config.tol))
+                first_converged_residual = torch_module.where(
+                    converged_now,
+                    residual,
+                    first_converged_residual,
+                )
+                first_converged_iteration = torch_module.where(
+                    converged_now,
+                    torch_module.full_like(first_converged_iteration, iteration),
+                    first_converged_iteration,
+                )
+                active = active & ~converged_now
 
-            if _ensure_bool(active.any()):
-                active_updates = torch_module.where(active, last_residual, torch_module.zeros_like(last_residual))
-                too_large = active & (last_residual > float(config.warning_tol))
-                if _ensure_bool(too_large.any()):
-                    first_bad = int(torch_module.nonzero(too_large, as_tuple=False)[0].detach().cpu().item())
-                    bad_update = float(last_residual[first_bad].detach().cpu())
-                    raise ContractError(
-                        f"{labels[first_bad]} Sinkhorn epsilon={eps:g} failed to converge: "
-                        f"final update {bad_update:g} exceeds warning_tol {float(config.warning_tol):g}"
-                    )
-                warning_items = tuple(
-                    int(item)
-                    for item in torch_module.nonzero(active, as_tuple=False).reshape(-1).detach().cpu().tolist()
-                )
-                for item_index in warning_items:
-                    warnings.append(
-                        f"{labels[item_index]} Sinkhorn epsilon={eps:g} reached max_iter "
-                        f"with update={float(last_residual[item_index].detach().cpu()):g}"
-                    )
-                final_updates_by_item[:, stage_index] = torch_module.where(
-                    active,
-                    active_updates,
-                    final_updates_by_item[:, stage_index],
-                )
-                iterations_by_item[:, stage_index] = torch_module.where(
-                    active,
-                    torch_module.full_like(iterations_by_item[:, stage_index], current_iteration),
-                    iterations_by_item[:, stage_index],
-                )
-                max_iter_by_item[:, stage_index] = active
+            if _ensure_bool(saw_nonfinite_update.any()):
+                raise ContractError("batched Sinkhorn iteration produced a non-finite update")
+            if _ensure_bool(saw_nonfinite_residual.any()):
+                raise ContractError("batched Sinkhorn iteration produced a non-finite residual")
+
+            stage_final_updates = torch_module.where(active, last_residual, first_converged_residual)
+            stage_iterations = torch_module.where(
+                active,
+                torch_module.full_like(first_converged_iteration, int(config.max_iter)),
+                first_converged_iteration,
+            )
+            stage_max_iter = active
+            final_updates_by_item[:, stage_index] = stage_final_updates
+            iterations_by_item[:, stage_index] = stage_iterations
+            max_iter_by_item[:, stage_index] = stage_max_iter
 
     final_epsilon = float(epsilon_schedule[-1])
     masked_f = torch_module.where(left_positive, f, neg_inf_left)
@@ -690,22 +600,73 @@ def _batched_sinkhorn_transport_cost(
     if not _ensure_bool(torch_module.isfinite(value).all()):
         raise ContractError("batched Sinkhorn transport cost is non-finite")
 
-    final_updates: list[float] = []
-    iterations: list[int] = []
-    max_iter_reached: list[bool] = []
-    for item_index in range(batch_size):
-        for stage_index in range(n_stages):
-            final_updates.append(float(final_updates_by_item[item_index, stage_index].detach().cpu()))
-            iterations.append(int(iterations_by_item[item_index, stage_index].detach().cpu()))
-            max_iter_reached.append(bool(max_iter_by_item[item_index, stage_index].detach().cpu()))
-    return _BatchedSinkhornCostComputation(
+    return _BatchedSinkhornValueComputation(
         value=value,
-        warnings=tuple(warnings),
-        final_updates=tuple(final_updates),
-        iterations=tuple(iterations),
-        max_iter_reached=tuple(max_iter_reached),
+        final_updates=final_updates_by_item,
+        iterations=iterations_by_item,
+        max_iter_reached=max_iter_by_item,
         row_sums=plan.sum(dim=2),
         column_sums=plan.sum(dim=1),
+    )
+
+
+def _batched_sinkhorn_transport_cost(
+    left_mass: torch.Tensor,
+    right_mass: torch.Tensor,
+    cost_matrix: torch.Tensor,
+    *,
+    epsilon_schedule: tuple[float, ...],
+    config: BalancedSinkhornDivergenceConfig,
+    labels: tuple[str, ...],
+) -> _BatchedSinkhornCostComputation:
+    """Vectorized batch of independent balanced entropic OT computations."""
+    torch_module = _require_torch()
+    batch_size = int(left_mass.shape[0]) if left_mass.ndim > 0 else 0
+    if len(labels) != batch_size:
+        raise ContractError("batched Sinkhorn labels must align to the batch dimension")
+
+    transport = _batched_sinkhorn_transport_value(
+        left_mass,
+        right_mass,
+        cost_matrix,
+        epsilon_schedule=epsilon_schedule,
+        config=config,
+    )
+    warnings: list[str] = []
+    final_updates_by_item = transport.final_updates
+    max_iter_by_item = transport.max_iter_reached
+    for stage_index, epsilon in enumerate(epsilon_schedule):
+        eps = float(epsilon)
+        stage_max_iter = max_iter_by_item[:, stage_index]
+        stage_final_updates = final_updates_by_item[:, stage_index]
+        warning_items = tuple(
+            int(item)
+            for item in torch_module.nonzero(stage_max_iter, as_tuple=False).reshape(-1).detach().cpu().tolist()
+        )
+        for item_index in warning_items:
+            final_update = float(stage_final_updates[item_index].detach().cpu())
+            warning_text = (
+                f"{labels[item_index]} Sinkhorn epsilon={eps:g} reached max_iter "
+                f"with update={final_update:g}"
+            )
+            if final_update > float(config.warning_tol):
+                warning_text = (
+                    f"{warning_text}; final update exceeds "
+                    f"warning_tol {float(config.warning_tol):g}"
+                )
+            warnings.append(warning_text)
+
+    final_updates_tensor = transport.final_updates.detach().cpu().reshape(-1)
+    iterations_tensor = transport.iterations.detach().cpu().reshape(-1)
+    max_iter_tensor = transport.max_iter_reached.detach().cpu().reshape(-1)
+    return _BatchedSinkhornCostComputation(
+        value=transport.value,
+        warnings=tuple(warnings),
+        final_updates=tuple(float(item) for item in final_updates_tensor.tolist()),
+        iterations=tuple(int(item) for item in iterations_tensor.tolist()),
+        max_iter_reached=tuple(bool(item) for item in max_iter_tensor.tolist()),
+        row_sums=transport.row_sums,
+        column_sums=transport.column_sums,
     )
 
 
@@ -785,6 +746,126 @@ def _sinkhorn_divergence(
         max_iter_reached=max_iter_reached,
         cross_row_sums=cross_forward.row_sums,
         cross_column_sums=cross_forward.column_sums,
+    )
+
+
+def _sinkhorn_divergence_value(
+    left_mass: torch.Tensor,
+    right_mass: torch.Tensor,
+    cross_cost: torch.Tensor,
+    left_self_cost: torch.Tensor,
+    right_self_cost: torch.Tensor,
+    *,
+    epsilon_schedule: tuple[float, ...],
+    config: BalancedSinkhornDivergenceConfig,
+) -> _DivergenceValueComputation:
+    """Return Sinkhorn divergence value without Python convergence diagnostics."""
+    if left_mass.ndim != 1 or right_mass.ndim != 1:
+        raise ContractError("Sinkhorn divergence masses must be 1D")
+    if cross_cost.shape != (left_mass.shape[0], right_mass.shape[0]):
+        raise ContractError("cross cost matrix shape must match Sinkhorn masses")
+    if left_self_cost.shape != (left_mass.shape[0], left_mass.shape[0]):
+        raise ContractError("left self cost matrix shape must match left Sinkhorn mass")
+    if right_self_cost.shape != (right_mass.shape[0], right_mass.shape[0]):
+        raise ContractError("right self cost matrix shape must match right Sinkhorn mass")
+
+    cross_forward = _batched_sinkhorn_transport_value(
+        left_mass.unsqueeze(0),
+        right_mass.unsqueeze(0),
+        cross_cost.unsqueeze(0),
+        epsilon_schedule=epsilon_schedule,
+        config=config,
+    )
+    cross_reverse = _batched_sinkhorn_transport_value(
+        right_mass.unsqueeze(0),
+        left_mass.unsqueeze(0),
+        cross_cost.T.unsqueeze(0),
+        epsilon_schedule=epsilon_schedule,
+        config=config,
+    )
+    left_self = _batched_sinkhorn_transport_value(
+        left_mass.unsqueeze(0),
+        left_mass.unsqueeze(0),
+        left_self_cost.unsqueeze(0),
+        epsilon_schedule=epsilon_schedule,
+        config=config,
+    )
+    right_self = _batched_sinkhorn_transport_value(
+        right_mass.unsqueeze(0),
+        right_mass.unsqueeze(0),
+        right_self_cost.unsqueeze(0),
+        epsilon_schedule=epsilon_schedule,
+        config=config,
+    )
+    return _DivergenceValueComputation(
+        value=0.5 * (cross_forward.value[0] + cross_reverse.value[0])
+        - 0.5 * left_self.value[0]
+        - 0.5 * right_self.value[0],
+        cross_row_sums=cross_forward.row_sums[0],
+        cross_column_sums=cross_forward.column_sums[0],
+    )
+
+
+def _batched_sinkhorn_divergence_value(
+    left_mass: torch.Tensor,
+    right_mass: torch.Tensor,
+    cross_cost: torch.Tensor,
+    left_self_cost: torch.Tensor,
+    right_self_cost: torch.Tensor,
+    *,
+    epsilon_schedule: tuple[float, ...],
+    config: BalancedSinkhornDivergenceConfig,
+) -> _BatchedSinkhornValueComputation:
+    """Return batched Sinkhorn divergence values for same-shape cost tensors."""
+    if left_mass.ndim != 2 or right_mass.ndim != 2:
+        raise ContractError("batched Sinkhorn divergence masses must be [B,N] and [B,M]")
+    batch_size = int(left_mass.shape[0])
+    if batch_size <= 0 or int(right_mass.shape[0]) != batch_size:
+        raise ContractError("batched Sinkhorn divergence batch dimensions must align")
+    if cross_cost.shape != (batch_size, left_mass.shape[1], right_mass.shape[1]):
+        raise ContractError("batched cross cost shape must match Sinkhorn masses")
+    if left_self_cost.shape != (batch_size, left_mass.shape[1], left_mass.shape[1]):
+        raise ContractError("batched left self cost shape must match left Sinkhorn mass")
+    if right_self_cost.shape != (batch_size, right_mass.shape[1], right_mass.shape[1]):
+        raise ContractError("batched right self cost shape must match right Sinkhorn mass")
+
+    cross_forward = _batched_sinkhorn_transport_value(
+        left_mass,
+        right_mass,
+        cross_cost,
+        epsilon_schedule=epsilon_schedule,
+        config=config,
+    )
+    cross_reverse = _batched_sinkhorn_transport_value(
+        right_mass,
+        left_mass,
+        cross_cost.transpose(1, 2),
+        epsilon_schedule=epsilon_schedule,
+        config=config,
+    )
+    left_self = _batched_sinkhorn_transport_value(
+        left_mass,
+        left_mass,
+        left_self_cost,
+        epsilon_schedule=epsilon_schedule,
+        config=config,
+    )
+    right_self = _batched_sinkhorn_transport_value(
+        right_mass,
+        right_mass,
+        right_self_cost,
+        epsilon_schedule=epsilon_schedule,
+        config=config,
+    )
+    return _BatchedSinkhornValueComputation(
+        value=0.5 * (cross_forward.value + cross_reverse.value)
+        - 0.5 * left_self.value
+        - 0.5 * right_self.value,
+        final_updates=cross_forward.final_updates,
+        iterations=cross_forward.iterations,
+        max_iter_reached=cross_forward.max_iter_reached,
+        row_sums=cross_forward.row_sums,
+        column_sums=cross_forward.column_sums,
     )
 
 
@@ -955,6 +1036,128 @@ def _pairwise_composition_ground_cost_batched(
     )
 
 
+def _pairwise_composition_ground_cost_value(
+    left: torch.Tensor,
+    right: torch.Tensor,
+    C_norm: torch.Tensor,
+    *,
+    config: BalancedSinkhornDivergenceConfig,
+    label: str,
+) -> _GroundCostValueComputation:
+    """Return FOV-pair composition ground costs without Python diagnostics."""
+    torch_module = _require_torch()
+    if left.ndim != 2 or right.ndim != 2 or C_norm.ndim != 2:
+        raise ContractError(f"{label} inner composition inputs must be [N,K], [M,K], [K,K]")
+    if left.shape[1] != right.shape[1] or C_norm.shape != (left.shape[1], left.shape[1]):
+        raise ContractError(f"{label} inner composition K-state axes must align")
+
+    pairs = tuple(
+        (left_index, right_index)
+        for left_index in range(int(left.shape[0]))
+        for right_index in range(int(right.shape[0]))
+    )
+    if not pairs:
+        raise ContractError(f"{label} requires at least one FOV pair")
+    left_batch = torch_module.stack([left[left_index] for left_index, _ in pairs], dim=0)
+    right_batch = torch_module.stack([right[right_index] for _, right_index in pairs], dim=0)
+    n_pairs = len(pairs)
+    C_batch = C_norm.expand(n_pairs, -1, -1)
+    C_t_batch = C_norm.T.expand(n_pairs, -1, -1)
+
+    all_left = torch_module.cat(
+        (left_batch, right_batch, left_batch, right_batch),
+        dim=0,
+    )
+    all_right = torch_module.cat(
+        (right_batch, left_batch, left_batch, right_batch),
+        dim=0,
+    )
+    all_cost = torch_module.cat((C_batch, C_t_batch, C_batch, C_batch), dim=0)
+    transport = _batched_sinkhorn_transport_value(
+        all_left,
+        all_right,
+        all_cost,
+        epsilon_schedule=config.inner_epsilon_schedule,
+        config=config,
+    )
+    values = transport.value.reshape(4, n_pairs)
+    divergence = 0.5 * (values[0] + values[1]) - 0.5 * values[2] - 0.5 * values[3]
+    clipped_mask = (divergence.detach() < 0.0) & (divergence.detach() >= -SMALL_NEGATIVE_TOL)
+    clipped_values, clipped_negative, _ = _apply_small_negative_rule(
+        divergence,
+        label=label,
+    )
+    return _GroundCostValueComputation(
+        value=clipped_values.reshape(left.shape[0], right.shape[0]),
+        clipped_negative=bool(clipped_negative),
+        clipped_mask=clipped_mask.reshape(left.shape[0], right.shape[0]),
+    )
+
+
+def _batched_pairwise_composition_ground_cost_value(
+    left: torch.Tensor,
+    right: torch.Tensor,
+    C_norm: torch.Tensor,
+    *,
+    config: BalancedSinkhornDivergenceConfig,
+    label: str,
+) -> _GroundCostValueComputation:
+    """Return grouped FOV-pair composition ground costs for same-shape blocks."""
+    torch_module = _require_torch()
+    if left.ndim != 3 or right.ndim != 3 or C_norm.ndim != 2:
+        raise ContractError(f"{label} grouped composition inputs must be [B,N,K], [B,M,K], [K,K]")
+    batch_size, n_left, n_states = (int(left.shape[0]), int(left.shape[1]), int(left.shape[2]))
+    if batch_size <= 0 or int(right.shape[0]) != batch_size:
+        raise ContractError(f"{label} grouped composition batch dimensions must align")
+    n_right = int(right.shape[1])
+    if n_left <= 0 or n_right <= 0:
+        raise ContractError(f"{label} requires non-empty grouped FOV axes")
+    if int(right.shape[2]) != n_states or C_norm.shape != (n_states, n_states):
+        raise ContractError(f"{label} grouped composition K-state axes must align")
+
+    left_batch = (
+        left.unsqueeze(2)
+        .expand(batch_size, n_left, n_right, n_states)
+        .reshape(batch_size * n_left * n_right, n_states)
+    )
+    right_batch = (
+        right.unsqueeze(1)
+        .expand(batch_size, n_left, n_right, n_states)
+        .reshape(batch_size * n_left * n_right, n_states)
+    )
+    n_pairs = int(left_batch.shape[0])
+    C_batch = C_norm.expand(n_pairs, -1, -1)
+    C_t_batch = C_norm.T.expand(n_pairs, -1, -1)
+    all_left = torch_module.cat(
+        (left_batch, right_batch, left_batch, right_batch),
+        dim=0,
+    )
+    all_right = torch_module.cat(
+        (right_batch, left_batch, left_batch, right_batch),
+        dim=0,
+    )
+    all_cost = torch_module.cat((C_batch, C_t_batch, C_batch, C_batch), dim=0)
+    transport = _batched_sinkhorn_transport_value(
+        all_left,
+        all_right,
+        all_cost,
+        epsilon_schedule=config.inner_epsilon_schedule,
+        config=config,
+    )
+    values = transport.value.reshape(4, n_pairs)
+    divergence = 0.5 * (values[0] + values[1]) - 0.5 * values[2] - 0.5 * values[3]
+    clipped_mask = (divergence.detach() < 0.0) & (divergence.detach() >= -SMALL_NEGATIVE_TOL)
+    clipped_values, clipped_negative, _ = _apply_small_negative_rule(
+        divergence,
+        label=label,
+    )
+    return _GroundCostValueComputation(
+        value=clipped_values.reshape(batch_size, n_left, n_right),
+        clipped_negative=bool(clipped_negative),
+        clipped_mask=clipped_mask.reshape(batch_size, n_left, n_right),
+    )
+
+
 def _pairwise_composition_ground_cost(
     left: torch.Tensor,
     right: torch.Tensor,
@@ -1039,6 +1242,125 @@ def _convergence_metadata(
         "inner_max_iter_reached_count": int(sum(inner_max_iter_reached)),
         "outer_max_iter_reached_count": int(sum(outer.max_iter_reached)),
     }
+
+
+def compute_balanced_sinkhorn_observation_value(
+    predicted_target_fov_bag: Any,
+    observed_target_fov_bag: Any,
+    geometry: StateGeometry,
+    *,
+    fov_cost_scale: float | None = None,
+    fov_cost_scale_floor_used: bool = False,
+    config: BalancedSinkhornDivergenceConfig | None = None,
+    observed_self_ground_cost_cache: (
+        MutableMapping[tuple[object, ...], _GroundCostValueComputation] | None
+    ) = None,
+    observed_self_ground_cost_cache_key: tuple[object, ...] | None = None,
+) -> BalancedSinkhornDivergenceResult:
+    """Compute canonical observation value with compact production metadata."""
+    torch_module = _require_torch()
+    resolved_config = _resolve_config(config)
+
+    predicted = _as_float64_matrix(predicted_target_fov_bag, name="predicted_target_fov_bag")
+    observed = _as_float64_matrix(
+        observed_target_fov_bag,
+        name="observed_target_fov_bag",
+        device=predicted.device,
+    )
+    _validate_distribution_matrix(predicted, name="predicted_target_fov_bag")
+    _validate_distribution_matrix(observed, name="observed_target_fov_bag")
+    if predicted.shape[1] != observed.shape[1]:
+        raise ContractError("predicted and observed bags must share the same K-state axis")
+
+    C_norm, cost_scale = _normalized_geometry_cost(
+        geometry,
+        n_states=int(predicted.shape[1]),
+        device=predicted.device,
+    )
+    s_G_init = _validate_fov_cost_scale(
+        fov_cost_scale,
+        floor_used=fov_cost_scale_floor_used,
+    )
+
+    G_cross = _pairwise_composition_ground_cost_value(
+        predicted,
+        observed,
+        C_norm,
+        config=resolved_config,
+        label="inner_composition_distance.cross",
+    )
+    G_pred = _pairwise_composition_ground_cost_value(
+        predicted,
+        predicted,
+        C_norm,
+        config=resolved_config,
+        label="inner_composition_distance.predicted_self",
+    )
+    G_obs = None
+    if observed_self_ground_cost_cache is not None and observed_self_ground_cost_cache_key is not None:
+        G_obs = observed_self_ground_cost_cache.get(observed_self_ground_cost_cache_key)
+        if G_obs is None:
+            G_obs = _pairwise_composition_ground_cost_value(
+                observed,
+                observed,
+                C_norm,
+                config=resolved_config,
+                label="inner_composition_distance.observed_self",
+            )
+            observed_self_ground_cost_cache[observed_self_ground_cost_cache_key] = G_obs
+    if G_obs is None:
+        G_obs = _pairwise_composition_ground_cost_value(
+            observed,
+            observed,
+            C_norm,
+            config=resolved_config,
+            label="inner_composition_distance.observed_self",
+        )
+
+    predicted_fov_mass = torch_module.full(
+        (predicted.shape[0],),
+        1.0 / float(predicted.shape[0]),
+        dtype=torch_module.float64,
+        device=predicted.device,
+    )
+    observed_fov_mass = torch_module.full(
+        (observed.shape[0],),
+        1.0 / float(observed.shape[0]),
+        dtype=torch_module.float64,
+        device=predicted.device,
+    )
+    outer = _sinkhorn_divergence_value(
+        predicted_fov_mass,
+        observed_fov_mass,
+        G_cross.value / s_G_init,
+        G_pred.value / s_G_init,
+        G_obs.value / s_G_init,
+        epsilon_schedule=resolved_config.outer_epsilon_schedule,
+        config=resolved_config,
+    )
+    value, outer_clipped, _ = _apply_small_negative_rule(
+        outer.value,
+        label="outer_fov_bag_divergence",
+    )
+    clipped_negative = (
+        G_cross.clipped_negative
+        or G_pred.clipped_negative
+        or G_obs.clipped_negative
+        or outer_clipped
+    )
+    return BalancedSinkhornDivergenceResult(
+        value=value,
+        status="ok_with_warnings" if clipped_negative else "ok",
+        metadata={
+            **resolved_config.metadata(),
+            "state_geometry": {
+                "normalization": "C_norm = C_raw / s_C",
+                "s_C": cost_scale,
+            },
+        },
+        clipped_negative=clipped_negative,
+        warnings=(),
+    )
 
 
 def compute_balanced_sinkhorn_observation_discrepancy(

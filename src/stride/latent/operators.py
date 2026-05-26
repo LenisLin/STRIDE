@@ -62,7 +62,7 @@ class PatientRelationAudit:
     n_pre_observations: int | None = None
     n_post_observations: int | None = None
     observation_fit_status: str | None = None
-    bridge_status: str = "assembled"
+    relation_status: str = "assembled"
     uncertainty_mode: str | None = None
     metadata: Mapping[str, Any] = field(default_factory=dict)
 
@@ -149,6 +149,31 @@ class PatientRelation:
         }
 
 
+@dataclass(frozen=True)
+class CohortRelation:
+    """Cohort-level common structure represented on the shared STRIDE axis."""
+
+    cohort_id: str
+    A: np.ndarray
+    d: np.ndarray
+    e: np.ndarray
+    support_patient_ids: tuple[str, ...]
+    fit_status: str
+    dispersion: float | None = None
+    state_ids: tuple[int, ...] | None = None
+    metadata: Mapping[str, Any] = field(default_factory=dict)
+
+    @property
+    def n_states(self) -> int:
+        """Return the shared-axis size `K`."""
+        return int(np.asarray(self.A).shape[0])
+
+    @property
+    def T(self) -> np.ndarray:
+        """Return the cohort consensus block relation ``T = [A | d]``."""
+        return np.concatenate([self.A, self.d[:, None]], axis=1)
+
+
 def validate_patient_relation(
     *,
     A: np.ndarray,
@@ -215,6 +240,41 @@ def validate_patient_relation(
             raise ContractError("state_ids must be unique along the shared K-state axis")
 
 
+def validate_cohort_relation(
+    relation: CohortRelation,
+    *,
+    row_tolerance: float = 1e-8,
+) -> None:
+    """Validate one cohort-level common-structure payload."""
+    if not isinstance(relation, CohortRelation):
+        raise ContractError("relation must be a CohortRelation object")
+    cohort_id = str(relation.cohort_id).strip()
+    if cohort_id == "":
+        raise ContractError("CohortRelation.cohort_id must be non-empty")
+    if relation.fit_status not in {"ok", "deferred", "failed"}:
+        raise ContractError("CohortRelation.fit_status must be one of 'ok', 'deferred', or 'failed'")
+    support_patient_ids = tuple(str(patient_id).strip() for patient_id in relation.support_patient_ids)
+    if any(patient_id == "" for patient_id in support_patient_ids):
+        raise ContractError("CohortRelation.support_patient_ids must contain non-empty identifiers")
+    if len(set(support_patient_ids)) != len(support_patient_ids):
+        raise ContractError("CohortRelation.support_patient_ids must not contain duplicates")
+    if relation.fit_status == "ok":
+        validate_patient_relation(
+            A=relation.A,
+            d=relation.d,
+            e=relation.e,
+            state_ids=relation.state_ids,
+            row_tolerance=row_tolerance,
+        )
+        if relation.dispersion is None:
+            raise ContractError("ok CohortRelation requires dispersion")
+        dispersion = float(relation.dispersion)
+        if not np.isfinite(dispersion) or dispersion < 0.0:
+            raise ContractError("CohortRelation.dispersion must be finite and non-negative")
+    elif support_patient_ids:
+        raise ContractError("Non-ok CohortRelation objects must not carry support_patient_ids")
+
+
 def initialize_patient_relation(
     *,
     patient_id: str,
@@ -268,11 +328,13 @@ def initialize_patient_relation(
 
 
 __all__ = [
+    "CohortRelation",
     "ContinuityOperator",
     "DepletionComponent",
     "EmergenceComponent",
     "PatientRelation",
     "PatientRelationAudit",
     "initialize_patient_relation",
+    "validate_cohort_relation",
     "validate_patient_relation",
 ]

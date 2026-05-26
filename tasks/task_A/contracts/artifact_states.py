@@ -48,7 +48,7 @@ def coerce_task_a_artifact_state(
             return CONTRACT_PASSED_STATE
         return SCAFFOLD_ACTIVE_STATE
 
-    if normalized_block in {"block1_continuity_backbone", "block2_bounded_audit"}:
+    if normalized_block == "block1_real_data_discovery":
         if normalized_status == "active":
             return EVIDENCE_READY_STATE
         if normalized_status == "passed":

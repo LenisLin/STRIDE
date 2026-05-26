@@ -78,7 +78,7 @@ class RuntimeSettings:
         }
 
     def resolved_plan_chunk_elements(self, *, fallback: int) -> int:
-        """Return the configured plan-chunk budget, falling back to legacy defaults."""
+        """Return the configured plan-chunk budget, falling back to prior defaults."""
         if int(fallback) <= 0:
             raise ContractError("fallback plan_chunk_elements must be positive")
         if self.plan_chunk_elements is None:

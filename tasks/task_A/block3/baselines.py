@@ -5,8 +5,8 @@ Task and purpose:
     producers for the split `3B-1 A benchmark` and `3B-2 d/e benchmark` routes.
 
 Relevant document anchors:
-    - docs/task_A_spec.md §4.5.5-§4.5.6 and §5.1 Phase 3
-    - docs/task_A_block3_redesign_v1_1.md §4.3, §5.5, §5.6
+    - docs/task_A/spec.md §4.5.5-§4.5.6 and §5.1 Phase 3
+    - docs/task_A/block3/scientific_contract.md §4.3, §5.5, §5.6
 
 Expected inputs and outputs:
     Inputs are endpoint profiles and a cost matrix when needed. Outputs are
@@ -30,6 +30,7 @@ from stride.adapters.ot_sinkhorn import (
     batched_uot_solve,
     build_observation_kernels,
 )
+from stride.settings import RuntimeSettings
 
 
 LIVE_3B1_BASELINES: tuple[str, ...] = (
@@ -43,6 +44,7 @@ LIVE_3B2_BASELINES: tuple[str, ...] = (
     "partial_ot_baseline",
     "diagonal_transport_baseline",
 )
+PARTIAL_OT_NUMERICAL_ATOL = 1e-5
 
 
 @dataclass(frozen=True)
@@ -84,6 +86,20 @@ def _validate_cost_matrix(cost_matrix: np.ndarray, shape: tuple[int, int]) -> np
     return cost
 
 
+def _validate_cost_matrix_or_default(
+    cost_matrix: np.ndarray | None,
+    shape: tuple[int, int],
+) -> np.ndarray:
+    """Return caller-provided costs or deterministic diagonal-first defaults."""
+
+    if cost_matrix is not None:
+        return _validate_cost_matrix(cost_matrix, shape)
+    cost = np.ones(shape, dtype=float)
+    diagonal_size = min(shape)
+    cost[np.arange(diagonal_size), np.arange(diagonal_size)] = 0.0
+    return cost
+
+
 def diagonal_transport_plan(x: np.ndarray, y: np.ndarray) -> np.ndarray:
     """Return the exact diagonal native matched plan for shared state labels.
 
@@ -115,22 +131,20 @@ def partial_ot_plan(
     cost_matrix: np.ndarray | None = None,
     matched_mass_budget: float | None = None,
 ) -> PlanBaselineResult:
-    """Build a hard-budget partial-OT native plan using greedy cost order.
+    """Build an exact fixed-mass partial-OT native plan.
 
     Inputs are nonnegative endpoint vectors, optional transport costs, and an
     optional requested matched-mass budget. Output carries `P` and clipping
-    diagnostics. If no cost matrix is supplied, deterministic diagonal-first
-    costs are used to prefer shared labels before off-diagonal assignments.
+    diagnostics. The native plan solves the POT fixed-mass partial Wasserstein
+    problem. If no cost matrix is supplied, deterministic diagonal-first costs
+    are used to prefer shared labels before off-diagonal assignments.
     """
+
+    import ot
 
     source = _validate_vector("x", x)
     target = _validate_vector("y", y)
-    if cost_matrix is None:
-        cost = np.ones((source.size, target.size), dtype=float)
-        diagonal_size = min(source.size, target.size)
-        cost[np.arange(diagonal_size), np.arange(diagonal_size)] = 0.0
-    else:
-        cost = _validate_cost_matrix(cost_matrix, (source.size, target.size))
+    cost = _validate_cost_matrix_or_default(cost_matrix, (source.size, target.size))
     if matched_mass_budget is None:
         # matched_mass_budget is the requested hard matched-mass comparator budget.
         matched_mass_budget = float(np.sum(np.minimum(source, target), dtype=float))
@@ -139,30 +153,44 @@ def partial_ot_plan(
         raise ValueError("matched_mass_budget must be finite and non-negative")
     # effective_budget clips requested mass to feasible source and target mass.
     effective_budget = min(requested_budget, float(np.sum(source)), float(np.sum(target)))
-    remaining_source = source.copy()
-    remaining_target = target.copy()
-    remaining_budget = effective_budget
-    # P is the native matched transport plan emitted by plan-based comparators.
-    plan = np.zeros((source.size, target.size), dtype=float)
-    for row_index, col_index in sorted(
-        np.ndindex(cost.shape),
-        key=lambda index: (float(cost[index]), index[0], index[1]),
-    ):
-        if remaining_budget <= 0.0:
-            break
-        amount = min(remaining_source[row_index], remaining_target[col_index], remaining_budget)
-        if amount <= 0.0:
-            continue
-        plan[row_index, col_index] = amount
-        remaining_source[row_index] -= amount
-        remaining_target[col_index] -= amount
-        remaining_budget -= amount
+    if effective_budget <= 0.0:
+        plan = np.zeros((source.size, target.size), dtype=float)
+    else:
+        # P is the native matched transport plan emitted by plan-based comparators.
+        plan = np.asarray(
+            ot.partial.partial_wasserstein(
+                source,
+                target,
+                cost,
+                m=effective_budget,
+            ),
+            dtype=float,
+        )
+    if plan.shape != cost.shape:
+        raise ValueError("partial OT solver returned a plan with unexpected shape")
+    if not np.isfinite(plan).all():
+        raise ValueError("partial OT solver returned non-finite plan entries")
+    if np.any(plan < -PARTIAL_OT_NUMERICAL_ATOL):
+        raise ValueError("partial OT solver returned negative plan entries")
+    plan = np.where((plan < 0.0) & (plan >= -PARTIAL_OT_NUMERICAL_ATOL), 0.0, plan)
+    row_sums = np.sum(plan, axis=1, dtype=float)
+    col_sums = np.sum(plan, axis=0, dtype=float)
+    transported_mass = float(np.sum(plan, dtype=float))
+    if np.any(row_sums - source > PARTIAL_OT_NUMERICAL_ATOL):
+        raise ValueError("partial OT plan violates source marginal upper bounds")
+    if np.any(col_sums - target > PARTIAL_OT_NUMERICAL_ATOL):
+        raise ValueError("partial OT plan violates target marginal upper bounds")
+    if abs(transported_mass - effective_budget) > PARTIAL_OT_NUMERICAL_ATOL:
+        raise ValueError("partial OT plan violates fixed matched-mass budget")
     return PlanBaselineResult(
         P=plan,
         metadata={
+            "solver": "ot.partial.partial_wasserstein",
             "requested_budget": requested_budget,
             "effective_budget": effective_budget,
             "clipped": bool(effective_budget < requested_budget),
+            "transported_mass": transported_mass,
+            "objective_value": float(np.sum(plan * cost, dtype=float)),
         },
     )
 
@@ -173,6 +201,7 @@ def solve_uot_plan(
     y: np.ndarray,
     cost_matrix: np.ndarray,
     match_penalty: float,
+    runtime_settings: RuntimeSettings | None = None,
 ) -> PlanBaselineResult:
     """Solve one UOT baseline and return its native matched plan.
 
@@ -188,7 +217,12 @@ def solve_uot_plan(
     lambda_value = float(match_penalty)
     if not np.isfinite(lambda_value) or lambda_value <= 0.0:
         raise ValueError("match_penalty must be finite and positive")
-    cfg = ObservationMatchConfig(eps_schedule=(1.0, 0.2), max_iter=2000, tol=1e-7)
+    cfg = ObservationMatchConfig(
+        eps_schedule=(1.0, 0.2),
+        max_iter=2000,
+        tol=1e-7,
+        runtime_settings=runtime_settings or RuntimeSettings(),
+    )
     kernels = build_observation_kernels(cost, cfg.eps_schedule, cost_scale=1.0)
     metrics, details, status = batched_uot_solve(
         A=source[None, :],
@@ -219,6 +253,7 @@ def estimate_uot_matched_mass(
     train_pairs: tuple[tuple[np.ndarray, np.ndarray], ...],
     cost_matrix: np.ndarray,
     match_penalty: float,
+    runtime_settings: RuntimeSettings | None = None,
 ) -> float:
     """Estimate train-side matched mass for one UOT lambda candidate.
 
@@ -237,7 +272,12 @@ def estimate_uot_matched_mass(
     lambda_value = float(match_penalty)
     if not np.isfinite(lambda_value) or lambda_value <= 0.0:
         raise ValueError("match_penalty must be finite and positive")
-    cfg = ObservationMatchConfig(eps_schedule=(1.0, 0.2), max_iter=2000, tol=1e-7)
+    cfg = ObservationMatchConfig(
+        eps_schedule=(1.0, 0.2),
+        max_iter=2000,
+        tol=1e-7,
+        runtime_settings=runtime_settings or RuntimeSettings(),
+    )
     kernels = build_observation_kernels(cost, cfg.eps_schedule, cost_scale=1.0)
     _metrics, details, status = batched_uot_solve(
         A=source_rows,

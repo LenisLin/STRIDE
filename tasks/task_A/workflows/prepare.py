@@ -17,9 +17,7 @@ from stride.errors import ContractError
 from ..config import load_task_a_config_bundle
 from ..contracts import CONTRACT_PASSED_STATE, SCAFFOLD_ACTIVE_STATE
 from ..real_data.demo_subset import TaskADemoSubset, resolve_demo_subset
-from ..stage0.build_artifacts import build_stage0_h5ad_validation_report
 from .stride_adapter import (
-    SEMANTIC_ALIGNMENT_ERROR_PREFIX,
     describe_task_a_stage0_stride_mapping,
     load_task_a_dataset_handle,
     run_task_a_family_core_fit_dry_run,
@@ -31,7 +29,6 @@ except ModuleNotFoundError:  # pragma: no cover
     ad = None  # type: ignore[assignment]
 
 
-PRE_BLOCK0_DATA_SUITABILITY_FILENAME = "task_a_pre_block0_data_suitability.json"
 FULL_COHORT_ALIGNMENT_CHECK_SCOPE = "full_cohort_alignment_check"
 PATIENT_SUBSET_SCOPE = "patient_subset"
 DEMO_SUBSET_SCOPE = "demo_subset"
@@ -96,10 +93,6 @@ def _resolve_prepare_scope_metadata(
     return DEMO_SUBSET_SCOPE, demo_subset.name, demo_subset.rationale
 
 
-def _is_semantic_alignment_failure(exc: Exception) -> bool:
-    return str(exc).startswith(SEMANTIC_ALIGNMENT_ERROR_PREFIX)
-
-
 def _resolve_prepare_source(
     *,
     data_path: str | Path,
@@ -160,71 +153,21 @@ def _build_task_a_step1_alignment(
     return mapping_summary, dry_run_df
 
 
-def build_task_a_pre_block0_data_suitability_report(
-    *,
-    config_path: str | Path,
-    data_path: str | Path,
-) -> dict[str, Any]:
-    config_bundle = load_task_a_config_bundle(config_path)
-    resolved_data_path = Path(data_path).expanduser().resolve()
-    handle = load_task_a_dataset_handle(resolved_data_path)
-    validation_report = build_stage0_h5ad_validation_report(
-        handle.adata,
-        require_all_proto_ids=False,
-    )
-    report: dict[str, Any] = {
-        "task_name": config_bundle.raw_config.get("task_name", "Task A"),
-        "config_path": str(config_bundle.config_path),
-        "stage0_h5ad": str(resolved_data_path),
-        "report_scope": "pre_block0_data_suitability",
-        "run_scope": FULL_COHORT_ALIGNMENT_CHECK_SCOPE,
-        "artifact_state": SCAFFOLD_ACTIVE_STATE,
-        "block0_gate_status": "not_passed",
-        "scientific_interpretation_allowed": False,
-        "mass_mode": config_bundle.data.mass_mode,
-        "fit_surface": "fit_stride",
-        "implementation_tier": "canonical_full",
-        "evidence_lineage": "canonical_rerun",
-        "confirmatory_pair_families": [
-            family.name for family in config_bundle.ordered_proxy.confirmatory_pair_families
-        ],
-        "audit_pair_families": [
-            family.name for family in config_bundle.ordered_proxy.audit_pair_families
-        ],
-        "stage0_validation": validation_report,
+def _dry_run_contract_passed(dry_run_df: pd.DataFrame) -> bool:
+    if dry_run_df.empty:
+        return False
+    fit_status = dry_run_df["fit_status"].astype(str)
+    recurrence_status = dry_run_df["cohort_recurrence_fit_status"].astype(str)
+    return bool(fit_status.eq("ok").all() and recurrence_status.eq("ok").all())
+
+
+def _dry_run_status_counts(dry_run_df: pd.DataFrame) -> dict[str, int]:
+    if dry_run_df.empty or "fit_status" not in dry_run_df.columns:
+        return {}
+    return {
+        str(status): int(count)
+        for status, count in dry_run_df["fit_status"].astype(str).value_counts().sort_index().items()
     }
-    try:
-        mapping_summary, _dry_run_df = _build_task_a_step1_alignment(
-            source=handle,
-            config_bundle=config_bundle,
-        )
-    except (ContractError, ValueError) as exc:
-        if _is_semantic_alignment_failure(exc):
-            raise
-        report["mapping_summary"] = None
-        report["mapping_summary_error"] = str(exc)
-    else:
-        report["mapping_summary"] = mapping_summary.to_json_dict()
-        if bool(report["stage0_validation"]["taska_minimum_contract"]["ok"]):
-            report["artifact_state"] = CONTRACT_PASSED_STATE
-    return report
-
-
-def write_task_a_pre_block0_data_suitability_report(
-    *,
-    config_path: str | Path,
-    data_path: str | Path,
-    output_dir: str | Path,
-) -> Path:
-    output_root = Path(output_dir).expanduser().resolve()
-    output_root.mkdir(parents=True, exist_ok=True)
-    report = build_task_a_pre_block0_data_suitability_report(
-        config_path=config_path,
-        data_path=data_path,
-    )
-    report_path = output_root / PRE_BLOCK0_DATA_SUITABILITY_FILENAME
-    report_path.write_text(json.dumps(report, indent=2, sort_keys=True), encoding="utf-8")
-    return report_path
 
 
 def prepare_task_a_stage0_mapping(
@@ -251,6 +194,8 @@ def prepare_task_a_stage0_mapping(
         source=source,
         config_bundle=config_bundle,
     )
+    if artifact_state == CONTRACT_PASSED_STATE and not _dry_run_contract_passed(dry_run_df):
+        artifact_state = SCAFFOLD_ACTIVE_STATE
 
     mapping_path = output_root / config_bundle.exports.mapping_manifest_filename
     mapping_path.write_text(
@@ -279,6 +224,7 @@ def prepare_task_a_stage0_mapping(
         "fit_surface": "fit_stride",
         "implementation_tier": "canonical_full",
         "evidence_lineage": "canonical_rerun",
+        "core_fit_dry_run_status_counts": _dry_run_status_counts(dry_run_df),
     }
     if selected_patient_ids is not None:
         manifest["patient_subset"] = list(selected_patient_ids)
@@ -341,8 +287,5 @@ if __name__ == "__main__":
 
 
 __all__ = [
-    "PRE_BLOCK0_DATA_SUITABILITY_FILENAME",
-    "build_task_a_pre_block0_data_suitability_report",
     "prepare_task_a_stage0_mapping",
-    "write_task_a_pre_block0_data_suitability_report",
 ]

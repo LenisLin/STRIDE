@@ -11,7 +11,9 @@ from ..geometry.state_geometry import StateGeometry, build_state_geometry
 from ..latent.operators import PatientRelation, PatientRelationAudit, initialize_patient_relation
 from ..observation import FovObservation, build_fov_observations
 from ..outputs.fit_result import STRIDEFitResult
-from ..workflows.fit_stride import STRIDEFitConfig, run_stride_fit
+from ..optimize import TrainConfig, validate_train_config
+from ..workflows.config import TaskConfig, coerce_patient_ids
+from ..workflows.fit_stride import run_stride_fit
 from .basis import BasisSpec
 from .dataset import DatasetHandle
 from .model import STRIDEModel
@@ -36,7 +38,7 @@ def build_patient_relation(
     if resolved_audit is None:
         resolved_audit = PatientRelationAudit(
             patient_id=str(patient_id),
-            bridge_status=str(relation_status),
+            relation_status=str(relation_status),
             metadata=metadata_dict,
         )
 
@@ -143,14 +145,37 @@ def _normalize_dataset_inputs(
 def fit_stride(
     data: object,
     *,
+    source: str,
+    target: str,
+    K: int,
+    patient_ids: Sequence[str] | None = None,
+    timepoint_order: tuple[str, ...] = (),
     state_basis: StateBasis | None = None,
     geometry: StateGeometry | None = None,
     basis_spec: BasisSpec | None = None,
     model: STRIDEModel | None = None,
-    config: STRIDEFitConfig | None = None,
+    epsilon_norm: float = 1e-2,
+    objective_weights: tuple[float, float, float] = (1.0, 1.0, 1.0),
+    device: object | None = None,
+    seed: int | None = None,
+    detailed_trace: bool = False,
 ) -> STRIDEFitResult:
     """Normalize canonical STRIDE inputs and run the canonical full-method path."""
-    resolved_config = config or STRIDEFitConfig()
+    task_config = TaskConfig(
+        source=source,
+        target=target,
+        K=K,
+        patient_ids=coerce_patient_ids(patient_ids),
+        timepoint_order=tuple(timepoint_order),
+    )
+    train_config = TrainConfig(
+        epsilon_norm=epsilon_norm,
+        objective_weights=objective_weights,
+        device=device,
+        seed=seed,
+        detailed_trace=detailed_trace,
+    )
+    train_config = validate_train_config(train_config)
 
     observations = _coerce_observation_sequence(data)
     if observations is not None:
@@ -164,17 +189,27 @@ def fit_stride(
             normalized_observations,
             state_basis=resolved_basis,
             geometry=resolved_geometry,
-            config=resolved_config,
+            task_config=task_config,
+            train_config=train_config,
         )
 
     if isinstance(data, DatasetHandle):
         return fit_stride(
             data.adata,
+            source=source,
+            target=target,
+            K=K,
+            patient_ids=patient_ids,
+            timepoint_order=timepoint_order,
             state_basis=state_basis,
             geometry=geometry,
             basis_spec=basis_spec,
             model=model,
-            config=resolved_config,
+            epsilon_norm=epsilon_norm,
+            objective_weights=objective_weights,
+            device=device,
+            seed=seed,
+            detailed_trace=detailed_trace,
         )
 
     if isinstance(data, AnnData):
@@ -189,7 +224,8 @@ def fit_stride(
             normalized_observations,
             state_basis=resolved_basis,
             geometry=resolved_geometry,
-            config=resolved_config,
+            task_config=task_config,
+            train_config=train_config,
         )
 
     raise ContractError(
@@ -198,7 +234,6 @@ def fit_stride(
 
 
 __all__ = [
-    "STRIDEFitConfig",
     "build_patient_relation",
     "fit_stride",
 ]
