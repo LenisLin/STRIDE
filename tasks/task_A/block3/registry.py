@@ -5,8 +5,8 @@ Role:
     methods, metrics, conditions, and validation objects.
 
 Authority anchors:
-    - docs/task_A_spec.md §4.5.2, §4.5.3, §4.5.5, §4.5.6
-    - docs/task_A_block3_redesign_v1_1.md §4.1-§4.4, §5.3, §5.5, §5.6
+    - docs/task_A/spec.md §4.5.2, §4.5.3, §4.5.5, §4.5.6
+    - docs/task_A/block3/scientific_contract.md §4.1-§4.4, §5.3, §5.5, §5.6
 
 Local boundary:
     - This module provides live routing inventory only.
@@ -110,8 +110,9 @@ def build_live_block3_registry() -> Block3Registry:
             section_id=Block3SubexperimentId.ABLATION_STUDY.value,
             title="3C ablation study",
             child_subexperiments=(
-                Block3SubexperimentId.OPEN_MODULE_ABLATION.value,
-                Block3SubexperimentId.COHORT_MODULE_ABLATION.value,
+                Block3SubexperimentId.CONSISTENCY_ABLATION.value,
+                Block3SubexperimentId.GEOMETRY_ABLATION.value,
+                Block3SubexperimentId.RECURRENCE_ABLATION.value,
             ),
         )
     }
@@ -123,8 +124,9 @@ def build_live_block3_registry() -> Block3Registry:
             allowed_subexperiments=(
                 Block3SubexperimentId.A_BENCHMARK.value,
                 Block3SubexperimentId.DE_BENCHMARK.value,
-                Block3SubexperimentId.OPEN_MODULE_ABLATION.value,
-                Block3SubexperimentId.COHORT_MODULE_ABLATION.value,
+                Block3SubexperimentId.RECURRENCE_ABLATION.value,
+                Block3SubexperimentId.GEOMETRY_ABLATION.value,
+                Block3SubexperimentId.CONSISTENCY_ABLATION.value,
             ),
         ),
         Block3MethodName.BALANCED_OT_BASELINE.value: MethodSpec(
@@ -160,110 +162,68 @@ def build_live_block3_registry() -> Block3Registry:
                 Block3SubexperimentId.DE_BENCHMARK.value,
             ),
         ),
-        Block3MethodName.OPEN_CHANNEL_ABLATION.value: MethodSpec(
-            name=Block3MethodName.OPEN_CHANNEL_ABLATION,
+        Block3MethodName.RECURRENCE_ABLATION.value: MethodSpec(
+            name=Block3MethodName.RECURRENCE_ABLATION,
             method_class=Block3MethodClass.ABLATION,
-            title="open_channel_ablation",
-            allowed_subexperiments=(Block3SubexperimentId.OPEN_MODULE_ABLATION.value,),
+            title="recurrence_ablation",
+            allowed_subexperiments=(Block3SubexperimentId.RECURRENCE_ABLATION.value,),
         ),
-        Block3MethodName.COHORT_ABLATION.value: MethodSpec(
-            name=Block3MethodName.COHORT_ABLATION,
+        Block3MethodName.GEOMETRY_ABLATION.value: MethodSpec(
+            name=Block3MethodName.GEOMETRY_ABLATION,
             method_class=Block3MethodClass.ABLATION,
-            title="cohort_ablation",
-            allowed_subexperiments=(Block3SubexperimentId.COHORT_MODULE_ABLATION.value,),
+            title="geometry_ablation",
+            allowed_subexperiments=(Block3SubexperimentId.GEOMETRY_ABLATION.value,),
+        ),
+        Block3MethodName.CONSISTENCY_ABLATION.value: MethodSpec(
+            name=Block3MethodName.CONSISTENCY_ABLATION,
+            method_class=Block3MethodClass.ABLATION,
+            title="consistency_ablation",
+            allowed_subexperiments=(Block3SubexperimentId.CONSISTENCY_ABLATION.value,),
         ),
     }
+    method_bearing_subexperiments = (
+        Block3SubexperimentId.A_BENCHMARK.value,
+        Block3SubexperimentId.DE_BENCHMARK.value,
+        Block3SubexperimentId.RECURRENCE_ABLATION.value,
+        Block3SubexperimentId.GEOMETRY_ABLATION.value,
+        Block3SubexperimentId.CONSISTENCY_ABLATION.value,
+    )
+    all_method_statuses = (
+        MetricStatus.REPORTED,
+        MetricStatus.NOT_APPLICABLE,
+        MetricStatus.NOT_ESTIMABLE,
+    )
+    mass_metric_specs = {
+        Block3MetricName.F_L1_TOTAL: MetricRole.PRIMARY_MASS,
+        Block3MetricName.G_L1_TOTAL: MetricRole.PRIMARY_MASS,
+        Block3MetricName.E_L1_TOTAL: MetricRole.PRIMARY_MASS,
+        Block3MetricName.OFFDIAG_MASS_ABS_ERROR: MetricRole.PRIMARY_MASS,
+        Block3MetricName.DEPLETION_MASS_ABS_ERROR: MetricRole.PRIMARY_MASS,
+        Block3MetricName.EMERGENCE_MASS_ABS_ERROR: MetricRole.PRIMARY_MASS,
+        Block3MetricName.OFFDIAG_RATIO: MetricRole.PRIMARY_RATIO,
+        Block3MetricName.DEPLETION_CAPTURE: MetricRole.PRIMARY_RATIO,
+        Block3MetricName.EMERGENCE_CAPTURE: MetricRole.PRIMARY_RATIO,
+        Block3MetricName.ENDPOINT_Y_MAE: MetricRole.SECONDARY_ENDPOINT,
+        Block3MetricName.A_MAE_ACTIVE: MetricRole.RELATION_RECOVERY,
+        Block3MetricName.A_MSE_ACTIVE: MetricRole.RELATION_RECOVERY,
+        Block3MetricName.TARGET_RECALL_AT_K: MetricRole.RELATION_RECOVERY,
+        Block3MetricName.OPEN_SUPPORT_F1: MetricRole.OPEN_SUPPORT_RECOVERY,
+        Block3MetricName.D_MAE: MetricRole.OPEN_PROFILE_RECOVERY,
+        Block3MetricName.E_MAE: MetricRole.OPEN_PROFILE_RECOVERY,
+        Block3MetricName.D_MSE: MetricRole.OPEN_PROFILE_RECOVERY,
+        Block3MetricName.E_MSE: MetricRole.OPEN_PROFILE_RECOVERY,
+    }
     metrics = {
-        Block3MetricName.A_MAE_ACTIVE.value: MetricSpec(
-            name=Block3MetricName.A_MAE_ACTIVE,
-            role=MetricRole.RELATION_RECOVERY,
-            allowed_subexperiments=(
-                Block3SubexperimentId.A_BENCHMARK.value,
-                Block3SubexperimentId.COHORT_MODULE_ABLATION.value,
-            ),
-            allowed_statuses=(
-                MetricStatus.REPORTED,
-                MetricStatus.NOT_APPLICABLE,
-                MetricStatus.NOT_ESTIMABLE,
-            ),
-        ),
-        Block3MetricName.A_MSE_ACTIVE.value: MetricSpec(
-            name=Block3MetricName.A_MSE_ACTIVE,
-            role=MetricRole.RELATION_RECOVERY,
-            allowed_subexperiments=(
-                Block3SubexperimentId.A_BENCHMARK.value,
-                Block3SubexperimentId.COHORT_MODULE_ABLATION.value,
-            ),
-            allowed_statuses=(
-                MetricStatus.REPORTED,
-                MetricStatus.NOT_APPLICABLE,
-                MetricStatus.NOT_ESTIMABLE,
-            ),
-        ),
-        Block3MetricName.TARGET_RECALL_AT_K.value: MetricSpec(
-            name=Block3MetricName.TARGET_RECALL_AT_K,
-            role=MetricRole.RELATION_RECOVERY,
-            allowed_subexperiments=(Block3SubexperimentId.A_BENCHMARK.value,),
-            allowed_statuses=(
-                MetricStatus.REPORTED,
-                MetricStatus.NOT_APPLICABLE,
-                MetricStatus.NOT_ESTIMABLE,
-            ),
-        ),
-        Block3MetricName.OPEN_SUPPORT_F1.value: MetricSpec(
-            name=Block3MetricName.OPEN_SUPPORT_F1,
-            role=MetricRole.OPEN_SUPPORT_RECOVERY,
-            allowed_subexperiments=(
-                Block3SubexperimentId.DE_BENCHMARK.value,
-                Block3SubexperimentId.OPEN_MODULE_ABLATION.value,
-                Block3SubexperimentId.COHORT_MODULE_ABLATION.value,
-            ),
-            allowed_statuses=(
-                MetricStatus.REPORTED,
-                MetricStatus.NOT_APPLICABLE,
-                MetricStatus.NOT_ESTIMABLE,
-            ),
-        ),
-        Block3MetricName.D_MAE.value: MetricSpec(
-            name=Block3MetricName.D_MAE,
-            role=MetricRole.OPEN_PROFILE_RECOVERY,
-            allowed_subexperiments=(
-                Block3SubexperimentId.DE_BENCHMARK.value,
-                Block3SubexperimentId.OPEN_MODULE_ABLATION.value,
-                Block3SubexperimentId.COHORT_MODULE_ABLATION.value,
-            ),
-            allowed_statuses=(MetricStatus.REPORTED, MetricStatus.NOT_ESTIMABLE),
-        ),
-        Block3MetricName.E_MAE.value: MetricSpec(
-            name=Block3MetricName.E_MAE,
-            role=MetricRole.OPEN_PROFILE_RECOVERY,
-            allowed_subexperiments=(
-                Block3SubexperimentId.DE_BENCHMARK.value,
-                Block3SubexperimentId.OPEN_MODULE_ABLATION.value,
-                Block3SubexperimentId.COHORT_MODULE_ABLATION.value,
-            ),
-            allowed_statuses=(MetricStatus.REPORTED, MetricStatus.NOT_ESTIMABLE),
-        ),
-        Block3MetricName.D_MSE.value: MetricSpec(
-            name=Block3MetricName.D_MSE,
-            role=MetricRole.OPEN_PROFILE_RECOVERY,
-            allowed_subexperiments=(
-                Block3SubexperimentId.DE_BENCHMARK.value,
-                Block3SubexperimentId.OPEN_MODULE_ABLATION.value,
-                Block3SubexperimentId.COHORT_MODULE_ABLATION.value,
-            ),
-            allowed_statuses=(MetricStatus.REPORTED, MetricStatus.NOT_ESTIMABLE),
-        ),
-        Block3MetricName.E_MSE.value: MetricSpec(
-            name=Block3MetricName.E_MSE,
-            role=MetricRole.OPEN_PROFILE_RECOVERY,
-            allowed_subexperiments=(
-                Block3SubexperimentId.DE_BENCHMARK.value,
-                Block3SubexperimentId.OPEN_MODULE_ABLATION.value,
-                Block3SubexperimentId.COHORT_MODULE_ABLATION.value,
-            ),
-            allowed_statuses=(MetricStatus.REPORTED, MetricStatus.NOT_ESTIMABLE),
-        ),
+        metric_name.value: MetricSpec(
+            name=metric_name,
+            role=metric_role,
+            allowed_subexperiments=method_bearing_subexperiments,
+            allowed_statuses=all_method_statuses,
+        )
+        for metric_name, metric_role in mass_metric_specs.items()
+    }
+    metrics.update(
+        {
         Block3MetricName.PEARSON_CORRELATION.value: MetricSpec(
             name=Block3MetricName.PEARSON_CORRELATION,
             role=MetricRole.GENERATOR_VALIDATION,
@@ -294,7 +254,8 @@ def build_live_block3_registry() -> Block3Registry:
             allowed_subexperiments=(Block3SubexperimentId.GENERATOR_VALIDATION.value,),
             allowed_statuses=(MetricStatus.REPORTED, MetricStatus.NOT_ESTIMABLE),
         ),
-    }
+        }
+    )
     conditions = {
         "generator_validation": ConditionSpec(
             condition_id="generator_validation",
@@ -303,53 +264,39 @@ def build_live_block3_registry() -> Block3Registry:
             evaluation_family="generator_validation",
             is_public=False,
         ),
-        "relation_null": ConditionSpec(
-            condition_id="relation_null",
+        "a_benchmark_shared_realization_set": ConditionSpec(
+            condition_id="a_benchmark_shared_realization_set",
             subexperiment_id=Block3SubexperimentId.A_BENCHMARK.value,
-            title="relation_null",
+            title="multi_fov_shared_realization_set",
             evaluation_family="baseline_comparison",
-            is_public=True,
-        ),
-        "relation_weak": ConditionSpec(
-            condition_id="relation_weak",
-            subexperiment_id=Block3SubexperimentId.A_BENCHMARK.value,
-            title="relation_weak",
-            evaluation_family="baseline_comparison",
-            is_public=True,
-        ),
-        "relation_mid": ConditionSpec(
-            condition_id="relation_mid",
-            subexperiment_id=Block3SubexperimentId.A_BENCHMARK.value,
-            title="relation_mid",
-            evaluation_family="baseline_comparison",
-            is_public=True,
-        ),
-        "relation_strong": ConditionSpec(
-            condition_id="relation_strong",
-            subexperiment_id=Block3SubexperimentId.A_BENCHMARK.value,
-            title="relation_strong",
-            evaluation_family="baseline_comparison",
-            is_public=True,
-        ),
-        "open_mass_scale_grid": ConditionSpec(
-            condition_id="open_mass_scale_grid",
-            subexperiment_id=Block3SubexperimentId.DE_BENCHMARK.value,
-            title="open_mass_scale_grid",
-            evaluation_family="baseline_open_benchmark",
-            is_public=True,
-        ),
-        "open_module_shared_realization_set": ConditionSpec(
-            condition_id="open_module_shared_realization_set",
-            subexperiment_id=Block3SubexperimentId.OPEN_MODULE_ABLATION.value,
-            title="matched_open_module_realization_set",
-            evaluation_family="open_module_ablation",
             is_public=False,
         ),
-        "cohort_module_shared_realization_set": ConditionSpec(
-            condition_id="cohort_module_shared_realization_set",
-            subexperiment_id=Block3SubexperimentId.COHORT_MODULE_ABLATION.value,
-            title="matched_cohort_module_realization_set",
-            evaluation_family="cohort_module_ablation",
+        "de_benchmark_shared_realization_set": ConditionSpec(
+            condition_id="de_benchmark_shared_realization_set",
+            subexperiment_id=Block3SubexperimentId.DE_BENCHMARK.value,
+            title="multi_fov_shared_realization_set",
+            evaluation_family="baseline_open_benchmark",
+            is_public=False,
+        ),
+        "recurrence_ablation_shared_realization_set": ConditionSpec(
+            condition_id="recurrence_ablation_shared_realization_set",
+            subexperiment_id=Block3SubexperimentId.RECURRENCE_ABLATION.value,
+            title="matched_recurrence_ablation_realization_set",
+            evaluation_family="recurrence_ablation",
+            is_public=False,
+        ),
+        "geometry_ablation_shared_realization_set": ConditionSpec(
+            condition_id="geometry_ablation_shared_realization_set",
+            subexperiment_id=Block3SubexperimentId.GEOMETRY_ABLATION.value,
+            title="matched_geometry_ablation_realization_set",
+            evaluation_family="geometry_ablation",
+            is_public=False,
+        ),
+        "consistency_ablation_shared_realization_set": ConditionSpec(
+            condition_id="consistency_ablation_shared_realization_set",
+            subexperiment_id=Block3SubexperimentId.CONSISTENCY_ABLATION.value,
+            title="matched_consistency_ablation_realization_set",
+            evaluation_family="consistency_ablation",
             is_public=False,
         ),
     }
@@ -375,6 +322,7 @@ def build_live_block3_registry() -> Block3Registry:
             ),
         ),
     }
+    method_metric_order = tuple(mass_metric_specs)
     subexperiments = {
         Block3SubexperimentId.GENERATOR_VALIDATION.value: SubexperimentSpec(
             subexperiment_id=Block3SubexperimentId.GENERATOR_VALIDATION.value,
@@ -406,11 +354,9 @@ def build_live_block3_registry() -> Block3Registry:
                 Block3MethodName.DIAGONAL_TRANSPORT_BASELINE,
             ),
             metrics=(
-                Block3MetricName.A_MAE_ACTIVE,
-                Block3MetricName.A_MSE_ACTIVE,
-                Block3MetricName.TARGET_RECALL_AT_K,
+                *method_metric_order,
             ),
-            condition_ids=("relation_null", "relation_weak", "relation_mid", "relation_strong"),
+            condition_ids=("a_benchmark_shared_realization_set",),
         ),
         Block3SubexperimentId.DE_BENCHMARK.value: SubexperimentSpec(
             subexperiment_id=Block3SubexperimentId.DE_BENCHMARK.value,
@@ -423,49 +369,48 @@ def build_live_block3_registry() -> Block3Registry:
                 Block3MethodName.DIAGONAL_TRANSPORT_BASELINE,
             ),
             metrics=(
-                Block3MetricName.OPEN_SUPPORT_F1,
-                Block3MetricName.D_MAE,
-                Block3MetricName.E_MAE,
-                Block3MetricName.D_MSE,
-                Block3MetricName.E_MSE,
+                *method_metric_order,
             ),
-            condition_ids=("open_mass_scale_grid",),
+            condition_ids=("de_benchmark_shared_realization_set",),
         ),
-        Block3SubexperimentId.OPEN_MODULE_ABLATION.value: SubexperimentSpec(
-            subexperiment_id=Block3SubexperimentId.OPEN_MODULE_ABLATION.value,
-            title="3C-1 open-module ablation",
-            evaluation_family="open_module_ablation",
+        Block3SubexperimentId.CONSISTENCY_ABLATION.value: SubexperimentSpec(
+            subexperiment_id=Block3SubexperimentId.CONSISTENCY_ABLATION.value,
+            title="3C-1 subbag consistency ablation",
+            evaluation_family="consistency_ablation",
             methods=(
                 Block3MethodName.STRIDE_REFERENCE,
-                Block3MethodName.OPEN_CHANNEL_ABLATION,
+                Block3MethodName.CONSISTENCY_ABLATION,
             ),
             metrics=(
-                Block3MetricName.OPEN_SUPPORT_F1,
-                Block3MetricName.D_MAE,
-                Block3MetricName.E_MAE,
-                Block3MetricName.D_MSE,
-                Block3MetricName.E_MSE,
+                *method_metric_order,
             ),
-            condition_ids=("open_module_shared_realization_set",),
+            condition_ids=("consistency_ablation_shared_realization_set",),
         ),
-        Block3SubexperimentId.COHORT_MODULE_ABLATION.value: SubexperimentSpec(
-            subexperiment_id=Block3SubexperimentId.COHORT_MODULE_ABLATION.value,
-            title="3C-2 cohort-module ablation",
-            evaluation_family="cohort_module_ablation",
+        Block3SubexperimentId.GEOMETRY_ABLATION.value: SubexperimentSpec(
+            subexperiment_id=Block3SubexperimentId.GEOMETRY_ABLATION.value,
+            title="3C-2 geometry ablation",
+            evaluation_family="geometry_ablation",
             methods=(
                 Block3MethodName.STRIDE_REFERENCE,
-                Block3MethodName.COHORT_ABLATION,
+                Block3MethodName.GEOMETRY_ABLATION,
             ),
             metrics=(
-                Block3MetricName.A_MAE_ACTIVE,
-                Block3MetricName.A_MSE_ACTIVE,
-                Block3MetricName.OPEN_SUPPORT_F1,
-                Block3MetricName.D_MAE,
-                Block3MetricName.E_MAE,
-                Block3MetricName.D_MSE,
-                Block3MetricName.E_MSE,
+                *method_metric_order,
             ),
-            condition_ids=("cohort_module_shared_realization_set",),
+            condition_ids=("geometry_ablation_shared_realization_set",),
+        ),
+        Block3SubexperimentId.RECURRENCE_ABLATION.value: SubexperimentSpec(
+            subexperiment_id=Block3SubexperimentId.RECURRENCE_ABLATION.value,
+            title="3C-3 recurrence ablation",
+            evaluation_family="recurrence_ablation",
+            methods=(
+                Block3MethodName.STRIDE_REFERENCE,
+                Block3MethodName.RECURRENCE_ABLATION,
+            ),
+            metrics=(
+                *method_metric_order,
+            ),
+            condition_ids=("recurrence_ablation_shared_realization_set",),
         ),
     }
     registry = Block3Registry(
@@ -509,6 +454,15 @@ def _validate_uniqueness(registry: Block3Registry) -> None:
 
 LIVE_BLOCK3_REGISTRY = build_live_block3_registry()
 
+BLOCK3_EXPERIMENT_NAME_TO_SUBEXPERIMENT_ID: dict[str, str] = {
+    "generator_validation": Block3SubexperimentId.GENERATOR_VALIDATION.value,
+    "a_benchmark": Block3SubexperimentId.A_BENCHMARK.value,
+    "de_benchmark": Block3SubexperimentId.DE_BENCHMARK.value,
+    "subbag_consistency_ablation": Block3SubexperimentId.CONSISTENCY_ABLATION.value,
+    "geometry_ablation": Block3SubexperimentId.GEOMETRY_ABLATION.value,
+    "recurrence_ablation": Block3SubexperimentId.RECURRENCE_ABLATION.value,
+}
+
 
 def get_live_block3_registry() -> Block3Registry:
     """Return the frozen live Block 3 registry.
@@ -538,7 +492,7 @@ def get_subexperiment_spec(subexperiment_id: str) -> SubexperimentSpec:
 
     Purpose:
         Fetch the frozen routing spec for one executable subexperiment such as
-        `3A`, `3B`, `3C-1`, or `3C-2`.
+        `3A`, `3B`, `3C-1`, `3C-2`, or `3C-3`.
 
     Inputs:
         subexperiment_id: Public subexperiment identifier expected to belong to
@@ -567,6 +521,22 @@ def get_subexperiment_spec(subexperiment_id: str) -> SubexperimentSpec:
             f"{subexperiment_id!r} does not define an executable Block 3 subexperiment"
         )
     return registry.subexperiments[subexperiment_id]
+
+
+def resolve_block3_experiment_name(experiment_name: str) -> SubexperimentSpec:
+    """Resolve a semantic internal CLI experiment name to its subexperiment spec.
+
+    The internal CLI accepts only semantic names. Numbered ids such as `3A`,
+    `3B-1`, or `3C-1` remain stored as `subexperiment_id` metadata and are not
+    accepted as the primary command surface.
+    """
+    resolved_name = str(experiment_name).strip()
+    if resolved_name not in BLOCK3_EXPERIMENT_NAME_TO_SUBEXPERIMENT_ID:
+        allowed = tuple(BLOCK3_EXPERIMENT_NAME_TO_SUBEXPERIMENT_ID)
+        raise ContractError(
+            f"Unsupported Block 3 experiment name {experiment_name!r}; use one of {allowed!r}"
+        )
+    return get_subexperiment_spec(BLOCK3_EXPERIMENT_NAME_TO_SUBEXPERIMENT_ID[resolved_name])
 
 
 def get_method_spec(method_name: str) -> MethodSpec:
@@ -740,6 +710,7 @@ def get_metric_specs_for_subexperiment(subexperiment_id: str) -> tuple[MetricSpe
 
 __all__ = [
     "Block3Registry",
+    "BLOCK3_EXPERIMENT_NAME_TO_SUBEXPERIMENT_ID",
     "LIVE_BLOCK3_REGISTRY",
     "build_live_block3_registry",
     "get_condition_spec",
@@ -749,4 +720,5 @@ __all__ = [
     "get_metric_specs_for_subexperiment",
     "get_subexperiment_spec",
     "get_validation_object_spec",
+    "resolve_block3_experiment_name",
 ]
