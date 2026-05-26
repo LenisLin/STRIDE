@@ -1,9 +1,11 @@
 """Assemble the STRIDE v1 three-block differentiable objective."""
 from __future__ import annotations
 
+from collections import Counter
 from collections.abc import Sequence
 from typing import Any
 
+from ..errors import ContractError
 from ..geometry.state_geometry import StateGeometry
 from ..observation.balanced_sinkhorn import BalancedSinkhornDivergenceConfig
 from ._constants import (
@@ -46,6 +48,36 @@ from ._totals import (
 from .cohort import compute_recurrence_raw
 from .fit import compute_consistency_raw_from_block_losses, compute_observation_raw
 from .prior import compute_geometry_raw, compute_open_raw
+
+
+def _observation_comparison_plan_metadata(
+    evidence_blocks: Sequence[EvidenceBlock],
+) -> dict[str, Any]:
+    block_counts: Counter[str] = Counter()
+    policies: set[str] = set()
+    for block in evidence_blocks:
+        if not isinstance(block, EvidenceBlock):
+            raise ContractError("evidence_blocks must contain EvidenceBlock objects")
+        patient_id = str(block.patient_id).strip()
+        if patient_id == "":
+            raise ContractError("EvidenceBlock.patient_id must be non-empty")
+        metadata = dict(block.metadata)
+        policy = str(metadata.get("block_construction_policy", "")).strip()
+        if policy == "":
+            raise ContractError(
+                "EvidenceBlock.metadata['block_construction_policy'] is required"
+            )
+        block_counts[patient_id] += 1
+        policies.add(policy)
+    if len(policies) != 1:
+        raise ContractError("evidence blocks must share one block_construction_policy")
+    return {
+        "resolved_by": "task_layer",
+        "n_evidence_blocks": len(evidence_blocks),
+        "domain_policy": "observation_layer_only",
+        "block_construction_policy": next(iter(policies)),
+        "n_blocks_by_patient": dict(sorted(block_counts.items())),
+    }
 
 
 def compute_loss_ledger(
@@ -164,11 +196,7 @@ def compute_loss_ledger(
         },
         "e_bounds": (0.0, 1.0),
         "post_reconstruction_form": "normalize(q_minus @ A + e)",
-        "observation_comparison_plan": {
-            "resolved_by": "task_layer",
-            "n_evidence_blocks": len(evidence_blocks),
-            "domain_policy": "observation_layer_only",
-        },
+        "observation_comparison_plan": _observation_comparison_plan_metadata(evidence_blocks),
         "observation_discrepancy": observation_discrepancy,
         "state_geometry": state_geometry,
         "fov_cost_scales": [
