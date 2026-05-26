@@ -4,7 +4,7 @@ Status: historical review context for the 2026-04-02 full-cohort atlas bundle
 
 Purpose:
 - Record whether the 2026-04-02 descriptive atlas output supported the Task A
-  biological reading before the then-planned Block 1/2 coding round.
+  biological reading before the then-planned Block 1 coding round.
 - This memo is not the live descriptive entry contract. The live descriptive
   atlas now consumes a Stage0 h5ad plus `tasks/task_A/config.yaml` directly and
   does not carry Step 1 prepare, mapping, dry-run, or lineage fields.
@@ -74,7 +74,7 @@ Atlas-level interpretation:
   interface communities shift toward IM and PT.
 - Patient occurrence is strong enough for the next coding round. No community is
   rarer than 27/32 patients, so the current atlas does not reveal an obvious
-  recurrence blocker for paired confirmatory or later robustness analyses.
+  recurrence blocker for paired confirmatory analyses.
 - Overlay coverage is sufficient for the coding gate because it covers the
   highest-burden communities, but morphology-heavy prose should not lean on
   communities `5` or `22` until additional overlays exist.
@@ -94,7 +94,7 @@ Atlas-level interpretation:
   descriptive TC-versus-IM/PT structure is consistent with the current Task A
   biological framing
 - Patient-occurrence verdict:
-  sufficient for the next Block 1/2 coding round; no obvious rarity blocker
+  sufficient for the next Block 1 coding round; no obvious rarity blocker
 - Overlay sufficiency verdict:
   sufficient for coding because the 8 most cell-abundant communities are
   covered, but communities `5` and `22` should not receive strong morphology
@@ -105,4 +105,4 @@ Atlas-level interpretation:
   remains the top subtype; avoid morphology-heavy claims for communities `5`
   and `22`
 - Decision:
-  `ready_for_block1_block2_coding`
+  `ready_for_block1_coding`
