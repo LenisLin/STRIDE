@@ -1,9 +1,7 @@
 # Decisions
 
 This file records the stable method decisions for STRIDE. It is a method
-decision register, not a task log and not a changelog. References to
-`slotar.*` below denote current implementation locations during migration,
-not the canonical future architecture.
+decision register, not a task log and not a changelog.
 
 ## D001 - STRIDE Is Remodeling-First And Patient-Level
 
@@ -214,12 +212,12 @@ not the canonical future architecture.
   - method validation and task reporting are judged by contract behavior and
     falsifiable comparisons rather than attractive biological stories alone.
 
-## D011 - Legacy Compatibility Surfaces Remain Documented But Non-Canonical
+## D011 - Retired Compatibility Surfaces Remain Documented But Non-Canonical
 
 - Context: Current code, task outputs, and historical docs still expose
   transport-centered surfaces.
 - Decision:
-  - keep explicit migration notes for legacy transport-era fields and solver
+  - keep explicit migration notes for retired transport-era fields and solver
     APIs,
   - do not describe those surfaces as the target public method contract,
   - do not force a one-to-one mapping where the relation to
@@ -230,49 +228,44 @@ not the canonical future architecture.
   - later code and task rewrites can be evaluated against a stable contract
     rather than against moving historical artifacts.
 
-## D012 - STRIDE Target Architecture Versus Transitional And Retired Namespaces
+## D012 - STRIDE Package Identity, Public API, And Deferred Namespaces
 
-- Context: The repository now contains a live `stride` core package together with
-  still-live `slotar` implementation surfaces, backend implementations, and
-  legacy compatibility namespaces. The docs also need one rule for retired
-  proxy and bridge-estimator names that must not remain live method surfaces.
+- Context: The live repository now uses `stride` as the package and distribution
+  identity. The codebase also contains implementation namespaces for losses,
+  optimization, workflow orchestration, audit, and outputs. These internal
+  namespaces must not be mistaken for a broad stable public API.
 - Decision:
   - STRIDE-level method contracts are canonical at the design level,
+  - the Python distribution name is `stride`,
   - `src/stride/` is the task-insensitive core architecture and live
     first-pass implementation surface,
-  - `src/slotar/` is the current transitional implementation and compatibility
-    namespace,
-  - `slotar.backends.ot_sinkhorn` is a backend implementation namespace, not a
-    primary public method namespace,
-  - `slotar.representation`, `slotar.uot`, `slotar.contracts`, `slotar.uq`,
-    `slotar.utils`, `slotar.io.bridge`, `slotar.drift`, and `slotar.legacy.*`
-    are compatibility or legacy surfaces,
-  - `history/docs/` is archival only, historical code is archived outside the
-    repo working tree, and `src/history/` is not a live package surface,
+  - the root public API remains deliberately small and beta:
+    `fit_stride`, `build_patient_relation`, `summarize_fit`, `BasisSpec`,
+    `DatasetHandle`, `ContractError`, and `__version__`,
+  - `fit_stride(data, *, source, target, K, ...)` keeps an explicit
+    keyword-only task surface rather than becoming a config-first public API,
+  - `build_patient_relation(...)` remains keyword-only,
+  - `losses`, `optimize`, `audit`, `workflows`, and private `_*.py` modules are
+    implementation surfaces with no public stability commitment,
   - `fit_stride(...)` is the formal full STRIDE estimator entrypoint for
-    manuscript-level use,
-  - `fit_stride_proxy(...)` is retired from the live public API contract; if a
-    compatibility implementation exists, it is historical/proxy context only,
-  - `bridge_observation_matches(...)` and bridge-estimator style public
-    surfaces are retired from the live public API contract; observation
-    matching remains an internal loss/diagnostic/backend comparison role,
-  - a namespace may be canonical even when its final estimator is still
-    deferred; namespace stability and estimator completeness must be documented
-    separately.
+    manuscript-level use, with beta runtime/input-support status,
+  - proxy or bridge-estimator style public entrypoints are not part of the live
+    public API contract,
+  - scverse-style `tl`, `read`, and `pl` namespaces are deferred until the root
+    API, result schema, provenance schema, input envelope, and docs are all
+    stable enough to justify a broader namespace layer,
+  - scientific contract versions and Python API stability are separate: the
+    objective/provenance/operator identifiers may remain v1 while the Python
+    API remains beta.
 - Consequences:
-  - docs must name `stride` as the architecture direction and name
-    `slotar`/backend/legacy surfaces explicitly as implementation or
-    compatibility layers,
+  - docs must name `stride` as the live package identity,
   - `fit_stride(...)` is the only live public full-estimator method surface,
   - proxy or bridge-estimator names must not be described as active full-STRIDE
     estimator surfaces,
-  - current `slotar.*` entrypoints may still be referenced when the docs need
-    to name implementation locations or migration behavior,
-  - docs must not present archived/history paths as active installable
-    surfaces,
-  - backend or compatibility functions such as `batched_uot_solve(...)`,
-    `precompute_logKernels(...)`, and `build_community_features(...)` must not
-    be advertised as the primary biological interface.
+  - archived/history paths must not be presented as active installable surfaces,
+  - backend or compatibility functions such as solver kernels, observation
+    matching helpers, and feature-building utilities must not be advertised as
+    the primary biological interface.
 
 ## D013 - Full STRIDE Uses Objective-Driven Fitted `A/d/e`
 
@@ -318,92 +311,43 @@ not the canonical future architecture.
     explicitly marked as compatibility-only and excluded from the live method
     contract.
 
-## D015 - Full Estimator Objective Grouping And `alpha` Semantics
+## D015 - Full Estimator Three-Block Objective
 
-- Context: The full estimator now has a frozen objective grouping, default
-  `alpha`, normalization policy, and primary hyperparameter semantics. Any
-  lower-level formula not explicitly frozen here remains governed by later
-  decisions and `docs/state.md`.
+- Context: The full estimator has a frozen three-block objective,
+  normalization policy, effective-loss ledger, and separate scale/start
+  initialization contracts.
 - Decision:
-  - the full STRIDE objective is grouped as:
-    `L_total = (1 - alpha) * L_local + alpha * L_regularization`,
-  - group-internal fixed means are:
-    `L_local = mean(normalized_L_obs, normalized_L_open, normalized_L_geometry)`
-    and
-    `L_regularization = mean(normalized_L_consistency, normalized_L_recurrence)`,
-  - default `alpha = 0.5`,
-  - `alpha` is the primary local-versus-regularization hyperparameter,
-  - `alpha` sensitivity grids are optional diagnostics,
-  - `L_local` combines normalized observation data fit, open-channel
-    sparsity/complexity regularization, and geometry/locality prior by fixed
-    rule,
-  - `L_regularization` combines normalized patient consistency and cohort
-    recurrence by fixed rule,
-  - except for open, component scales are computed as
-    `scale_c = max(raw_L_c(theta_init), epsilon_norm)` and
-    `normalized_L_c = raw_L_c(theta) / scale_c`,
-  - `theta_init` is the deterministic identity-plus-small-open initialization,
+  - `L_total = mean(L_fit, L_prior, L_cohort)`,
+  - `L_fit = normalized_L_obs + rho_subbag * L_subbag_consistency`,
+  - `rho_subbag = 1.0`,
+  - `L_prior = mean(normalized_L_open, L_geometry_effective)`,
+  - `L_open_raw = mean(d_p) + mean(e_p)`,
+  - `normalized_L_open = L_open_raw`,
+  - `L_geometry_effective = geometry_effective_weight * normalized_L_geometry`,
+  - `geometry_effective_weight = 0.01`,
+  - `L_cohort = L_recurrence_raw / s_cohort`,
+  - `s_cohort = 1e-2`,
   - `epsilon_norm = 1e-2`,
-  - `epsilon_norm` is the full-estimator loss-normalization floor rather than
-    the Task A Block 3 generator `epsilon_fixed`; equal numeric values do not
-    imply equal semantics,
-  - canonical normalization provenance records `epsilon_norm` as a
-    dimensionless `float64` modeling floor,
-  - open is the explicit normalization exception:
-    `scale_open = 1` and
-    `normalized_L_open = L_open_raw = mean(d_p) + mean(e_p)`,
-  - when a raw baseline loss is valid and finite but the effective scale uses
-    the floor, the floor is provenance-only and does not change `fit_status`
-    or create a warning/failure by itself,
-  - floor provenance records component raw value, effective scale, normalized
-    value, `epsilon_norm`, and floor flag,
-  - the normalization floor does not rescue invalid raw losses or invalid
-    inputs; NaN/Inf values, illegal negative raw losses, empty observation
-    bags, invalid simplexes, invalid cost matrices, unavailable `torch`, and
-    related contract violations still fail fast,
-  - when the geometry baseline is zero or near zero because the initialization
-    is primarily diagonal and `C_norm[i,i] = 0`, `epsilon_norm = 1e-2` is used
-    and `loss.components.geometry.floor_used = true` is recorded as normal
-    provenance,
-  - no geometry-specific normalization scale is defined outside the
-    deterministic initialization policy,
-  - group-internal component weighting is fixed by the contract rather than
-    task-tuned,
+  - objective scale initialization and optimizer start initialization are
+    separate contract objects,
+  - objective scale initialization is identity-plus-small-open,
+  - optimizer start initialization is off-diagonal-seeded
+    identity-plus-small-open,
   - STRIDE v1 uses simple continuous differentiable component losses where
     feasible, but the assembled full objective is treated as a constrained
     non-convex numerical objective rather than as a globally convex program,
-  - the live contract does not claim a global optimum,
-  - the deterministic identity-plus-small-open initialization is fixed as:
-    `delta_init = min(0.05, 1 / (K + 1))`,
-    `A_init = (1 - delta_init) * I_K`,
-    `d_init = delta_init * 1_K`, and
-    `e_init = (delta_init / K) * 1_K`,
-  - that initialization is a feasible numerical starting point and the
-    baseline normalization-scale starting point, not biological evidence for
-    final `A/d/e`,
-  - for patient consistency,
-    `l_{p,b}` is the normalized `L_obs` for patient `p` and resolved evidence
-    block `b` evaluated under shared `A_p` and `e_p`,
-    `L_consistency_raw(p) = mean_b (l_{p,b} - mean_b l_{p,b})^2`,
-  - consistency normalization order is fixed: first determine the `L_obs`
-    normalization scale, then compute `L_consistency_raw` from normalized
-    `L_obs` block values, then compute the consistency normalization scale
-    from `L_consistency_raw(theta_init)` and `epsilon_norm`,
-  - if `n_blocks < 2`, `L_consistency_raw(p) = 0` and
-    `consistency_status = "insufficient_blocks"`,
-  - `L_consistency` penalizes block-level support dispersion and does not
-    replace the observation data-fit term.
+  - the live contract does not claim a global optimum.
 - Consequences:
-  - objective reports must identify the local and regularization groups,
-    normalized component losses, `alpha`, and any sensitivity grid that was
-    run,
-  - later optimizer and raw-formula choices must preserve the frozen grouping,
-    normalization policy, and fixed group-internal weighting unless a later
-    decision explicitly supersedes this one,
-  - local optimum risk is managed through deterministic initialization, fixed
-    optimizer protocol recorded in successful-fit provenance, explicit result
-    status where applicable, and optional stability diagnostics rather than
-    through a global-optimum claim.
+  - objective reports identify fit, prior, and cohort blocks,
+  - provenance records raw, scale, normalized, and effective component values
+    where applicable,
+  - reference-fit outputs record `rho_subbag`, `geometry_effective_weight`,
+    `s_cohort`, `epsilon_norm`, scale initialization, and optimizer start
+    initialization,
+  - local optimum risk is managed through fixed initialization, fixed optimizer
+    protocol recorded in successful-fit provenance, explicit result status
+    where applicable, and optional stability diagnostics rather than through a
+    global-optimum claim.
 
 ## D016 - Open-Channel Variables Are Required Fitted Components
 
@@ -415,7 +359,9 @@ not the canonical future architecture.
   - `d_p` closes source-side outgoing accounting,
   - `e_p` contributes to target-side incoming reconstruction,
   - `L_open_raw = mean(d_p) + mean(e_p)`,
-  - `scale_open = 1`; `normalized_L_open = L_open_raw`,
+  - `normalized_L_open = L_open_raw`,
+  - `L_open` enters the revised v1 prior block together with
+    `L_geometry_effective`,
   - `L_open` is a fixed tendency-level L1 open-channel usage complexity cost,
   - `L_open` does not introduce state-specific targets, budget targets, or
     additional tunable subweights,
@@ -427,22 +373,21 @@ not the canonical future architecture.
     objective context,
   - provenance must record the open-channel complexity form used for the fit.
 
-## D017 - Cohort Recurrence Uses Single Consensus Feedback In V1
+## D017 - Cohort Recurrence Uses Row-Simplex Relation Feedback In V1
 
 - Context: The full-estimator v1 recurrence claim requires recurrence terms to
   participate in estimation without claiming automatic discovery of multiple
   biological remodeling families.
 - Decision:
-  - cohort recurrence feeds back into estimation through the
-    regularization/objective layer,
-  - v1 uses a single cohort consensus relation:
-    `R_p = (A_p, d_p, e_p)` and `R_bar = (A_bar, d_bar, e_bar)`,
-  - `dist(R_p, R_bar) = mean((A_p - A_bar)^2) + mean((d_p - d_bar)^2) + mean((e_p - e_bar)^2)`,
-  - `L_recurrence_raw = mean_p dist(R_p, R_bar)`,
-  - `R_bar` is the cohort-level consensus relation,
-  - recurrence v1 encourages patient-level `A/d/e` not to deviate without
-    constraint from cohort-supported consensus structure,
-  - recurrence v1 reports cohort consensus `A/d/e`, patient support count,
+  - `T_p = [A_p | d_p]`,
+  - `T_bar = mean_p T_p`,
+  - `e_bar = mean_p e_p`,
+  - `L_T = mean_p mean_i sum_j (T_p[i,j] - T_bar[i,j])^2`,
+  - `L_e_rec = mean_p mean_j (e_p[j] - e_bar[j])^2`,
+  - `L_recurrence_raw = L_T + L_e_rec`,
+  - `L_cohort = L_recurrence_raw / s_cohort`,
+  - `s_cohort = 1e-2`,
+  - recurrence v1 reports cohort consensus `T/e`, patient support count,
     dispersion around consensus, and recurrence fit status.
 - Consequences:
   - estimator implementations must connect recurrence feedback to the fitted
@@ -466,26 +411,22 @@ not the canonical future architecture.
   - ablations must refit `A_p`, `d_p`, and `e_p` under the ablated objective;
     they must not be implemented by masking reference-fit outputs or by
     post-hoc rescoring only,
-  - ablations retain the reference fit's deterministic initialization,
-    optimizer protocol, resolved evidence blocks, and rerun-specific
-    semi-synthetic realization; the only objective change is removal or
-    zero-weighting of the corresponding recurrence, geometry, or consistency
-    term,
-  - ablations keep fixed group denominators and do not reweight remaining
-    terms:
-    `geometry` uses
-    `L_local = (normalized_L_obs + normalized_L_open + 0) / 3`,
-    `recurrence` uses
-    `L_regularization = (normalized_L_consistency + 0) / 2`, and
-    `consistency` uses
-    `L_regularization = (0 + normalized_L_recurrence) / 2`,
+  - ablations retain the reference fit's initialization, optimizer protocol,
+    resolved evidence blocks, and rerun-specific semi-synthetic realization;
+    the only objective change is removal or zero-weighting of the corresponding
+    recurrence, geometry, or consistency term,
+  - ablations use the three-block reference objective with the ablated term set
+    to zero:
+    `geometry` uses `L_prior = mean(normalized_L_open, 0)`,
+    `recurrence` uses `L_total = mean(L_fit, L_prior, 0)`, and
+    `consistency` uses `L_fit = normalized_L_obs + 0`,
   - no-`d/e`, open-channel removal, closed, balanced, and transport-style
     comparisons remain baseline/comparator surfaces rather than 3C ablations.
 - Consequences:
   - ablation results must identify the fitted objective configuration,
   - ablation/refit experiment provenance must record `ablation_mode`, the
-    fixed-denominator policy, and the remove versus zero-weight implementation
-    route for each ablated fit,
+    three-block ablation objective policy, and the remove versus zero-weight
+    implementation route for each ablated fit,
   - ordinary successful reference-fit provenance is not required to expose
     ablation as a user-level `fit_stride(...)` control; compatibility payloads
     may temporarily record `ablation_mode: "none"` only as a migration label.
@@ -511,39 +452,51 @@ not the canonical future architecture.
 
 ```yaml
 provenance_schema_version: "stride_fit_provenance.v1"
-alpha: float
+objective_contract_version: "stride_full_estimator_three_block_v1"
 random_seed: int | null
-initialization:
+objective_constants:
+  rho_subbag: 1.0
+  geometry_effective_weight: 0.01
+  s_cohort: 0.01
+  epsilon_norm: 0.01
+objective_scale_initialization:
   policy: "identity_plus_small_open"
   delta_init: float
   K: int
   dtype: "float64"
+optimizer_start_initialization:
+  policy: "offdiag_seeded_identity_plus_small_open"
+  delta_init: float
+  offdiag_init_mass: 0.01
+  numerical_min_mass: 1.0e-12
+  K: int
+  dtype: "float64"
 loss:
   total: float
-  local: float
-  regularization: float
-  epsilon_norm: 0.01
-  local_denominator: 3
-  regularization_denominator: 2
+  fit: float
+  prior: float
+  cohort: float
   components:
     obs: {raw: float, scale: float, normalized: float, floor_used: bool}
-    open: {raw: float, scale: float, normalized: float, floor_used: bool}
-    geometry: {raw: float, scale: float, normalized: float, floor_used: bool}
-    consistency: {raw: float, scale: float, normalized: float, floor_used: bool}
-    recurrence: {raw: float, scale: float, normalized: float, floor_used: bool}
+    open: {raw: float, normalized: float}
+    geometry: {raw: float, scale: float, normalized: float, effective: float, floor_used: bool}
+    subbag_consistency: {raw: float, effective: float, status: string}
+    recurrence: {raw: float, cohort_scaled: float}
 e_bounds: [0.0, 1.0]
 post_reconstruction_form: "normalize(q_minus @ A + e)"
 observation_comparison_plan:
   resolved_by: "task_layer"
   n_evidence_blocks: int
   domain_policy: "observation_layer_only"
+  block_construction_policy: string
+  n_blocks_by_patient: {patient_id: int}
 observation_discrepancy:
   operator_version: "D_obs^BalancedSinkhornDivergence-v1"
   backend: "torch"
   dtype: "float64"
   inner_epsilon_schedule: [0.5, 0.2, 0.1]
   outer_epsilon_schedule: [0.5, 0.2, 0.1]
-  max_iter: 1000
+  max_iter: 100
   tol: 1e-6
   warning_tol: 1e-4
 state_geometry:
@@ -553,24 +506,26 @@ optimizer:
   framework: "torch"
   algorithm: "AdamW"
   weight_decay: 0.0
-  scheduler_policy: "none" | "ReduceLROnPlateau_on_total_objective"
+  scheduler_policy: "none" | "CosineAnnealingLR"
 recurrence:
   support_n_patients: int
   dispersion: float
 detailed_optimizer_trace: bool
 ```
 
+  - the public adapter uses `partitioned_fov_subbag_v1` for `FovObservation`
+    inputs; each evidence block remains a source/target bag of FOV observations,
   - ablation/refit experiment fits may add `ablation_mode`,
     `ablation_term_handling`, and
-    `ablation_denominator_policy="fixed_denominator_no_reweighting"` as
+    `ablation_objective_policy="three_block_reference_term_zeroing"` as
     experiment-only provenance fields; they are not required user-facing fields
     for an ordinary successful `fit_stride(...)` fit,
   - `D_obs^BalancedSinkhornDivergence-v1` is the canonical successful-fit
     observation-discrepancy operator version in provenance,
   - detailed optimizer traces are off by default and may be emitted only as
     optional diagnostics,
-  - optional provenance diagnostics are limited to `alpha_sensitivity`,
-    `legacy_observation_diagnostics`, and `optimizer_trace_ref`,
+  - optional provenance diagnostics are limited to `objective_sensitivity`
+    and `optimizer_trace_ref`,
   - optional provenance diagnostics must not change objective semantics,
     biological claims, or the canonical meaning of `L_obs`,
   - compact provenance does not require `fit_status`, `patient_status`,
@@ -614,7 +569,7 @@ detailed_optimizer_trace: bool
     divergence operator,
   - the canonical observation layer has no unbalanced unmatched residual; open
     behavior is expressed only by fitted biological `d/e`,
-  - legacy UOT, `D_pos/B_pos`, and unbalanced observation residual diagnostics
+  - retired UOT, `D_pos/B_pos`, and unbalanced observation residual diagnostics
     remain diagnostic or Block 3 comparator concepts, including the external
     Task A `uot_baseline` comparator name, rather than canonical `L_obs`,
     biological `d/e`, or independently weighted loss components,
@@ -629,9 +584,9 @@ detailed_optimizer_trace: bool
     comparison plan and the canonical
     `D_obs^BalancedSinkhornDivergence-v1` operator settings required by the
     success schema,
-  - legacy observation diagnostics may appear only in the optional
-    `legacy_observation_diagnostics` provenance field,
-  - manuscript-level claims must distinguish legacy observation diagnostics
+  - retired observation diagnostics are not part of compact successful-fit
+    provenance,
+  - manuscript-level claims must distinguish retired observation diagnostics
     from fitted patient-level open-channel quantities and cohort-level
     recurrence evidence.
 
@@ -644,19 +599,27 @@ detailed_optimizer_trace: bool
   - outer full-objective optimization uses AdamW,
   - `weight_decay = 0.0`,
   - AdamW is a numerical optimizer, not a biological regularizer,
-  - all biological regularization comes only from explicit objective
-    components: `L_open`, `L_geometry`, `L_consistency`, and `L_recurrence`,
-  - a scheduler may be used only if fixed, predeclared, and recorded in
-    provenance; the canonical v1 recommendation is `ReduceLROnPlateau` on the
-    total objective,
+  - all biological regularization comes only from explicit objective blocks and
+    components: `L_fit`, `L_prior`, `L_cohort`, `L_open`,
+    `L_geometry_effective`, `L_subbag_consistency`, and `L_recurrence_raw`,
+  - the canonical reference protocol is fixed as `20` warm-up AdamW steps at
+    `lr = 0.02`, followed by a main AdamW stage at `lr = 0.05` with
+    `CosineAnnealingLR`,
+  - the cosine settings are fixed as `T_max = 200` and `eta_min = 0.0`,
+  - main-stage early stopping becomes eligible only after `100` main steps,
+    with main-stage hard cap `200` steps,
   - the observation term uses the torch-native differentiable canonical
     `D_obs^BalancedSinkhornDivergence-v1` operator,
   - the balanced Sinkhorn divergence operator solves the observation
     discrepancy; AdamW optimizes `A_p`, `d_p`, `e_p`, and any necessary
     objective variables.
 - Consequences:
-  - compact successful-fit provenance records optimizer framework, algorithm,
-    `weight_decay`, and scheduler policy as numerical protocol fields,
+  - compact successful-fit provenance records the fixed two-phase optimizer
+    protocol, cosine settings, and early-stop thresholds as numerical
+    protocol fields,
+  - finite optimizer exits that reach the main-stage hard cap remain
+    successful fits and record an explicit optimizer exit flag rather than
+    becoming optimizer-level deferred results,
   - optimizer protocol provenance must distinguish numerical optimization
     settings from objective regularization,
   - optimizer or dependency contract violations fail fast through the same
@@ -698,17 +661,18 @@ detailed_optimizer_trace: bool
     `s_G_init = 1.0` and floor usage is recorded,
   - `s_G_init` is not recomputed dynamically during optimization,
   - fixed v1 numeric defaults are inner epsilon schedule `(0.5, 0.2, 0.1)`,
-    outer epsilon schedule `(0.5, 0.2, 0.1)`, `max_iter = 1000` per epsilon
+    outer epsilon schedule `(0.5, 0.2, 0.1)`, `max_iter = 100` per epsilon
     stage, `tol = 1e-6`, `warning_tol = 1e-4`, backend `torch`, and dtype
     `float64`,
   - empty source or target FOV bag, invalid simplex, negative entries, NaN/Inf,
     invalid cost matrix, or unavailable `torch` for the canonical full
     estimator fails explicitly,
   - no padding is allowed,
-  - reaching `max_iter` with finite values and final update `<= warning_tol`
-    is usable with warning; final update above `warning_tol` is numerical
-    failure,
-  - UOT, `D_pos/B_pos`, and unbalanced observation residuals are legacy,
+  - reaching `max_iter` with finite values is usable with warning; updates
+    larger than `warning_tol` are recorded convergence warnings on
+    diagnostic/profiling surfaces rather than every production optimizer
+    forward,
+  - UOT, `D_pos/B_pos`, and unbalanced observation residuals are retired,
     diagnostic, or Block 3 comparator concepts only,
   - Task A Block 3 preserves `uot_baseline` as an external comparator name and
     does not rename it to the canonical full-estimator operator.
@@ -718,10 +682,10 @@ detailed_optimizer_trace: bool
     `torch`, dtype `float64`, inner and outer epsilon schedules, `max_iter`,
     `tol`, `warning_tol`, and `C_norm = C_raw / s_C` state-geometry
     normalization,
-  - UOT remains a legacy diagnostic or Block 3 comparator concept only and is
+  - UOT remains a retired diagnostic or Block 3 comparator concept only and is
     not the canonical full-estimator observation operator,
   - tests and documents that describe canonical full-estimator `L_obs` must not
-    treat legacy UOT or legacy residual diagnostics as canonical biological
+    treat retired UOT or retired residual diagnostics as canonical biological
     open-channel quantities.
 
 ## D023 - Geometry/Locality Prior Uses Raw A And Symmetric Shared-State Cost
@@ -756,17 +720,13 @@ detailed_optimizer_trace: bool
   - diagonal self-retention pays no geometry cost because `C_norm[i,i] = 0`,
   - cohort/objective-level `L_geometry_raw` is the simple mean over valid
     fitted patients,
-  - `normalized_L_geometry` uses the deterministic
-    identity-plus-small-open baseline-scale policy with
-    `scale_geometry = max(raw_L_geometry(theta_init), 1e-2)`,
+  - `scale_geometry = max(L_geometry_raw(theta_scale), epsilon_norm)`,
+  - `normalized_L_geometry = L_geometry_raw(theta) / scale_geometry`,
+  - `L_geometry_effective = geometry_effective_weight * normalized_L_geometry`,
+  - `geometry_effective_weight = 0.01` in the v1 reference objective,
   - a zero or near-zero geometry baseline uses `epsilon_norm = 1e-2` and
     records `loss.components.geometry.floor_used = true` as provenance-only
     normal provenance when the raw geometry loss is valid,
-  - no geometry-specific scale outside the initialization policy is introduced,
-  - no geometry-specific objective weight is introduced,
-  - `L_geometry` is the fixed normalized geometry component inside
-    `L_local = mean(normalized_L_obs, normalized_L_open, normalized_L_geometry)`,
-  - `L_regularization = mean(normalized_L_consistency, normalized_L_recurrence)`,
   - the default scientific result surface remains fitted `A_p`, `d_p`, and
     `e_p` plus existing derived summaries,
   - geometry information is emitted through the objective, compact provenance,
@@ -775,9 +735,9 @@ detailed_optimizer_trace: bool
   - official and custom representation routes must provide a valid
     shared-state geometry cost matrix before canonical fitting,
   - compact provenance records `state_geometry.s_C`,
-    `loss.components.geometry.{raw, scale, normalized, floor_used}`,
-    `epsilon_norm`, and ablation mode,
+    `loss.components.geometry.{raw, scale, normalized, effective, floor_used}`,
+    `epsilon_norm`, `geometry_effective_weight`, and ablation mode,
   - geometry ablation removes or zeroes the geometry/locality term and refits
     `A_p`, `d_p`, and `e_p` under the ablated objective,
-  - later implementation work must preserve the fixed objective grouping and
-    avoid introducing a geometry-specific hyperparameter.
+  - later implementation work must preserve the raw, normalized, and effective
+    geometry ledger distinction.
