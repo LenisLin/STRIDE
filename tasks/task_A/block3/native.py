@@ -5,8 +5,8 @@ Task and purpose:
     `3B-1 A benchmark` and `3B-2 d/e benchmark` architecture scaffold.
 
 Relevant document anchors:
-    - docs/task_A_spec.md §4.5.5-§4.5.6 and §5.1 Phase 3
-    - docs/task_A_block3_redesign_v1_1.md §4.3, §5.5, §5.6
+    - docs/task_A/spec.md §4.5.5-§4.5.6 and §5.1 Phase 3
+    - docs/task_A/block3/scientific_contract.md §4.3, §5.5, §5.6
 
 Expected inputs and outputs:
     Inputs are numpy-compatible native arrays for STRIDE `A/d/e` outputs and
