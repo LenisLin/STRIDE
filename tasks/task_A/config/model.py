@@ -26,8 +26,7 @@ import yaml
 SUPPORTED_TASK_A_BLOCKS: frozenset[str] = frozenset(
     {
         "block0_locality_gate",
-        "block1_continuity_backbone",
-        "block2_bounded_audit",
+        "block1_real_data_discovery",
     }
 )
 REMOVED_TASK_A_TOP_LEVEL_CONFIG_KEYS: frozenset[str] = frozenset(
@@ -102,32 +101,6 @@ class TaskABlock1Config:
 
 
 @dataclass(frozen=True)
-class TaskABlock2Config:
-    master_seed: int
-    primary_routes: tuple[str, ...]
-    robust_direction_consistency_threshold: float
-    partial_direction_consistency_threshold: float
-    family_estimable_fraction_threshold: float
-    family_patient_support_threshold: float
-    community_estimable_fraction_threshold: float
-    community_patient_support_threshold: float
-    patient_subsample_fraction: float
-    patient_subsample_replicates: int
-    patient_subsample_min_patients: int
-    leave_some_out_fraction: float
-    leave_some_out_replicates: int
-    leave_some_out_min_patients: int
-    seed_rerun_replicates: int
-    roi_drop_replicates: int
-    roi_drop_min_rois_per_domain: int
-    roi_drop_n_drop_per_domain: int
-    primary_source_communities: tuple[int, ...]
-    secondary_source_communities: tuple[int, ...]
-    primary_target_communities: tuple[int, ...]
-    secondary_target_communities: tuple[int, ...]
-
-
-@dataclass(frozen=True)
 class TaskABlock3Config:
     """Frozen Block 3 config surface.
 
@@ -136,7 +109,9 @@ class TaskABlock3Config:
     retired and must not be reintroduced here.
     """
 
+    master_seed: int
     enabled_subexperiments: tuple[str, ...]
+    benchmark_pair_family: str
     review_primary_source_communities: tuple[int, ...]
     review_secondary_source_communities: tuple[int, ...]
     review_primary_target_communities: tuple[int, ...]
@@ -165,7 +140,6 @@ class TaskAConfigBundle:
     ordered_proxy: TaskAOrderedProxySpec
     data: TaskADataConfig
     block1: TaskABlock1Config
-    block2: TaskABlock2Config
     block3: TaskABlock3Config
     stage0: TaskAStage0Config
     exports: TaskAExportConfig
@@ -202,12 +176,13 @@ DEFAULT_ORDERED_PAIR_FAMILIES: tuple[TaskAOrderedPairFamilySpec, ...] = (
 
 DEFAULT_BLOCK1_TARGET_ALPHA = 0.05
 DEFAULT_BLOCK1_LAMBDA_GRID: tuple[float, ...] = (0.05, 0.1, 0.5, 1.0, 2.0, 5.0, 10.0)
-DEFAULT_BLOCK2_PRIMARY_ROUTES: tuple[str, ...] = ("patient_subsample", "leave_some_out")
-DEFAULT_BLOCK2_PRIMARY_SOURCE_COMMUNITIES: tuple[int, ...] = (1, 10, 11, 12)
-DEFAULT_BLOCK2_SECONDARY_SOURCE_COMMUNITIES: tuple[int, ...] = (0, 3, 6, 16, 17)
-DEFAULT_BLOCK2_PRIMARY_TARGET_COMMUNITIES: tuple[int, ...] = (23, 20, 2, 22)
-DEFAULT_BLOCK2_SECONDARY_TARGET_COMMUNITIES: tuple[int, ...] = (14, 13, 21)
+DEFAULT_BLOCK3_MASTER_SEED = 17
+DEFAULT_BLOCK3_REVIEW_PRIMARY_SOURCE_COMMUNITIES: tuple[int, ...] = (1, 10, 11, 12)
+DEFAULT_BLOCK3_REVIEW_SECONDARY_SOURCE_COMMUNITIES: tuple[int, ...] = (0, 3, 6, 16, 17)
+DEFAULT_BLOCK3_REVIEW_PRIMARY_TARGET_COMMUNITIES: tuple[int, ...] = (23, 20, 2, 22)
+DEFAULT_BLOCK3_REVIEW_SECONDARY_TARGET_COMMUNITIES: tuple[int, ...] = (14, 13, 21)
 DEFAULT_BLOCK3_ENABLED_SUBEXPERIMENTS: tuple[str, ...] = ("3A", "3B", "3C")
+DEFAULT_BLOCK3_BENCHMARK_PAIR_FAMILY = "TC-IM"
 
 
 def load_raw_task_a_config(config_path: str | Path) -> dict[str, Any]:
@@ -238,18 +213,6 @@ def load_enabled_blocks(config: Mapping[str, Any]) -> tuple[str, ...]:
         raise ValueError(
             "enabled_blocks contains unsupported Task-A blocks: "
             f"{unsupported}"
-        )
-    if "block1_continuity_backbone" in enabled_blocks_list and "block0_locality_gate" not in enabled_blocks_list:
-        raise ValueError(
-            "block1_continuity_backbone depends on block0_locality_gate and cannot run alone"
-        )
-    if "block2_bounded_audit" in enabled_blocks_list and "block1_continuity_backbone" not in enabled_blocks_list:
-        raise ValueError(
-            "block2_bounded_audit depends on block1_continuity_backbone and cannot run alone"
-        )
-    if "block2_bounded_audit" in enabled_blocks_list and "block0_locality_gate" not in enabled_blocks_list:
-        raise ValueError(
-            "block2_bounded_audit depends on block0_locality_gate and cannot run before the Block 0 gate"
         )
     return tuple(enabled_blocks_list)
 
@@ -408,46 +371,6 @@ def _coerce_block1_config(config: Mapping[str, Any]) -> TaskABlock1Config:
     )
 
 
-def _coerce_probability_like(
-    value: object,
-    *,
-    field_name: str,
-    inclusive_zero: bool = False,
-    inclusive_one: bool = True,
-) -> float:
-    try:
-        numeric_value = float(value)
-    except (TypeError, ValueError) as exc:
-        raise ValueError(f"Task-A config key {field_name!r} must be a finite float") from exc
-    if not math.isfinite(numeric_value):
-        raise ValueError(f"Task-A config key {field_name!r} must be a finite float")
-    lower_ok = numeric_value >= 0.0 if inclusive_zero else numeric_value > 0.0
-    upper_ok = numeric_value <= 1.0 if inclusive_one else numeric_value < 1.0
-    if not (lower_ok and upper_ok):
-        comparator = "[0, 1]" if inclusive_zero and inclusive_one else "(0, 1]"
-        if not inclusive_one:
-            comparator = "[0, 1)" if inclusive_zero else "(0, 1)"
-        raise ValueError(f"Task-A config key {field_name!r} must lie in {comparator}")
-    return numeric_value
-
-
-def _coerce_nonnegative_int(value: object, *, field_name: str) -> int:
-    try:
-        numeric_value = int(value)
-    except (TypeError, ValueError) as exc:
-        raise ValueError(f"Task-A config key {field_name!r} must be an integer >= 0") from exc
-    if numeric_value < 0:
-        raise ValueError(f"Task-A config key {field_name!r} must be an integer >= 0")
-    return numeric_value
-
-
-def _coerce_positive_int(value: object, *, field_name: str) -> int:
-    numeric_value = _coerce_nonnegative_int(value, field_name=field_name)
-    if numeric_value <= 0:
-        raise ValueError(f"Task-A config key {field_name!r} must be an integer > 0")
-    return numeric_value
-
-
 def _coerce_int_sequence(
     value: object,
     *,
@@ -461,34 +384,6 @@ def _coerce_int_sequence(
         raise ValueError(f"Task-A config key {field_name!r} must be a sequence of integers") from exc
     if len(set(resolved)) != len(resolved):
         raise ValueError(f"Task-A config key {field_name!r} must not contain duplicates")
-    return resolved
-
-
-def _coerce_route_sequence(
-    value: object,
-    *,
-    field_name: str,
-) -> tuple[str, ...]:
-    supported_routes = {
-        "patient_subsample",
-        "leave_some_out",
-        "seed_rerun",
-        "roi_drop_one_per_domain",
-    }
-    if isinstance(value, (str, bytes)) or not isinstance(value, Sequence):
-        raise ValueError(f"Task-A config key {field_name!r} must be a sequence of route names")
-    resolved = tuple(str(item).strip() for item in value)
-    if not resolved:
-        raise ValueError(f"Task-A config key {field_name!r} must not be empty")
-    if any(not item for item in resolved):
-        raise ValueError(f"Task-A config key {field_name!r} must not contain empty route names")
-    if len(set(resolved)) != len(resolved):
-        raise ValueError(f"Task-A config key {field_name!r} must not contain duplicates")
-    unsupported = sorted(set(resolved) - supported_routes)
-    if unsupported:
-        raise ValueError(
-            f"Task-A config key {field_name!r} contains unsupported Block 2 routes: {unsupported}"
-        )
     return resolved
 
 
@@ -515,128 +410,37 @@ def _coerce_block3_subexperiment_sequence(
     return resolved
 
 
-def _coerce_block2_config(config: Mapping[str, Any]) -> TaskABlock2Config:
-    block2_raw = config.get("block2", {})
-    if block2_raw is None:
-        block2_raw = {}
-    if not isinstance(block2_raw, Mapping):
-        raise ValueError("Task-A config key 'block2' must be a mapping")
+def _coerce_block3_benchmark_pair_family(
+    block3_raw: Mapping[str, Any],
+    *,
+    ordered_proxy: TaskAOrderedProxySpec,
+) -> str:
+    if "benchmark_pair_family" not in block3_raw:
+        raise ValueError("Task-A config is missing block3.benchmark_pair_family")
+    benchmark_pair_family = str(block3_raw.get("benchmark_pair_family", "")).strip()
+    if not benchmark_pair_family:
+        raise ValueError("Task-A config key 'block3.benchmark_pair_family' must not be empty")
 
-    block2_config = TaskABlock2Config(
-        master_seed=int(block2_raw.get("master_seed", 17)),
-        primary_routes=_coerce_route_sequence(
-            block2_raw.get("primary_routes", DEFAULT_BLOCK2_PRIMARY_ROUTES),
-            field_name="block2.primary_routes",
-        ),
-        robust_direction_consistency_threshold=_coerce_probability_like(
-            block2_raw.get("robust_direction_consistency_threshold", 2.0 / 3.0),
-            field_name="block2.robust_direction_consistency_threshold",
-            inclusive_zero=False,
-            inclusive_one=True,
-        ),
-        partial_direction_consistency_threshold=_coerce_probability_like(
-            block2_raw.get("partial_direction_consistency_threshold", 0.5),
-            field_name="block2.partial_direction_consistency_threshold",
-            inclusive_zero=True,
-            inclusive_one=True,
-        ),
-        family_estimable_fraction_threshold=_coerce_probability_like(
-            block2_raw.get("family_estimable_fraction_threshold", 0.9),
-            field_name="block2.family_estimable_fraction_threshold",
-            inclusive_zero=False,
-            inclusive_one=True,
-        ),
-        family_patient_support_threshold=_coerce_probability_like(
-            block2_raw.get("family_patient_support_threshold", 2.0 / 3.0),
-            field_name="block2.family_patient_support_threshold",
-            inclusive_zero=False,
-            inclusive_one=True,
-        ),
-        community_estimable_fraction_threshold=_coerce_probability_like(
-            block2_raw.get("community_estimable_fraction_threshold", 0.7),
-            field_name="block2.community_estimable_fraction_threshold",
-            inclusive_zero=False,
-            inclusive_one=True,
-        ),
-        community_patient_support_threshold=_coerce_probability_like(
-            block2_raw.get("community_patient_support_threshold", 0.6),
-            field_name="block2.community_patient_support_threshold",
-            inclusive_zero=False,
-            inclusive_one=True,
-        ),
-        patient_subsample_fraction=_coerce_probability_like(
-            block2_raw.get("patient_subsample_fraction", 0.75),
-            field_name="block2.patient_subsample_fraction",
-            inclusive_zero=False,
-            inclusive_one=False,
-        ),
-        patient_subsample_replicates=_coerce_nonnegative_int(
-            block2_raw.get("patient_subsample_replicates", 8),
-            field_name="block2.patient_subsample_replicates",
-        ),
-        patient_subsample_min_patients=_coerce_positive_int(
-            block2_raw.get("patient_subsample_min_patients", 1),
-            field_name="block2.patient_subsample_min_patients",
-        ),
-        leave_some_out_fraction=_coerce_probability_like(
-            block2_raw.get("leave_some_out_fraction", 0.125),
-            field_name="block2.leave_some_out_fraction",
-            inclusive_zero=False,
-            inclusive_one=False,
-        ),
-        leave_some_out_replicates=_coerce_nonnegative_int(
-            block2_raw.get("leave_some_out_replicates", 8),
-            field_name="block2.leave_some_out_replicates",
-        ),
-        leave_some_out_min_patients=_coerce_positive_int(
-            block2_raw.get("leave_some_out_min_patients", 1),
-            field_name="block2.leave_some_out_min_patients",
-        ),
-        seed_rerun_replicates=_coerce_nonnegative_int(
-            block2_raw.get("seed_rerun_replicates", 3),
-            field_name="block2.seed_rerun_replicates",
-        ),
-        roi_drop_replicates=_coerce_nonnegative_int(
-            block2_raw.get("roi_drop_replicates", 4),
-            field_name="block2.roi_drop_replicates",
-        ),
-        roi_drop_min_rois_per_domain=_coerce_positive_int(
-            block2_raw.get("roi_drop_min_rois_per_domain", 3),
-            field_name="block2.roi_drop_min_rois_per_domain",
-        ),
-        roi_drop_n_drop_per_domain=_coerce_positive_int(
-            block2_raw.get("roi_drop_n_drop_per_domain", 1),
-            field_name="block2.roi_drop_n_drop_per_domain",
-        ),
-        primary_source_communities=_coerce_int_sequence(
-            block2_raw.get("primary_source_communities", DEFAULT_BLOCK2_PRIMARY_SOURCE_COMMUNITIES),
-            field_name="block2.primary_source_communities",
-        ),
-        secondary_source_communities=_coerce_int_sequence(
-            block2_raw.get("secondary_source_communities", DEFAULT_BLOCK2_SECONDARY_SOURCE_COMMUNITIES),
-            field_name="block2.secondary_source_communities",
-        ),
-        primary_target_communities=_coerce_int_sequence(
-            block2_raw.get("primary_target_communities", DEFAULT_BLOCK2_PRIMARY_TARGET_COMMUNITIES),
-            field_name="block2.primary_target_communities",
-        ),
-        secondary_target_communities=_coerce_int_sequence(
-            block2_raw.get("secondary_target_communities", DEFAULT_BLOCK2_SECONDARY_TARGET_COMMUNITIES),
-            field_name="block2.secondary_target_communities",
-        ),
-    )
-    if (
-        block2_config.partial_direction_consistency_threshold
-        > block2_config.robust_direction_consistency_threshold
-    ):
+    ordered_family_names = tuple(family.name for family in ordered_proxy.pair_families)
+    if benchmark_pair_family not in ordered_family_names:
         raise ValueError(
-            "Task-A config key 'block2.partial_direction_consistency_threshold' must be <= "
-            "'block2.robust_direction_consistency_threshold'"
+            "Task-A config key 'block3.benchmark_pair_family' must name an ordered pair family; "
+            f"got {benchmark_pair_family!r}, available families are {ordered_family_names!r}"
         )
-    return block2_config
+    if benchmark_pair_family != DEFAULT_BLOCK3_BENCHMARK_PAIR_FAMILY:
+        raise ValueError(
+            "Task-A Block 3 currently accepts only "
+            f"block3.benchmark_pair_family={DEFAULT_BLOCK3_BENCHMARK_PAIR_FAMILY!r}; "
+            f"got {benchmark_pair_family!r}"
+        )
+    return benchmark_pair_family
 
 
-def _coerce_block3_config(config: Mapping[str, Any]) -> TaskABlock3Config:
+def _coerce_block3_config(
+    config: Mapping[str, Any],
+    *,
+    ordered_proxy: TaskAOrderedProxySpec,
+) -> TaskABlock3Config:
     block3_raw = config.get("block3", {})
     if block3_raw is None:
         block3_raw = {}
@@ -651,35 +455,40 @@ def _coerce_block3_config(config: Mapping[str, Any]) -> TaskABlock3Config:
         )
 
     block3_config = TaskABlock3Config(
+        master_seed=int(block3_raw.get("master_seed", DEFAULT_BLOCK3_MASTER_SEED)),
         enabled_subexperiments=_coerce_block3_subexperiment_sequence(
             block3_raw.get("enabled_subexperiments", DEFAULT_BLOCK3_ENABLED_SUBEXPERIMENTS),
             field_name="block3.enabled_subexperiments",
         ),
+        benchmark_pair_family=_coerce_block3_benchmark_pair_family(
+            block3_raw,
+            ordered_proxy=ordered_proxy,
+        ),
         review_primary_source_communities=_coerce_int_sequence(
             block3_raw.get(
                 "review_primary_source_communities",
-                DEFAULT_BLOCK2_PRIMARY_SOURCE_COMMUNITIES,
+                DEFAULT_BLOCK3_REVIEW_PRIMARY_SOURCE_COMMUNITIES,
             ),
             field_name="block3.review_primary_source_communities",
         ),
         review_secondary_source_communities=_coerce_int_sequence(
             block3_raw.get(
                 "review_secondary_source_communities",
-                DEFAULT_BLOCK2_SECONDARY_SOURCE_COMMUNITIES,
+                DEFAULT_BLOCK3_REVIEW_SECONDARY_SOURCE_COMMUNITIES,
             ),
             field_name="block3.review_secondary_source_communities",
         ),
         review_primary_target_communities=_coerce_int_sequence(
             block3_raw.get(
                 "review_primary_target_communities",
-                DEFAULT_BLOCK2_PRIMARY_TARGET_COMMUNITIES,
+                DEFAULT_BLOCK3_REVIEW_PRIMARY_TARGET_COMMUNITIES,
             ),
             field_name="block3.review_primary_target_communities",
         ),
         review_secondary_target_communities=_coerce_int_sequence(
             block3_raw.get(
                 "review_secondary_target_communities",
-                DEFAULT_BLOCK2_SECONDARY_TARGET_COMMUNITIES,
+                DEFAULT_BLOCK3_REVIEW_SECONDARY_TARGET_COMMUNITIES,
             ),
             field_name="block3.review_secondary_target_communities",
         ),
@@ -716,16 +525,16 @@ def load_task_a_config_bundle(config_path: str | Path) -> TaskAConfigBundle:
     resolved_path = Path(config_path).expanduser().resolve()
     raw_config = load_raw_task_a_config(resolved_path)
     validate_task_a_config_surface(raw_config)
+    ordered_proxy = _coerce_pair_family_specs(raw_config)
     return TaskAConfigBundle(
         config_path=resolved_path,
         raw_config=raw_config,
         config_fingerprint=compute_task_a_config_fingerprint(raw_config),
         enabled_blocks=load_enabled_blocks(raw_config),
-        ordered_proxy=_coerce_pair_family_specs(raw_config),
+        ordered_proxy=ordered_proxy,
         data=_coerce_data_config(raw_config),
         block1=_coerce_block1_config(raw_config),
-        block2=_coerce_block2_config(raw_config),
-        block3=_coerce_block3_config(raw_config),
+        block3=_coerce_block3_config(raw_config, ordered_proxy=ordered_proxy),
         stage0=_coerce_stage0_config(raw_config),
         exports=_coerce_export_config(raw_config),
         benchmarks=_coerce_benchmark_config(raw_config),
@@ -737,7 +546,6 @@ __all__ = [
     "SUPPORTED_TASK_A_BLOCKS",
     "TaskABenchmarkConfig",
     "TaskABlock1Config",
-    "TaskABlock2Config",
     "TaskABlock3Config",
     "TaskAConfigBundle",
     "TaskADataConfig",
@@ -748,12 +556,13 @@ __all__ = [
     "SUPPORTED_TASK_A_MASS_MODES",
     "DEFAULT_BLOCK1_LAMBDA_GRID",
     "DEFAULT_BLOCK1_TARGET_ALPHA",
-    "DEFAULT_BLOCK2_PRIMARY_ROUTES",
-    "DEFAULT_BLOCK2_PRIMARY_SOURCE_COMMUNITIES",
-    "DEFAULT_BLOCK2_SECONDARY_SOURCE_COMMUNITIES",
-    "DEFAULT_BLOCK2_PRIMARY_TARGET_COMMUNITIES",
-    "DEFAULT_BLOCK2_SECONDARY_TARGET_COMMUNITIES",
+    "DEFAULT_BLOCK3_MASTER_SEED",
+    "DEFAULT_BLOCK3_REVIEW_PRIMARY_SOURCE_COMMUNITIES",
+    "DEFAULT_BLOCK3_REVIEW_SECONDARY_SOURCE_COMMUNITIES",
+    "DEFAULT_BLOCK3_REVIEW_PRIMARY_TARGET_COMMUNITIES",
+    "DEFAULT_BLOCK3_REVIEW_SECONDARY_TARGET_COMMUNITIES",
     "DEFAULT_BLOCK3_ENABLED_SUBEXPERIMENTS",
+    "DEFAULT_BLOCK3_BENCHMARK_PAIR_FAMILY",
     "compute_task_a_config_fingerprint",
     "load_enabled_blocks",
     "load_raw_task_a_config",
