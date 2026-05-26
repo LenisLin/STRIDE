@@ -3,18 +3,21 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from math import isclose, isfinite
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from ..errors import ContractError
 from ._provenance_payload import (
-    STRIDE_FIT_PROVENANCE_SCHEMA_VERSION,
     _ALLOWED_TOP_LEVEL_FIELDS,
     _FORBIDDEN_PROVENANCE_FIELDS,
     _LOSS_COMPONENTS,
     _OPTIONAL_ABLATION_FIELDS,
     _REQUIRED_TOP_LEVEL_FIELDS,
+    STRIDE_FIT_PROVENANCE_SCHEMA_VERSION,
     _payload_mapping,
 )
+
+if TYPE_CHECKING:  # pragma: no cover
+    from .provenance import STRIDEFitProvenance
 
 def validate_stride_fit_provenance(
     provenance: Mapping[str, Any] | STRIDEFitProvenance,
@@ -500,7 +503,13 @@ def _validate_observation_comparison_plan(value: Any) -> None:
     _validate_no_extra_keys(
         plan,
         "observation_comparison_plan",
-        ("resolved_by", "n_evidence_blocks", "domain_policy"),
+        (
+            "resolved_by",
+            "n_evidence_blocks",
+            "domain_policy",
+            "block_construction_policy",
+            "n_blocks_by_patient",
+        ),
     )
     _require_exact_string(plan["resolved_by"], "observation_comparison_plan.resolved_by", "task_layer")
     n_blocks = _require_int(
@@ -517,6 +526,48 @@ def _validate_observation_comparison_plan(value: Any) -> None:
         "observation_comparison_plan.domain_policy",
         "observation_layer_only",
     )
+    policy = plan["block_construction_policy"]
+    if not isinstance(policy, str) or policy.strip() == "":
+        raise ContractError(
+            "STRIDE fit provenance field "
+            "'observation_comparison_plan.block_construction_policy' "
+            "must be a non-empty string"
+        )
+    blocks_by_patient = _require_mapping(
+        plan["n_blocks_by_patient"],
+        "observation_comparison_plan.n_blocks_by_patient",
+    )
+    if len(blocks_by_patient) == 0:
+        raise ContractError(
+            "STRIDE fit provenance field "
+            "'observation_comparison_plan.n_blocks_by_patient' must be non-empty"
+        )
+    counted_blocks = 0
+    for patient_id, count_value in blocks_by_patient.items():
+        patient_key = str(patient_id).strip()
+        if patient_key == "":
+            raise ContractError(
+                "STRIDE fit provenance field "
+                "'observation_comparison_plan.n_blocks_by_patient' "
+                "must use non-empty patient ids"
+            )
+        count = _require_int(
+            count_value,
+            f"observation_comparison_plan.n_blocks_by_patient[{patient_key!r}]",
+        )
+        if count <= 0:
+            raise ContractError(
+                "STRIDE fit provenance field "
+                f"'observation_comparison_plan.n_blocks_by_patient[{patient_key!r}]' "
+                "must be positive"
+            )
+        counted_blocks += count
+    if counted_blocks != n_blocks:
+        raise ContractError(
+            "STRIDE fit provenance field "
+            "'observation_comparison_plan.n_blocks_by_patient' "
+            "must sum to observation_comparison_plan.n_evidence_blocks"
+        )
 
 
 def _validate_observation_discrepancy(value: Any) -> None:
