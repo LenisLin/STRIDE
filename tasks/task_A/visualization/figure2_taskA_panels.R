@@ -25,6 +25,7 @@ suppressPackageStartupMessages({
   library(circlize)
   library(grid)
   library(rhdf5)
+  library(jsonlite)
 })
 
 ###--GLOBAL PATHS, LABELS, AND COLORS--###
@@ -34,8 +35,9 @@ DESC <- "/mnt/NAS_21T/ProjectResult/STRIDE/task_A/descriptive"
 B0 <- "/mnt/NAS_21T/ProjectResult/STRIDE/task_A/block0"
 B1 <- "/mnt/NAS_21T/ProjectResult/STRIDE/task_A/block1"
 B3 <- "/mnt/NAS_21T/ProjectResult/STRIDE/task_A/block3"
+B3_RAW <- file.path(B3, "raw")
 FIG_DIR <- "/mnt/NAS_21T/ProjectResult/STRIDE/task_A/figures"
-STAGE0_H5AD <- "/mnt/NAS_21T/ProjectData/STRIDE/task_A_stage0/task_A_stage0_k25.h5ad"
+STAGE0_H5AD <- "/mnt/NAS_21T/ProjectData/STRIDE/task_A_stage0_k10/task_A_stage0_k10.h5ad"
 
 dir.create(FIG_DIR, recursive = TRUE, showWarnings = FALSE)
 
@@ -120,44 +122,92 @@ display_scaling <- tibble::tribble(
   "e_MSE", 1e3, "Target-open profile MSE (x10^3)"
 )
 
+recovery_object_labels <- c(
+  A_relation = "A relation",
+  A_offdiag = "A off-diagonal",
+  d_source_open = "d source-open",
+  e_target_open = "e target-open"
+)
+
+recovery_primary_labels <- c(
+  A_MAE_active = recovery_object_labels[["A_relation"]],
+  d_MAE = recovery_object_labels[["d_source_open"]],
+  e_MAE = recovery_object_labels[["e_target_open"]]
+)
+
+recovery_mse_labels <- c(
+  A_MSE_active = recovery_object_labels[["A_relation"]],
+  d_MSE = recovery_object_labels[["d_source_open"]],
+  e_MSE = recovery_object_labels[["e_target_open"]]
+)
+
+recovery_amount_labels <- c(
+  offdiag_mass_abs_error = recovery_object_labels[["A_offdiag"]],
+  depletion_mass_abs_error = recovery_object_labels[["d_source_open"]],
+  emergence_mass_abs_error = recovery_object_labels[["e_target_open"]]
+)
+
+secondary_block_levels <- c("MSE sensitivity", "Overall amount error")
+
 # Color policy:
-#   - Derive discrete colors from dittoSeq::dittoColors().
+#   - Use a muted white-background palette with dark accents.
 #   - Reuse the same named colors across all panels.
 #   - Do not create panel-local colors for the same semantic object.
 #   - Missing method slots are shown as light gray NA marks and are not added
 #     as a legend category.
 ditto_colors <- dittoSeq::dittoColors()
 
-method_colors <- c(
-  stride_reference = ditto_colors[[1]],
-  balanced_ot_baseline = ditto_colors[[2]],
-  uot_baseline = ditto_colors[[3]],
-  partial_ot_baseline = ditto_colors[[4]],
-  diagonal_transport_baseline = ditto_colors[[5]],
-  consistency_ablation = ditto_colors[[6]],
-  geometry_ablation = ditto_colors[[7]],
-  recurrence_ablation = ditto_colors[[8]]
+stride_palette <- list(
+  neutral = c(
+    text = "#2D2D2D",
+    axis = "#3A3A3A",
+    grid = "#E7E7E7",
+    na = "#D6D6D6"
+  ),
+  method = c(
+    stride_reference = "#4B918A",
+    balanced_ot_baseline = "#789EBF",
+    uot_baseline = "#7971AC",
+    partial_ot_baseline = "#AD5F83",
+    diagonal_transport_baseline = "#6F7378",
+    consistency_ablation = "#C28B8C",
+    geometry_ablation = "#7A64A3",
+    recurrence_ablation = "#5C7D65"
+  ),
+  pair_family = c(
+    "Null" = "#B8B8B8",
+    "TC -> IM" = "#7A64A3",
+    "TC -> PT" = "#4B918A"
+  ),
+  domain = c(
+    TC = "#4F83B5",
+    IM = "#B76B73",
+    PT = "#5C7D65"
+  ),
+  prevalence = c(
+    "Patient prevalence" = "#789EBF",
+    "ROI prevalence" = "#9F93B9"
+  ),
+  generator = c(
+    qhat = "#B4518C"
+  ),
+  continuous = list(
+    cell_fraction = c("#F7FAFC", "#DBECF6", "#789EBF", "#2E5F87"),
+    relation = c("#F7FAFC", "#789EBF", "#2E5F87"),
+    difference = c("#4F83B5", "#F7F7F7", "#B76B73")
+  )
 )
+
+method_colors <- stride_palette$method
 method_colors <- method_colors[method_levels]
 
-pair_family_colors <- c(
-  "Null" = "grey75",
-  "TC -> IM" = ditto_colors[[9]],
-  "TC -> PT" = ditto_colors[[10]]
-)
+pair_family_colors <- stride_palette$pair_family
 pair_family_colors <- pair_family_colors[pair_family_levels]
 
-domain_colors <- c(
-  TC = ditto_colors[[11]],
-  IM = ditto_colors[[12]],
-  PT = ditto_colors[[13]]
-)
+domain_colors <- stride_palette$domain
 domain_colors <- domain_colors[domain_levels]
 
-prevalence_colors <- c(
-  "Patient prevalence" = ggsci::pal_jama()(2)[[1]],
-  "ROI prevalence" = ggsci::pal_jama()(2)[[2]]
-)
+prevalence_colors <- stride_palette$prevalence
 
 # Expected ggplot binding pattern:
 #   method_name <- factor(method_name, levels = baseline_method_levels)
@@ -168,7 +218,7 @@ prevalence_colors <- c(
 #   scale_fill_manual(values = pair_family_colors)
 #   scale_fill_manual(values = domain_colors)
 
-na_color <- "grey85"
+na_color <- unname(stride_palette$neutral[["na"]])
 
 base_theme <- theme_classic(base_size = 8) +
   theme(
@@ -268,7 +318,7 @@ rownames(panelB_prevalence_mat) <- panelB_row_order$community_label
 # Visualization block:
 panelB_fraction_col_fun <- circlize::colorRamp2(
   c(0, 0.25, 0.5, max(1, max(panelB_fraction_mat, na.rm = TRUE))),
-  c("#f7f7f7", "#fdd0a2", "#fb6a4a", "#a50f15")
+  unname(stride_palette$continuous$cell_fraction)
 )
 
 panelB_right_annotation <- rowAnnotation(
@@ -438,11 +488,7 @@ panelC_plot_data <- bind_rows(
     group_y = factor(as.character(group), levels = rev(pair_family_levels))
   )
 
-panelC_pair_family_colors <- c(
-  "Null" = "#d9d9d9",
-  "TC -> IM" = ggsci::pal_jama()(3)[[1]],
-  "TC -> PT" = ggsci::pal_jama()(3)[[2]]
-)
+panelC_pair_family_colors <- pair_family_colors
 panelC_pair_family_colors <- panelC_pair_family_colors[pair_family_levels]
 
 panelC_annotation_x <- panelC_plot_data %>%
@@ -628,12 +674,8 @@ panelD_tumor_communities <- panelD_cell_fractions %>%
   ) %>%
   arrange(community_id)
 
-panelD_expected_communities <- c(0, 1, 3, 6, 10, 11, 12, 16, 17)
-if (!identical(panelD_tumor_communities$community_id, panelD_expected_communities)) {
-  warning(
-    "Tumor-dominant communities differ from expected set: ",
-    paste(panelD_tumor_communities$community_id, collapse = ", ")
-  )
+if (nrow(panelD_tumor_communities) == 0L) {
+  stop("No tumor-dominant communities were selected from the descriptive atlas table.")
 }
 
 panelD_metrics <- c("self_retention", "depletion")
@@ -926,235 +968,212 @@ ggsave(
 )
 
 
-###--Main Figure 2 Panel E: Semi-Synthetic Benchmark Against Transport Baselines--###
+###--Main Figure 2 Panel E: Benchmark Primary Community-Resolved MAE--###
 
 # Input:
-#   B3/a_benchmark/raw/a_benchmark/condition_summary.csv
-#   B3/a_benchmark/raw/a_benchmark/patient_metrics.csv
-#   B3/de_benchmark/raw/de_benchmark/condition_summary.csv
-#   B3/de_benchmark/raw/de_benchmark/patient_metrics.csv
+#   B3/raw/a_benchmark/condition_summary.csv
+#   B3/raw/a_benchmark/patient_metrics.csv
+#   B3/raw/de_benchmark/condition_summary.csv
+#   B3/raw/de_benchmark/patient_metrics.csv
 # Field meaning:
 #   method_name is mapped through method_labels.
-#   metric_name is mapped through metric_labels and display_scaling.
-#   mean_value, ci_lower, and ci_upper define summary point-ranges.
-#   reported_value supports rerun-level statistical comparisons.
+#   metric_name selects A_MAE_active, d_MAE, and e_MAE.
+#   A and d errors are evaluated on burden-weighted carriers F = xA and
+#   g = xd; e is evaluated directly.
+#   reported_value supports rerun-level boxplots and statistical comparisons.
 # Result intent:
-#   Show controlled hidden-truth recovery errors for STRIDE and transport
-#   baselines across relation and open-channel metrics.
+#   Show primary benchmark recovery using community-resolved MAE for A, d,
+#   and e.
 # Visualization:
-#   Single-row faceted lower-is-better horizontal point-range plot.
+#   Rerun-level horizontal boxplots with right-side ladder brackets.
 # Axes/value definition:
-#   x-axis: error value, with display scaling in facet labels.
+#   x-axis: Community-resolved MAE (x10^3), lower is better.
 #   y-axis: method.
-#   facets: F_L1_total, A_MAE_active, offdiag_mass_abs_error, g_L1_total,
-#   d_MAE, e_L1_total, e_MAE.
+#   facets: A relation, d source-open, e target-open.
 #   balanced_ot_baseline is shown as a light-gray NA slot in open-channel
 #   facets where absent from formal outputs.
 # Output PDF:
 #   main2_panelE_transport_baseline_benchmark.pdf
 #
 # Data read and processing:
-panelE_metrics_relation <- c("F_L1_total", "A_MAE_active", "offdiag_mass_abs_error")
-panelE_metrics_open <- c("g_L1_total", "d_MAE", "e_L1_total", "e_MAE")
+panelE_metrics_relation <- c("A_MAE_active")
+panelE_metrics_open <- c("d_MAE", "e_MAE")
 panelE_metrics <- c(panelE_metrics_relation, panelE_metrics_open)
+panelE_object_levels <- unname(recovery_primary_labels[panelE_metrics])
+panelE_method_label_levels <- rev(unname(method_labels[baseline_method_levels]))
 
-panelE_summary <- bind_rows(
+panelE_rerun_metrics <- bind_rows(
   readr::read_csv(
-    file.path(B3, "a_benchmark", "raw", "a_benchmark", "condition_summary.csv"),
-    show_col_types = FALSE
-  ) %>%
-    mutate(panel_channel = "Relation") %>%
-    filter(metric_name %in% panelE_metrics_relation),
-  readr::read_csv(
-    file.path(B3, "de_benchmark", "raw", "de_benchmark", "condition_summary.csv"),
-    show_col_types = FALSE
-  ) %>%
-    mutate(panel_channel = "Open") %>%
-    filter(metric_name %in% panelE_metrics_open)
-) %>%
-  filter(method_name %in% baseline_method_levels) %>%
-  left_join(display_scaling, by = "metric_name") %>%
-  mutate(
-    panel_channel = factor(panel_channel, levels = c("Relation", "Open")),
-    display_multiplier = coalesce(display_multiplier, 1),
-    metric_facet = if_else(
-      is.na(axis_label),
-      unname(metric_labels[metric_name]),
-      axis_label
-    ),
-    metric_facet = factor(
-      metric_facet,
-      levels = if_else(
-        panelE_metrics %in% display_scaling$metric_name,
-        display_scaling$axis_label[match(panelE_metrics, display_scaling$metric_name)],
-        unname(metric_labels[panelE_metrics])
-      )
-    ),
-    method_name = factor(method_name, levels = baseline_method_levels),
-    method_label = factor(
-      unname(method_labels[as.character(method_name)]),
-      levels = unname(method_labels[baseline_method_levels])
-    ),
-    mean_display = mean_value * display_multiplier,
-    ci_lower_display = ci_lower * display_multiplier,
-    ci_upper_display = ci_upper * display_multiplier,
-    is_missing = FALSE
-  )
-
-panelE_summary_complete <- tidyr::expand_grid(
-  metric_name = panelE_metrics,
-  method_name = baseline_method_levels
-) %>%
-  left_join(
-    panelE_summary,
-    by = c("metric_name", "method_name")
-  ) %>%
-  mutate(
-    method_name = factor(method_name, levels = baseline_method_levels),
-    method_label = factor(
-      unname(method_labels[as.character(method_name)]),
-      levels = rev(unname(method_labels[baseline_method_levels]))
-    ),
-    panel_channel = coalesce(
-      as.character(panel_channel),
-      if_else(metric_name %in% panelE_metrics_relation, "Relation", "Open")
-    ),
-    panel_channel = factor(panel_channel, levels = c("Relation", "Open")),
-    display_multiplier = coalesce(
-      display_multiplier,
-      display_scaling$display_multiplier[match(metric_name, display_scaling$metric_name)],
-      1
-    ),
-    metric_facet = coalesce(
-      as.character(metric_facet),
-      if_else(
-        metric_name %in% display_scaling$metric_name,
-        display_scaling$axis_label[match(metric_name, display_scaling$metric_name)],
-        unname(metric_labels[metric_name])
-      )
-    ),
-    metric_facet = factor(
-      metric_facet,
-      levels = if_else(
-        panelE_metrics %in% display_scaling$metric_name,
-        display_scaling$axis_label[match(panelE_metrics, display_scaling$metric_name)],
-        unname(metric_labels[panelE_metrics])
-      )
-    ),
-    is_missing = is.na(mean_value)
-  )
-
-panelE_patient_metrics <- bind_rows(
-  readr::read_csv(
-    file.path(B3, "a_benchmark", "raw", "a_benchmark", "patient_metrics.csv"),
+    file.path(B3_RAW, "a_benchmark", "patient_metrics.csv"),
     show_col_types = FALSE
   ) %>%
     filter(metric_name %in% panelE_metrics_relation),
   readr::read_csv(
-    file.path(B3, "de_benchmark", "raw", "de_benchmark", "patient_metrics.csv"),
+    file.path(B3_RAW, "de_benchmark", "patient_metrics.csv"),
     show_col_types = FALSE
   ) %>%
     filter(metric_name %in% panelE_metrics_open)
 ) %>%
   filter(method_name %in% baseline_method_levels) %>%
   group_by(rerun_id, method_name, metric_name) %>%
-  summarise(reported_value = mean(reported_value, na.rm = TRUE), .groups = "drop")
+  summarise(value_raw = mean(reported_value, na.rm = TRUE), .groups = "drop") %>%
+  left_join(display_scaling %>% select(metric_name, display_multiplier), by = "metric_name") %>%
+  mutate(
+    display_multiplier = coalesce(display_multiplier, 1),
+    value_display = value_raw * display_multiplier,
+    object_label = factor(
+      unname(recovery_primary_labels[metric_name]),
+      levels = panelE_object_levels
+    ),
+    method_name = factor(method_name, levels = baseline_method_levels),
+    method_label = factor(
+      unname(method_labels[as.character(method_name)]),
+      levels = panelE_method_label_levels
+    )
+  )
 
-panelE_reference_stats <- panelE_patient_metrics %>%
+panelE_facet_ranges <- panelE_rerun_metrics %>%
+  group_by(metric_name, object_label) %>%
+  summarise(
+    x_min = min(value_display, na.rm = TRUE),
+    x_max = max(value_display, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    x_range = pmax(x_max - x_min, abs(x_max) * 0.25, 0.01),
+    x_tick = x_range * 0.025,
+    x_na = x_min + x_range * 0.5
+  )
+
+panelE_method_slots <- tidyr::expand_grid(
+  metric_name = panelE_metrics,
+  method_name = baseline_method_levels
+) %>%
+  mutate(
+    object_label = factor(
+      unname(recovery_primary_labels[metric_name]),
+      levels = panelE_object_levels
+    ),
+    method_name = factor(method_name, levels = baseline_method_levels),
+    method_label = factor(
+      unname(method_labels[as.character(method_name)]),
+      levels = panelE_method_label_levels
+    )
+  )
+
+panelE_na_slots <- panelE_method_slots %>%
+  anti_join(
+    panelE_rerun_metrics %>% distinct(metric_name, method_name),
+    by = c("metric_name", "method_name")
+  ) %>%
+  left_join(panelE_facet_ranges, by = c("metric_name", "object_label"))
+
+panelE_reference_stats <- panelE_rerun_metrics %>%
   filter(method_name == "stride_reference") %>%
-  select(rerun_id, metric_name, stride_value = reported_value)
-panelE_stat_tests <- panelE_patient_metrics %>%
+  select(rerun_id, metric_name, stride_value = value_raw)
+panelE_stat_tests <- panelE_rerun_metrics %>%
   filter(method_name != "stride_reference") %>%
   inner_join(panelE_reference_stats, by = c("rerun_id", "metric_name")) %>%
   group_by(metric_name, method_name) %>%
   summarise(
-    n_pairs = n(),
-    p_value = if (n() > 1 && any(reported_value != stride_value)) {
-      wilcox.test(reported_value, stride_value, paired = TRUE, exact = FALSE)$p.value
-    } else {
-      NA_real_
+    n_pairs = sum(is.finite(value_raw) & is.finite(stride_value)),
+    p_value = {
+      keep <- is.finite(value_raw) & is.finite(stride_value)
+      if (sum(keep) > 1 && any(value_raw[keep] != stride_value[keep])) {
+        wilcox.test(value_raw[keep], stride_value[keep], paired = TRUE, exact = FALSE)$p.value
+      } else {
+        NA_real_
+      }
     },
     .groups = "drop"
   ) %>%
   mutate(
     q_value = p.adjust(p_value, method = "BH"),
     significance_label = case_when(
-      is.na(q_value) ~ "",
+      is.na(q_value) ~ "ns",
       q_value < 0.001 ~ "***",
       q_value < 0.01 ~ "**",
       q_value <= 0.05 ~ "*",
-      TRUE ~ ""
+      TRUE ~ "ns"
+    ),
+    object_label = factor(
+      unname(recovery_primary_labels[metric_name]),
+      levels = panelE_object_levels
+    ),
+    method_name = factor(method_name, levels = baseline_method_levels),
+    method_label = factor(
+      unname(method_labels[as.character(method_name)]),
+      levels = panelE_method_label_levels
     )
-  )
-
-panelE_summary_complete <- panelE_summary_complete %>%
-  left_join(
-    panelE_stat_tests %>%
-      select(metric_name, method_name, q_value, significance_label),
-    by = c("metric_name", "method_name")
-  )
-
-panelE_annotation_x <- panelE_summary_complete %>%
-  filter(!is_missing) %>%
-  group_by(metric_name, metric_facet) %>%
-  summarise(
-    x_min = min(ci_lower_display, mean_display, na.rm = TRUE),
-    x_max = max(ci_upper_display, mean_display, na.rm = TRUE),
-    .groups = "drop"
   ) %>%
+  left_join(panelE_facet_ranges, by = c("metric_name", "object_label")) %>%
+  group_by(metric_name, object_label) %>%
+  arrange(method_name, .by_group = TRUE) %>%
   mutate(
-    x_range = pmax(x_max - x_min, 0.01),
-    x_label = x_max + x_range * 0.10
-  )
-
-panelE_significance_annotations <- panelE_summary_complete %>%
-  filter(
-    !is_missing,
-    as.character(method_name) != "stride_reference",
-    !is.na(significance_label),
-    significance_label != ""
+    bracket_rank = row_number(),
+    x_bracket = x_max + x_range * (0.12 + 0.13 * (bracket_rank - 1)),
+    x_lower = x_bracket - x_tick * 1.1,
+    x_label = x_bracket + x_tick * 0.85,
+    start_y = factor("STRIDE", levels = panelE_method_label_levels),
+    end_y = method_label
   ) %>%
-  left_join(panelE_annotation_x, by = c("metric_name", "metric_facet"))
-
-panelE_na_slots <- panelE_summary_complete %>%
-  filter(is_missing) %>%
-  left_join(panelE_annotation_x, by = c("metric_name", "metric_facet"))
+  ungroup()
 #
 # Visualization block:
 panelE_plot <- ggplot(
-  panelE_summary_complete,
-  aes(x = mean_display, y = method_label, color = method_name)
+  panelE_rerun_metrics,
+  aes(x = value_display, y = method_label, color = method_name, fill = method_name)
 ) +
   geom_vline(xintercept = 0, color = "grey90", linewidth = 0.2) +
-  geom_errorbarh(
-    data = panelE_summary_complete %>% filter(!is_missing),
-    aes(xmin = ci_lower_display, xmax = ci_upper_display),
-    height = 0.18,
-    linewidth = 0.28
+  geom_boxplot(
+    width = 0.48,
+    outlier.shape = NA,
+    alpha = 0.36,
+    linewidth = 0.24
   ) +
   geom_point(
-    data = panelE_summary_complete %>% filter(!is_missing),
-    aes(fill = method_name),
-    shape = 21,
-    size = 1.8,
-    stroke = 0.25
+    position = position_jitter(width = 0, height = 0.035),
+    size = 0.75,
+    alpha = 0.58,
+    stroke = 0
   ) +
   geom_text(
     data = panelE_na_slots,
-    aes(x = coalesce(x_label, 0), y = method_label, label = "NA"),
+    aes(x = x_na, y = method_label, label = "NA"),
+    inherit.aes = FALSE,
     color = na_color,
-    size = 2.1,
-    inherit.aes = FALSE
+    size = 2.2
+  ) +
+  geom_segment(
+    data = panelE_stat_tests,
+    aes(x = x_bracket, xend = x_bracket, y = start_y, yend = end_y),
+    inherit.aes = FALSE,
+    linewidth = 0.24,
+    color = "grey25"
+  ) +
+  geom_segment(
+    data = panelE_stat_tests,
+    aes(x = x_lower, xend = x_bracket, y = start_y, yend = start_y),
+    inherit.aes = FALSE,
+    linewidth = 0.24,
+    color = "grey25"
+  ) +
+  geom_segment(
+    data = panelE_stat_tests,
+    aes(x = x_lower, xend = x_bracket, y = end_y, yend = end_y),
+    inherit.aes = FALSE,
+    linewidth = 0.24,
+    color = "grey25"
   ) +
   geom_text(
-    data = panelE_significance_annotations,
-    aes(x = x_label, y = method_label, label = significance_label),
+    data = panelE_stat_tests,
+    aes(x = x_label, y = end_y, label = significance_label),
     inherit.aes = FALSE,
     hjust = 0,
-    size = 2.3,
+    size = 2.2,
     color = "grey10"
   ) +
-  facet_wrap(~ metric_facet, scales = "free_x", nrow = 1) +
+  facet_wrap(~ object_label, scales = "free_x", nrow = 1) +
   scale_color_manual(
     values = method_colors[baseline_method_levels],
     breaks = baseline_method_levels,
@@ -1169,146 +1188,76 @@ panelE_plot <- ggplot(
     drop = FALSE,
     na.translate = FALSE
   ) +
-  scale_x_continuous(expand = expansion(mult = c(0.04, 0.24))) +
+  scale_x_continuous(expand = expansion(mult = c(0.04, 0.62))) +
   coord_cartesian(clip = "off") +
-  labs(x = "Error, lower is better", y = NULL) +
+  labs(x = "Community-resolved MAE (x10^3), lower is better", y = NULL) +
   base_theme +
   theme(
-    legend.position = "top",
+    legend.position = "none",
     axis.text.y = element_text(size = 6.5),
-    strip.text = element_text(size = 6.3),
-    panel.spacing.x = unit(0.55, "lines"),
-    plot.margin = margin(5.5, 18, 5.5, 5.5)
+    strip.text = element_text(size = 7),
+    panel.spacing.x = unit(0.75, "lines"),
+    plot.margin = margin(5.5, 34, 5.5, 5.5)
   )
 #
 # PDF export:
 ggsave(
   filename = file.path(FIG_DIR, "main2_panelE_transport_baseline_benchmark.pdf"),
   plot = panelE_plot,
-  width = 13.2,
-  height = 2.8,
+  width = 7.4,
+  height = 2.75,
   device = cairo_pdf
 )
 
 
-###--Main Figure 2 Panel F: Semi-Synthetic Objective-Component Ablation--###
+###--Main Figure 2 Panel F: Ablation Primary Community-Resolved MAE--###
 
 # Input:
-#   B3/subbag_consistency_ablation/raw/subbag_consistency_ablation/condition_summary.csv
-#   B3/subbag_consistency_ablation/raw/subbag_consistency_ablation/patient_metrics.csv
-#   B3/geometry_ablation/raw/geometry_ablation/condition_summary.csv
-#   B3/geometry_ablation/raw/geometry_ablation/patient_metrics.csv
-#   B3/recurrence_ablation/raw/recurrence_ablation/condition_summary.csv
-#   B3/recurrence_ablation/raw/recurrence_ablation/patient_metrics.csv
+#   B3/raw/subbag_consistency_ablation/patient_metrics.csv
+#   B3/raw/geometry_ablation/patient_metrics.csv
+#   B3/raw/recurrence_ablation/patient_metrics.csv
 # Field meaning:
-#   evaluation_family identifies the ablation family.
+#   evaluation_family identifies the matched ablation family.
 #   method_name identifies stride_reference or the ablation arm.
-#   metric_name is mapped through metric_labels and display_scaling.
-#   mean_value, ci_lower, and ci_upper define summary point-ranges.
-#   reported_value supports rerun-level statistical comparisons.
+#   metric_name selects A_MAE_active, d_MAE, and e_MAE.
+#   A and d errors are evaluated on burden-weighted carriers F = xA and
+#   g = xd; e is evaluated directly.
+#   reported_value supports rerun-level boxplots and matched statistical
+#   comparisons.
 # Result intent:
-#   Show objective-component ablation performance using lower-is-better error
-#   metrics comparable to Main Figure 2E where possible.
+#   Show objective-component ablation recovery using community-resolved MAE
+#   for A, d, and e.
 # Visualization:
-#   Single-row faceted lower-is-better horizontal point-range plot.
+#   Rerun-level horizontal boxplots with right-side ladder brackets.
 # Axes/value definition:
-#   x-axis: error value, with display scaling in facet labels.
+#   x-axis: Community-resolved MAE (x10^3), lower is better.
 #   y-axis: reference and ablation arms.
-#   facets: F_L1_total, A_MAE_active, offdiag_mass_abs_error, g_L1_total,
-#   d_MAE, e_L1_total, e_MAE.
+#   facets: A relation, d source-open, e target-open.
 # Output PDF:
 #   main2_panelF_objective_component_ablation.pdf
 #
 # Data read and processing:
-panelF_metrics <- c(
-  "F_L1_total",
-  "A_MAE_active",
-  "offdiag_mass_abs_error",
-  "g_L1_total",
-  "d_MAE",
-  "e_L1_total",
-  "e_MAE"
-)
-
+panelF_metrics <- c("A_MAE_active", "d_MAE", "e_MAE")
+panelF_object_levels <- unname(recovery_primary_labels[panelF_metrics])
 panelF_method_labels <- c(
   stride_reference = "STRIDE",
   consistency_ablation = "w/o consistency",
   geometry_ablation = "w/o geometry",
   recurrence_ablation = "w/o recurrence"
 )
+panelF_method_label_levels <- rev(unname(panelF_method_labels[ablation_method_levels]))
 
-panelF_summary_all <- bind_rows(
+panelF_rerun_metrics_all <- bind_rows(
   readr::read_csv(
-    file.path(B3, "subbag_consistency_ablation", "raw", "subbag_consistency_ablation", "condition_summary.csv"),
+    file.path(B3_RAW, "subbag_consistency_ablation", "patient_metrics.csv"),
     show_col_types = FALSE
   ),
   readr::read_csv(
-    file.path(B3, "geometry_ablation", "raw", "geometry_ablation", "condition_summary.csv"),
+    file.path(B3_RAW, "geometry_ablation", "patient_metrics.csv"),
     show_col_types = FALSE
   ),
   readr::read_csv(
-    file.path(B3, "recurrence_ablation", "raw", "recurrence_ablation", "condition_summary.csv"),
-    show_col_types = FALSE
-  )
-) %>%
-  filter(
-    metric_name %in% panelF_metrics,
-    method_name %in% ablation_method_levels
-  )
-
-panelF_reference_summary <- panelF_summary_all %>%
-  filter(method_name == "stride_reference") %>%
-  group_by(metric_name, method_name) %>%
-  summarise(
-    mean_value = mean(mean_value, na.rm = TRUE),
-    ci_lower = mean(ci_lower, na.rm = TRUE),
-    ci_upper = mean(ci_upper, na.rm = TRUE),
-    .groups = "drop"
-  ) %>%
-  mutate(evaluation_family = "shared_reference")
-
-panelF_ablation_summary <- panelF_summary_all %>%
-  filter(method_name != "stride_reference") %>%
-  select(evaluation_family, method_name, metric_name, mean_value, ci_lower, ci_upper)
-
-panelF_summary <- bind_rows(panelF_reference_summary, panelF_ablation_summary) %>%
-  left_join(display_scaling, by = "metric_name") %>%
-  mutate(
-    display_multiplier = coalesce(display_multiplier, 1),
-    metric_facet = if_else(
-      is.na(axis_label),
-      unname(metric_labels[metric_name]),
-      axis_label
-    ),
-    metric_facet = factor(
-      metric_facet,
-      levels = if_else(
-        panelF_metrics %in% display_scaling$metric_name,
-        display_scaling$axis_label[match(panelF_metrics, display_scaling$metric_name)],
-        unname(metric_labels[panelF_metrics])
-      )
-    ),
-    method_name = factor(method_name, levels = ablation_method_levels),
-    method_label = factor(
-      unname(panelF_method_labels[as.character(method_name)]),
-      levels = rev(unname(panelF_method_labels[ablation_method_levels]))
-    ),
-    mean_display = mean_value * display_multiplier,
-    ci_lower_display = ci_lower * display_multiplier,
-    ci_upper_display = ci_upper * display_multiplier
-  )
-
-panelF_patient_metrics <- bind_rows(
-  readr::read_csv(
-    file.path(B3, "subbag_consistency_ablation", "raw", "subbag_consistency_ablation", "patient_metrics.csv"),
-    show_col_types = FALSE
-  ),
-  readr::read_csv(
-    file.path(B3, "geometry_ablation", "raw", "geometry_ablation", "patient_metrics.csv"),
-    show_col_types = FALSE
-  ),
-  readr::read_csv(
-    file.path(B3, "recurrence_ablation", "raw", "recurrence_ablation", "patient_metrics.csv"),
+    file.path(B3_RAW, "recurrence_ablation", "patient_metrics.csv"),
     show_col_types = FALSE
   )
 ) %>%
@@ -1317,88 +1266,144 @@ panelF_patient_metrics <- bind_rows(
     method_name %in% ablation_method_levels
   ) %>%
   group_by(rerun_id, evaluation_family, method_name, metric_name) %>%
-  summarise(reported_value = mean(reported_value, na.rm = TRUE), .groups = "drop")
+  summarise(value_raw = mean(reported_value, na.rm = TRUE), .groups = "drop")
 
-panelF_reference_stats <- panelF_patient_metrics %>%
+panelF_reference_plot <- panelF_rerun_metrics_all %>%
   filter(method_name == "stride_reference") %>%
-  select(rerun_id, evaluation_family, metric_name, stride_value = reported_value)
-panelF_stat_tests <- panelF_patient_metrics %>%
+  group_by(rerun_id, method_name, metric_name) %>%
+  summarise(value_raw = mean(value_raw, na.rm = TRUE), .groups = "drop") %>%
+  mutate(evaluation_family = "shared_reference")
+
+panelF_ablation_plot <- panelF_rerun_metrics_all %>%
+  filter(method_name != "stride_reference")
+
+panelF_rerun_metrics <- bind_rows(panelF_reference_plot, panelF_ablation_plot) %>%
+  left_join(display_scaling %>% select(metric_name, display_multiplier), by = "metric_name") %>%
+  mutate(
+    display_multiplier = coalesce(display_multiplier, 1),
+    value_display = value_raw * display_multiplier,
+    object_label = factor(
+      unname(recovery_primary_labels[metric_name]),
+      levels = panelF_object_levels
+    ),
+    method_name = factor(method_name, levels = ablation_method_levels),
+    method_label = factor(
+      unname(panelF_method_labels[as.character(method_name)]),
+      levels = panelF_method_label_levels
+    )
+  )
+
+panelF_facet_ranges <- panelF_rerun_metrics %>%
+  group_by(metric_name, object_label) %>%
+  summarise(
+    x_min = min(value_display, na.rm = TRUE),
+    x_max = max(value_display, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    x_range = pmax(x_max - x_min, abs(x_max) * 0.25, 0.01),
+    x_tick = x_range * 0.025
+  )
+
+panelF_reference_stats <- panelF_rerun_metrics_all %>%
+  filter(method_name == "stride_reference") %>%
+  select(rerun_id, evaluation_family, metric_name, stride_value = value_raw)
+panelF_stat_tests <- panelF_rerun_metrics_all %>%
   filter(method_name != "stride_reference") %>%
   inner_join(panelF_reference_stats, by = c("rerun_id", "evaluation_family", "metric_name")) %>%
   group_by(evaluation_family, metric_name, method_name) %>%
   summarise(
-    n_pairs = n(),
-    p_value = if (n() > 1 && any(reported_value != stride_value)) {
-      wilcox.test(reported_value, stride_value, paired = TRUE, exact = FALSE)$p.value
-    } else {
-      NA_real_
+    n_pairs = sum(is.finite(value_raw) & is.finite(stride_value)),
+    p_value = {
+      keep <- is.finite(value_raw) & is.finite(stride_value)
+      if (sum(keep) > 1 && any(value_raw[keep] != stride_value[keep])) {
+        wilcox.test(value_raw[keep], stride_value[keep], paired = TRUE, exact = FALSE)$p.value
+      } else {
+        NA_real_
+      }
     },
     .groups = "drop"
   ) %>%
   mutate(
     q_value = p.adjust(p_value, method = "BH"),
     significance_label = case_when(
-      is.na(q_value) ~ "",
+      is.na(q_value) ~ "ns",
       q_value < 0.001 ~ "***",
       q_value < 0.01 ~ "**",
       q_value <= 0.05 ~ "*",
-      TRUE ~ ""
+      TRUE ~ "ns"
+    ),
+    object_label = factor(
+      unname(recovery_primary_labels[metric_name]),
+      levels = panelF_object_levels
+    ),
+    method_name = factor(method_name, levels = ablation_method_levels),
+    method_label = factor(
+      unname(panelF_method_labels[as.character(method_name)]),
+      levels = panelF_method_label_levels
     )
-  )
-
-panelF_summary <- panelF_summary %>%
-  left_join(
-    panelF_stat_tests %>%
-      select(evaluation_family, metric_name, method_name, q_value, significance_label),
-    by = c("evaluation_family", "metric_name", "method_name")
-  )
-
-panelF_annotation_x <- panelF_summary %>%
-  group_by(metric_name, metric_facet) %>%
-  summarise(
-    x_min = min(ci_lower_display, mean_display, na.rm = TRUE),
-    x_max = max(ci_upper_display, mean_display, na.rm = TRUE),
-    .groups = "drop"
   ) %>%
+  left_join(panelF_facet_ranges, by = c("metric_name", "object_label")) %>%
+  group_by(metric_name, object_label) %>%
+  arrange(method_name, .by_group = TRUE) %>%
   mutate(
-    x_range = pmax(x_max - x_min, 0.01),
-    x_label = x_max + x_range * 0.10
-  )
-
-panelF_significance_annotations <- panelF_summary %>%
-  filter(
-    as.character(method_name) != "stride_reference",
-    !is.na(significance_label),
-    significance_label != ""
+    bracket_rank = row_number(),
+    x_bracket = x_max + x_range * (0.12 + 0.13 * (bracket_rank - 1)),
+    x_lower = x_bracket - x_tick * 1.1,
+    x_label = x_bracket + x_tick * 0.85,
+    start_y = factor("STRIDE", levels = panelF_method_label_levels),
+    end_y = method_label
   ) %>%
-  left_join(panelF_annotation_x, by = c("metric_name", "metric_facet"))
+  ungroup()
 #
 # Visualization block:
 panelF_plot <- ggplot(
-  panelF_summary,
-  aes(x = mean_display, y = method_label, color = method_name)
+  panelF_rerun_metrics,
+  aes(x = value_display, y = method_label, color = method_name, fill = method_name)
 ) +
   geom_vline(xintercept = 0, color = "grey90", linewidth = 0.2) +
-  geom_errorbarh(
-    aes(xmin = ci_lower_display, xmax = ci_upper_display),
-    height = 0.18,
-    linewidth = 0.28
+  geom_boxplot(
+    width = 0.48,
+    outlier.shape = NA,
+    alpha = 0.36,
+    linewidth = 0.24
   ) +
   geom_point(
-    aes(fill = method_name),
-    shape = 21,
-    size = 1.8,
-    stroke = 0.25
+    position = position_jitter(width = 0, height = 0.035),
+    size = 0.75,
+    alpha = 0.58,
+    stroke = 0
+  ) +
+  geom_segment(
+    data = panelF_stat_tests,
+    aes(x = x_bracket, xend = x_bracket, y = start_y, yend = end_y),
+    inherit.aes = FALSE,
+    linewidth = 0.24,
+    color = "grey25"
+  ) +
+  geom_segment(
+    data = panelF_stat_tests,
+    aes(x = x_lower, xend = x_bracket, y = start_y, yend = start_y),
+    inherit.aes = FALSE,
+    linewidth = 0.24,
+    color = "grey25"
+  ) +
+  geom_segment(
+    data = panelF_stat_tests,
+    aes(x = x_lower, xend = x_bracket, y = end_y, yend = end_y),
+    inherit.aes = FALSE,
+    linewidth = 0.24,
+    color = "grey25"
   ) +
   geom_text(
-    data = panelF_significance_annotations,
-    aes(x = x_label, y = method_label, label = significance_label),
+    data = panelF_stat_tests,
+    aes(x = x_label, y = end_y, label = significance_label),
     inherit.aes = FALSE,
     hjust = 0,
-    size = 2.3,
+    size = 2.2,
     color = "grey10"
   ) +
-  facet_wrap(~ metric_facet, scales = "free_x", nrow = 1) +
+  facet_wrap(~ object_label, scales = "free_x", nrow = 1) +
   scale_color_manual(
     values = method_colors[ablation_method_levels],
     breaks = ablation_method_levels,
@@ -1413,24 +1418,24 @@ panelF_plot <- ggplot(
     drop = FALSE,
     na.translate = FALSE
   ) +
-  scale_x_continuous(expand = expansion(mult = c(0.04, 0.24))) +
+  scale_x_continuous(expand = expansion(mult = c(0.04, 0.54))) +
   coord_cartesian(clip = "off") +
-  labs(x = "Error, lower is better", y = NULL) +
+  labs(x = "Community-resolved MAE (x10^3), lower is better", y = NULL) +
   base_theme +
   theme(
-    legend.position = "top",
+    legend.position = "none",
     axis.text.y = element_text(size = 6.5),
-    strip.text = element_text(size = 6.3),
-    panel.spacing.x = unit(0.55, "lines"),
-    plot.margin = margin(5.5, 18, 5.5, 5.5)
+    strip.text = element_text(size = 7),
+    panel.spacing.x = unit(0.75, "lines"),
+    plot.margin = margin(5.5, 30, 5.5, 5.5)
   )
 #
 # PDF export:
 ggsave(
   filename = file.path(FIG_DIR, "main2_panelF_objective_component_ablation.pdf"),
   plot = panelF_plot,
-  width = 13.2,
-  height = 2.7,
+  width = 7.0,
+  height = 2.65,
   device = cairo_pdf
 )
 
@@ -1522,15 +1527,29 @@ ggsave(
 #   x-axis: TC, IM, PT tissue domains.
 #   y-axis: community fraction within each patient-domain; each facet uses a
 #   free y-axis to show low-abundance communities.
-#   facets: selected communities C0, C1, C2, C3, C6, C10, C11, C12, C14,
-#   C16, C17, and C23.
+#   facets: selected communities inferred from the tumor-dominant and PT-rich
+#   descriptive atlas rules used by Main Figure 2D and SF1-G.
 #   statistics: paired Wilcoxon tests for displayed TC-IM, TC-PT, and IM-PT
-#   comparisons; BH adjustment across 36 displayed comparisons.
+#   comparisons; BH adjustment across all displayed comparisons.
 # Output PDF:
 #   sf1_panelB_selected_community_fraction_by_tissue.pdf
 #
 # Data read and processing:
-sf1B_selected_communities <- c(0, 1, 2, 3, 6, 10, 11, 12, 14, 16, 17, 23)
+sf1B_pt_rich_communities <- panelB_domain_distribution %>%
+  filter(
+    domain_label == "PT",
+    fraction_within_community > 0.5
+  ) %>%
+  arrange(community_id) %>%
+  pull(community_id)
+
+sf1B_selected_communities <- sort(unique(c(
+  panelD_tumor_communities$community_id,
+  sf1B_pt_rich_communities
+)))
+if (length(sf1B_selected_communities) == 0L) {
+  stop("No communities were selected for SF1-B from tumor-dominant or PT-rich atlas rules.")
+}
 sf1B_selected_labels <- paste0("C", sf1B_selected_communities)
 
 sf1B_patient_categories <- rhdf5::h5read(STAGE0_H5AD, "/obs/patient_id/categories")
@@ -2036,7 +2055,7 @@ sf1E_log_legend_at <- seq(sf1E_log_limits[[1]], sf1E_log_limits[[2]], by = 1)
 sf1E_log_legend_labels <- c("1e-4", "1e-3", "1e-2", "1e-1", "1")
 sf1E_relation_col_fun <- circlize::colorRamp2(
   c(sf1E_log_limits[[1]], mean(sf1E_log_limits), sf1E_log_limits[[2]]),
-  c("#f7fbff", "#6baed6", "#08306b")
+  unname(stride_palette$continuous$relation)
 )
 sf1E_row_split <- factor(
   c(rep("Source community", sf1E_k), "target-open e"),
@@ -2173,7 +2192,8 @@ for (sf1E_pair in c("tc_im", "tc_pt")) {
 # Visualization:
 #   Four standalone metric-wise dumbbell plots.
 # Axes/value definition:
-#   y-axis: communities, fixed to the same C0-C24 order across all outputs.
+#   y-axis: communities, fixed to the observed community order across all
+#   outputs.
 #   x-axis: raw cohort median for one metric.
 #   points: TC -> IM and TC -> PT.
 #   segments: paired contrast between the two transfer families.
@@ -2528,205 +2548,1273 @@ ggsave(
 )
 
 
-###--Supplementary Figure 2 Panel A: Generator Rerun Consistency--###
+###--Supplementary Figure 2 Panel A: Community-Level TC-to-IM Difference Audit--###
 
 # Input:
-#   B3/generator_validation/raw/generator_validation/rerun_stability.csv
-# Field meaning:
-#   validation_object_id identifies target representation.
-#   metric_name == "rerun variability" selects the diagnostic metric.
-#   reported_value defines the plotted value.
-# Result intent:
-#   Show rerun variability for generator target summaries across repeated
-#   train-test splits.
-# Visualization:
-#   Compact point or bar plot.
-# Axes/value definition:
-#   x-axis: validation object label.
-#   y-axis: rerun variability.
-#   validation objects: community_space_target_fraction and
-#   identity_projected_target_fraction.
-# Output PDF:
-#   sf2_panelA_generator_rerun_consistency.pdf
-#
-# Data read and processing:
-# TODO
-#
-# Visualization block:
-# TODO
-#
-# PDF export:
-# TODO
-
-
-###--Supplementary Figure 2 Panel B: Synthetic-Real Target Agreement--###
-
-# Input:
-#   B3/generator_validation/raw/generator_validation/object_scores.csv
+#   B3/raw/generator_validation/target_surface_profiles.csv
+#   B3/raw/patient_truth_store.csv
 # Field meaning:
 #   rerun_id identifies repeated split.
-#   validation_object_id identifies target representation.
-#   metric_name selects Pearson correlation, MAE, or JS divergence.
-#   reported_value defines the plotted value.
+#   patient_id identifies held-out test patient.
+#   target_surface_profiles stores held-out observed IM community fractions.
+#   patient_truth_store stores observed TC and generated IM compositions.
 # Result intent:
-#   Show rerun-level numerical agreement between synthetic targets and held-out
-#   real target profiles.
+#   Compare q_IM - x_TC with hat(q)_IM - x_TC at the community level without
+#   claiming biological discovery.
 # Visualization:
-#   Rerun-level dot plot with median or point-range summary.
+#   Side-by-side community-by-rerun heatmaps after averaging held-out test
+#   patients.
 # Axes/value definition:
-#   x-axis: metric.
-#   y-axis: reported value.
-#   color or facet: validation object label.
-#   omit MSE from the visual layer.
+#   x-axis: rerun.
+#   y-axis: community/state.
+#   fill: mean community-fraction difference.
 # Output PDF:
-#   sf2_panelB_synthetic_real_target_agreement.pdf
+#   sf2_panelA_tc_to_im_difference_heatmap.pdf
 #
 # Data read and processing:
-# TODO
+sf2_target_profiles <- readr::read_csv(
+  file.path(B3_RAW, "generator_validation", "target_surface_profiles.csv"),
+  show_col_types = FALSE
+) %>%
+  filter(
+    split_role == "test",
+    surface_source == "heldout_real",
+    validation_object_id == "community_space_target_fraction"
+  ) %>%
+  mutate(rerun_id = factor(rerun_id, levels = unique(rerun_id)))
+
+sf2_state_lookup <- sf2_target_profiles %>%
+  distinct(feature_index, state_id) %>%
+  arrange(feature_index) %>%
+  mutate(state_label = paste0("C", state_id))
+
+sf2_state_levels <- sf2_state_lookup$state_label
+
+sf2_observed_im_long <- sf2_target_profiles %>%
+  select(rerun_id, patient_id, state_id, feature_index, q_im = reported_value)
+
+sf2_truth_store <- readr::read_csv(
+  file.path(B3_RAW, "patient_truth_store.csv"),
+  show_col_types = FALSE
+) %>%
+  distinct(rerun_id, patient_id, .keep_all = TRUE) %>%
+  mutate(
+    x_tc_vec = map(x_json, jsonlite::fromJSON),
+    y_syn_vec = map(y_json, jsonlite::fromJSON)
+  )
+
+sf2_truth_long <- sf2_truth_store %>%
+  transmute(
+    rerun_id,
+    patient_id,
+    profile_tbl = map2(
+      x_tc_vec,
+      y_syn_vec,
+      function(x_tc, y_syn) {
+        tibble(
+          feature_index = seq_along(x_tc) - 1L,
+          x_tc = as.numeric(x_tc),
+          y_syn = as.numeric(y_syn)
+        )
+      }
+    )
+  ) %>%
+  unnest(profile_tbl) %>%
+  left_join(sf2_state_lookup, by = "feature_index")
+
+sf2_generator_patient_profiles <- sf2_truth_long %>%
+  inner_join(
+    sf2_observed_im_long,
+    by = c("rerun_id", "patient_id", "state_id", "feature_index")
+  ) %>%
+  mutate(
+    observed_difference = q_im - x_tc,
+    generated_difference = y_syn - x_tc,
+    rerun_id = factor(rerun_id, levels = levels(sf2_target_profiles$rerun_id)),
+    state_label = factor(state_label, levels = rev(sf2_state_levels))
+  )
+
+sf2_difference_levels <- c("q[IM] - x[TC]", "hat(q)[IM] - x[TC]")
+
+sf2_difference_summary <- bind_rows(
+  sf2_generator_patient_profiles %>%
+    transmute(
+      rerun_id,
+      state_id,
+      feature_index,
+      state_label,
+      difference_source = "q[IM] - x[TC]",
+      difference_value = observed_difference
+    ),
+  sf2_generator_patient_profiles %>%
+    transmute(
+      rerun_id,
+      state_id,
+      feature_index,
+      state_label,
+      difference_source = "hat(q)[IM] - x[TC]",
+      difference_value = generated_difference
+    )
+) %>%
+  group_by(difference_source, rerun_id, state_id, feature_index, state_label) %>%
+  summarise(mean_difference = mean(difference_value, na.rm = TRUE), .groups = "drop") %>%
+  mutate(difference_source = factor(difference_source, levels = sf2_difference_levels))
+
+sf2_difference_limit <- max(abs(sf2_difference_summary$mean_difference), na.rm = TRUE)
+sf2_difference_colors <- unname(stride_palette$continuous$difference)
 #
 # Visualization block:
-# TODO
+sf2A_plot <- ggplot(
+  sf2_difference_summary,
+  aes(x = rerun_id, y = state_label, fill = mean_difference)
+) +
+  geom_tile(color = "white", linewidth = 0.15) +
+  scale_fill_gradientn(
+    colors = sf2_difference_colors,
+    limits = c(-sf2_difference_limit, sf2_difference_limit),
+    name = "Mean community\nfraction difference"
+  ) +
+  facet_wrap(~ difference_source, nrow = 1, labeller = label_parsed) +
+  labs(x = "Rerun", y = "Community") +
+  base_theme +
+  theme(
+    legend.position = "right",
+    axis.text.x = element_text(angle = 35, hjust = 1, vjust = 1),
+    strip.text = element_text(size = 7),
+    panel.spacing.x = unit(0.8, "lines")
+  )
 #
 # PDF export:
-# TODO
+ggsave(
+  filename = file.path(FIG_DIR, "sf2_panelA_tc_to_im_difference_heatmap.pdf"),
+  plot = sf2A_plot,
+  width = 6.6,
+  height = 3.2,
+  device = cairo_pdf
+)
 
 
-###--Supplementary Figure 2 Panel C: Relation Benchmark Supplemental Error--###
+###--Supplementary Figure 2 Panel B: Rerun-Level Generator Audit--###
 
 # Input:
-#   B3/a_benchmark/raw/a_benchmark/condition_summary.csv
-#   B3/a_benchmark/raw/a_benchmark/patient_metrics.csv
+#   B3/raw/generator_validation/target_surface_profiles.csv
+#   B3/raw/patient_truth_store.csv
+# Field meaning:
+#   x_tc is the observed TC composition.
+#   q_im is the held-out observed IM composition.
+#   y_syn is the generated IM composition, displayed as hat(q)_IM.
+# Result intent:
+#   Compare rerun-level metric values for pairs involving x_TC, q_IM, and
+#   hat(q)_IM. This is a semi-synthetic generator audit, not a biological claim.
+# Visualization:
+#   Rerun-level boxplots with paired points and brackets, split into left and
+#   right comparison blocks.
+# Axes/value definition:
+#   left block: cor/MAE/JS for hat(q)_IM vs q_IM and x_TC vs q_IM.
+#   right block: MAE/JS for hat(q)_IM vs x_TC and q_IM vs x_TC.
+# Output PDF:
+#   sf2_panelB_rerun_audit_dotplot.pdf
+#
+# Data read and processing:
+sf2_profile_pearson <- function(left, right) {
+  left <- as.numeric(left)
+  right <- as.numeric(right)
+  if (sd(left) == 0 || sd(right) == 0) {
+    return(NA_real_)
+  }
+  cor(left, right)
+}
+
+sf2_profile_mae <- function(left, right) {
+  mean(abs(as.numeric(left) - as.numeric(right)))
+}
+
+sf2_normalize_profile <- function(values) {
+  values <- as.numeric(values)
+  total <- sum(values)
+  if (!is.finite(total) || total <= 0) {
+    return(rep(NA_real_, length(values)))
+  }
+  values / total
+}
+
+sf2_profile_js <- function(left, right) {
+  left <- sf2_normalize_profile(left)
+  right <- sf2_normalize_profile(right)
+  midpoint <- 0.5 * (left + right)
+  sf2_kl <- function(p, q) {
+    idx <- is.finite(p) & is.finite(q) & p > 0 & q > 0
+    sum(p[idx] * log(p[idx] / q[idx]))
+  }
+  0.5 * sf2_kl(left, midpoint) + 0.5 * sf2_kl(right, midpoint)
+}
+
+sf2_profile_rows <- sf2_generator_patient_profiles %>%
+  arrange(rerun_id, patient_id, feature_index) %>%
+  group_by(rerun_id, patient_id) %>%
+  summarise(
+    x_tc_vec = list(x_tc),
+    q_im_vec = list(q_im),
+    y_syn_vec = list(y_syn),
+    .groups = "drop"
+  )
+
+sf2_patient_metrics <- sf2_profile_rows %>%
+  rowwise() %>%
+  mutate(
+    tc_im_pearson = sf2_profile_pearson(unlist(x_tc_vec), unlist(q_im_vec)),
+    syn_im_pearson = sf2_profile_pearson(unlist(y_syn_vec), unlist(q_im_vec)),
+    tc_im_mae = sf2_profile_mae(unlist(x_tc_vec), unlist(q_im_vec)),
+    syn_im_mae = sf2_profile_mae(unlist(y_syn_vec), unlist(q_im_vec)),
+    tc_syn_mae = sf2_profile_mae(unlist(x_tc_vec), unlist(y_syn_vec)),
+    tc_im_js = sf2_profile_js(unlist(x_tc_vec), unlist(q_im_vec)),
+    syn_im_js = sf2_profile_js(unlist(y_syn_vec), unlist(q_im_vec)),
+    tc_syn_js = sf2_profile_js(unlist(x_tc_vec), unlist(y_syn_vec))
+  ) %>%
+  ungroup()
+
+sf2_rerun_metrics <- sf2_patient_metrics %>%
+  group_by(rerun_id) %>%
+  summarise(
+    tc_im_pearson = mean(tc_im_pearson, na.rm = TRUE),
+    syn_im_pearson = mean(syn_im_pearson, na.rm = TRUE),
+    tc_im_mae = mean(tc_im_mae, na.rm = TRUE),
+    syn_im_mae = mean(syn_im_mae, na.rm = TRUE),
+    tc_syn_mae = mean(tc_syn_mae, na.rm = TRUE),
+    tc_im_js = mean(tc_im_js, na.rm = TRUE),
+    syn_im_js = mean(syn_im_js, na.rm = TRUE),
+    tc_syn_js = mean(tc_syn_js, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+sf2B_left_metric_levels <- c("Pearson Cor", "MAE", "JS")
+sf2B_right_metric_levels <- c("MAE", "JS")
+
+sf2B_left_pair_levels <- c("qhat_vs_qim", "xtc_vs_qim")
+sf2B_left_pair_labels <- c(
+  qhat_vs_qim = "hat(q)[IM]~'vs'~q[IM]",
+  xtc_vs_qim = "x[TC]~'vs'~q[IM]"
+)
+sf2B_left_pair_colors <- c(
+  qhat_vs_qim = stride_palette$generator[["qhat"]],
+  xtc_vs_qim = domain_colors[["TC"]]
+)
+
+sf2B_right_pair_levels <- c("qhat_vs_xtc", "qim_vs_xtc")
+sf2B_right_pair_labels <- c(
+  qhat_vs_xtc = "hat(q)[IM]~'vs'~x[TC]",
+  qim_vs_xtc = "q[IM]~'vs'~x[TC]"
+)
+sf2B_right_pair_colors <- c(
+  qhat_vs_xtc = stride_palette$generator[["qhat"]],
+  qim_vs_xtc = domain_colors[["IM"]]
+)
+
+sf2B_left_plot_data <- bind_rows(
+  sf2_rerun_metrics %>%
+    transmute(rerun_id, metric_label = "Pearson Cor", pair_code = "qhat_vs_qim", value = syn_im_pearson),
+  sf2_rerun_metrics %>%
+    transmute(rerun_id, metric_label = "Pearson Cor", pair_code = "xtc_vs_qim", value = tc_im_pearson),
+  sf2_rerun_metrics %>%
+    transmute(rerun_id, metric_label = "MAE", pair_code = "qhat_vs_qim", value = syn_im_mae),
+  sf2_rerun_metrics %>%
+    transmute(rerun_id, metric_label = "MAE", pair_code = "xtc_vs_qim", value = tc_im_mae),
+  sf2_rerun_metrics %>%
+    transmute(rerun_id, metric_label = "JS", pair_code = "qhat_vs_qim", value = syn_im_js),
+  sf2_rerun_metrics %>%
+    transmute(rerun_id, metric_label = "JS", pair_code = "xtc_vs_qim", value = tc_im_js)
+) %>%
+  mutate(
+    metric_label = factor(metric_label, levels = sf2B_left_metric_levels),
+    pair_code = factor(pair_code, levels = sf2B_left_pair_levels)
+  )
+
+sf2B_right_plot_data <- bind_rows(
+  sf2_rerun_metrics %>%
+    transmute(rerun_id, metric_label = "MAE", pair_code = "qhat_vs_xtc", value = tc_syn_mae),
+  sf2_rerun_metrics %>%
+    transmute(rerun_id, metric_label = "MAE", pair_code = "qim_vs_xtc", value = tc_im_mae),
+  sf2_rerun_metrics %>%
+    transmute(rerun_id, metric_label = "JS", pair_code = "qhat_vs_xtc", value = tc_syn_js),
+  sf2_rerun_metrics %>%
+    transmute(rerun_id, metric_label = "JS", pair_code = "qim_vs_xtc", value = tc_im_js)
+) %>%
+  mutate(
+    metric_label = factor(metric_label, levels = sf2B_right_metric_levels),
+    pair_code = factor(pair_code, levels = sf2B_right_pair_levels)
+  )
+
+sf2B_paired_wilcox_p <- function(left, right) {
+  paired_idx <- is.finite(left) & is.finite(right)
+  if (sum(paired_idx) <= 1 || !any(left[paired_idx] != right[paired_idx])) {
+    return(NA_real_)
+  }
+  wilcox.test(left[paired_idx], right[paired_idx], paired = TRUE, exact = FALSE)$p.value
+}
+
+sf2B_stat_tests <- bind_rows(
+  tibble(
+    plot_block = "left",
+    metric_label = "Pearson Cor",
+    p_value = sf2B_paired_wilcox_p(sf2_rerun_metrics$syn_im_pearson, sf2_rerun_metrics$tc_im_pearson)
+  ),
+  tibble(
+    plot_block = "left",
+    metric_label = "MAE",
+    p_value = sf2B_paired_wilcox_p(sf2_rerun_metrics$syn_im_mae, sf2_rerun_metrics$tc_im_mae)
+  ),
+  tibble(
+    plot_block = "left",
+    metric_label = "JS",
+    p_value = sf2B_paired_wilcox_p(sf2_rerun_metrics$syn_im_js, sf2_rerun_metrics$tc_im_js)
+  ),
+  tibble(
+    plot_block = "right",
+    metric_label = "MAE",
+    p_value = sf2B_paired_wilcox_p(sf2_rerun_metrics$tc_syn_mae, sf2_rerun_metrics$tc_im_mae)
+  ),
+  tibble(
+    plot_block = "right",
+    metric_label = "JS",
+    p_value = sf2B_paired_wilcox_p(sf2_rerun_metrics$tc_syn_js, sf2_rerun_metrics$tc_im_js)
+  )
+) %>%
+  mutate(
+    q_value = p.adjust(p_value, method = "BH"),
+    stat_label = case_when(
+      is.na(q_value) ~ "ns",
+      q_value < 0.001 ~ "***",
+      q_value < 0.01 ~ "**",
+      q_value <= 0.05 ~ "*",
+      TRUE ~ "ns"
+    )
+  )
+
+sf2B_left_segments <- sf2B_left_plot_data %>%
+  select(rerun_id, metric_label, pair_code, value) %>%
+  pivot_wider(names_from = pair_code, values_from = value)
+
+sf2B_right_segments <- sf2B_right_plot_data %>%
+  select(rerun_id, metric_label, pair_code, value) %>%
+  pivot_wider(names_from = pair_code, values_from = value)
+
+sf2B_left_annotations <- sf2B_left_plot_data %>%
+  group_by(metric_label) %>%
+  summarise(
+    y_min = min(value, na.rm = TRUE),
+    y_max = max(value, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  left_join(
+    sf2B_stat_tests %>% filter(plot_block == "left") %>% select(metric_label, stat_label),
+    by = "metric_label"
+  ) %>%
+  mutate(
+    y_range = pmax(y_max - y_min, 0.01),
+    y_bracket = y_max + y_range * 0.08,
+    y_tick = y_range * 0.05,
+    y_label = y_max + y_range * 0.15,
+    metric_label = factor(metric_label, levels = sf2B_left_metric_levels)
+  )
+
+sf2B_right_annotations <- sf2B_right_plot_data %>%
+  group_by(metric_label) %>%
+  summarise(
+    y_min = min(value, na.rm = TRUE),
+    y_max = max(value, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  left_join(
+    sf2B_stat_tests %>% filter(plot_block == "right") %>% select(metric_label, stat_label),
+    by = "metric_label"
+  ) %>%
+  mutate(
+    y_range = pmax(y_max - y_min, 0.01),
+    y_bracket = y_max + y_range * 0.08,
+    y_tick = y_range * 0.05,
+    y_label = y_max + y_range * 0.15,
+    metric_label = factor(metric_label, levels = sf2B_right_metric_levels)
+  )
+#
+# Visualization block:
+sf2B_left_plot <- ggplot(
+  sf2B_left_plot_data,
+  aes(x = pair_code, y = value, color = pair_code, fill = pair_code)
+) +
+  geom_segment(
+    data = sf2B_left_segments,
+    aes(x = 1, xend = 2, y = qhat_vs_qim, yend = xtc_vs_qim),
+    inherit.aes = FALSE,
+    color = "grey78",
+    linewidth = 0.2,
+    alpha = 0.7
+  ) +
+  geom_boxplot(
+    width = 0.5,
+    outlier.shape = NA,
+    alpha = 0.52,
+    color = "grey25",
+    linewidth = 0.25
+  ) +
+  geom_point(
+    position = position_jitter(width = 0.055, height = 0, seed = 2),
+    size = 0.9,
+    alpha = 0.58
+  ) +
+  geom_segment(
+    data = sf2B_left_annotations,
+    aes(x = 1, xend = 2, y = y_bracket, yend = y_bracket),
+    inherit.aes = FALSE,
+    linewidth = 0.24,
+    color = "grey20"
+  ) +
+  geom_segment(
+    data = sf2B_left_annotations,
+    aes(x = 1, xend = 1, y = y_bracket, yend = y_bracket - y_tick),
+    inherit.aes = FALSE,
+    linewidth = 0.24,
+    color = "grey20"
+  ) +
+  geom_segment(
+    data = sf2B_left_annotations,
+    aes(x = 2, xend = 2, y = y_bracket, yend = y_bracket - y_tick),
+    inherit.aes = FALSE,
+    linewidth = 0.24,
+    color = "grey20"
+  ) +
+  geom_text(
+    data = sf2B_left_annotations,
+    aes(x = 1.5, y = y_label, label = stat_label),
+    inherit.aes = FALSE,
+    size = 2.2,
+    color = "grey10",
+    vjust = 0
+  ) +
+  facet_wrap(~ metric_label, scales = "free_y", nrow = 1) +
+  scale_color_manual(values = sf2B_left_pair_colors, drop = FALSE, guide = "none") +
+  scale_fill_manual(
+    values = sf2B_left_pair_colors,
+    labels = parse(text = unname(sf2B_left_pair_labels[sf2B_left_pair_levels])),
+    drop = FALSE,
+    guide = guide_legend(ncol = 1, override.aes = list(alpha = 0.62))
+  ) +
+  scale_x_discrete(drop = FALSE) +
+  scale_y_continuous(expand = expansion(mult = c(0.05, 0.23))) +
+  coord_cartesian(clip = "off") +
+  labs(title = expression("Comparison to " * q[IM]), x = NULL, y = "Rerun-level value", fill = NULL) +
+  base_theme +
+  theme(
+    legend.position = "left",
+    legend.direction = "vertical",
+    legend.justification = "center",
+    legend.margin = margin(0, 0, 0, 0),
+    legend.box.margin = margin(0, 0, 0, 0),
+    legend.key.size = unit(0.35, "lines"),
+    legend.text = element_text(size = 6.2),
+    plot.title = element_text(size = 8, hjust = 0.5, face = "bold"),
+    axis.text.x = element_blank(),
+    axis.ticks.x = element_blank(),
+    strip.text = element_text(size = 7),
+    panel.spacing.x = unit(0.65, "lines"),
+    plot.margin = margin(5.5, 5.5, 5.5, 5.5)
+  )
+
+sf2B_right_plot <- ggplot(
+  sf2B_right_plot_data,
+  aes(x = pair_code, y = value, color = pair_code, fill = pair_code)
+) +
+  geom_segment(
+    data = sf2B_right_segments,
+    aes(x = 1, xend = 2, y = qhat_vs_xtc, yend = qim_vs_xtc),
+    inherit.aes = FALSE,
+    color = "grey78",
+    linewidth = 0.2,
+    alpha = 0.7
+  ) +
+  geom_boxplot(
+    width = 0.5,
+    outlier.shape = NA,
+    alpha = 0.52,
+    color = "grey25",
+    linewidth = 0.25
+  ) +
+  geom_point(
+    position = position_jitter(width = 0.055, height = 0, seed = 2),
+    size = 0.9,
+    alpha = 0.58
+  ) +
+  geom_segment(
+    data = sf2B_right_annotations,
+    aes(x = 1, xend = 2, y = y_bracket, yend = y_bracket),
+    inherit.aes = FALSE,
+    linewidth = 0.24,
+    color = "grey20"
+  ) +
+  geom_segment(
+    data = sf2B_right_annotations,
+    aes(x = 1, xend = 1, y = y_bracket, yend = y_bracket - y_tick),
+    inherit.aes = FALSE,
+    linewidth = 0.24,
+    color = "grey20"
+  ) +
+  geom_segment(
+    data = sf2B_right_annotations,
+    aes(x = 2, xend = 2, y = y_bracket, yend = y_bracket - y_tick),
+    inherit.aes = FALSE,
+    linewidth = 0.24,
+    color = "grey20"
+  ) +
+  geom_text(
+    data = sf2B_right_annotations,
+    aes(x = 1.5, y = y_label, label = stat_label),
+    inherit.aes = FALSE,
+    size = 2.2,
+    color = "grey10",
+    vjust = 0
+  ) +
+  facet_wrap(~ metric_label, scales = "free_y", nrow = 1) +
+  scale_color_manual(values = sf2B_right_pair_colors, drop = FALSE, guide = "none") +
+  scale_fill_manual(
+    values = sf2B_right_pair_colors,
+    labels = parse(text = unname(sf2B_right_pair_labels[sf2B_right_pair_levels])),
+    drop = FALSE,
+    guide = guide_legend(ncol = 1, override.aes = list(alpha = 0.62))
+  ) +
+  scale_x_discrete(drop = FALSE) +
+  scale_y_continuous(expand = expansion(mult = c(0.05, 0.23))) +
+  coord_cartesian(clip = "off") +
+  labs(title = expression("Comparison to " * x[TC]), x = NULL, y = "Rerun-level value", fill = NULL) +
+  base_theme +
+  theme(
+    legend.position = "left",
+    legend.direction = "vertical",
+    legend.justification = "center",
+    legend.margin = margin(0, 0, 0, 0),
+    legend.box.margin = margin(0, 0, 0, 0),
+    legend.key.size = unit(0.35, "lines"),
+    legend.text = element_text(size = 6.2),
+    plot.title = element_text(size = 8, hjust = 0.5, face = "bold"),
+    axis.text.x = element_blank(),
+    axis.ticks.x = element_blank(),
+    strip.text = element_text(size = 7),
+    panel.spacing.x = unit(0.65, "lines"),
+    plot.margin = margin(5.5, 5.5, 5.5, 5.5)
+  )
+#
+# PDF export:
+sf2B_pdf <- file.path(FIG_DIR, "sf2_panelB_rerun_audit_dotplot.pdf")
+cairo_pdf(sf2B_pdf, width = 8.2, height = 3.6)
+grid.newpage()
+pushViewport(viewport(layout = grid.layout(nrow = 1, ncol = 2, widths = unit(c(3, 2), "null"))))
+pushViewport(viewport(layout.pos.row = 1, layout.pos.col = 1))
+grid.draw(ggplotGrob(sf2B_left_plot))
+upViewport()
+pushViewport(viewport(layout.pos.row = 1, layout.pos.col = 2))
+grid.draw(ggplotGrob(sf2B_right_plot))
+upViewport(2)
+dev.off()
+
+
+###--Supplementary Figure 2 Panel C: Benchmark Secondary Checks--###
+
+# Input:
+#   B3/raw/a_benchmark/condition_summary.csv
+#   B3/raw/a_benchmark/patient_metrics.csv
+#   B3/raw/de_benchmark/condition_summary.csv
+#   B3/raw/de_benchmark/patient_metrics.csv
 # Field meaning:
 #   method_name is mapped through method_labels.
-#   metric_name == "A_MSE_active" selects active relation MSE.
+#   metric_name selects MSE sensitivity and overall amount error metrics.
 #   mean_value, ci_lower, and ci_upper define summary point-ranges.
 #   reported_value supports rerun-level statistical comparisons.
 # Result intent:
-#   Show supplemental active relation MSE in the relation benchmark.
+#   Show secondary benchmark checks for larger community-level errors and
+#   aggregate amount recovery.
 # Visualization:
-#   Lower-is-better point-range or bar plot.
+#   Two vertically stacked lower-is-better point-range blocks.
 # Axes/value definition:
-#   x-axis: method.
-#   y-axis: Active relation MSE (x10^6).
-#   methods: STRIDE, Balanced OT, Unbalanced OT, Partial OT,
-#   Diagonal transport.
+#   top block: MSE sensitivity for A relation, d source-open, e target-open.
+#   bottom block: overall amount error for A off-diagonal, d source-open,
+#   e target-open.
+#   balanced_ot_baseline is shown as a light-gray NA slot in open-channel
+#   facets where absent from formal outputs.
 # Output PDF:
-#   sf2_panelC_relation_benchmark_supplemental_error.pdf
+#   sf2_panelC_benchmark_secondary_checks.pdf
 #
 # Data read and processing:
-# TODO
-#
-# Visualization block:
-# TODO
+sf2C_mse_metrics <- c("A_MSE_active", "d_MSE", "e_MSE")
+sf2C_amount_metrics <- c(
+  "offdiag_mass_abs_error",
+  "depletion_mass_abs_error",
+  "emergence_mass_abs_error"
+)
+sf2C_metrics <- c(sf2C_mse_metrics, sf2C_amount_metrics)
+sf2C_object_levels <- c(
+  recovery_object_labels[["A_relation"]],
+  recovery_object_labels[["A_offdiag"]],
+  recovery_object_labels[["d_source_open"]],
+  recovery_object_labels[["e_target_open"]]
+)
+sf2C_method_label_levels <- rev(unname(method_labels[baseline_method_levels]))
+sf2C_metric_metadata <- tibble::tibble(metric_name = sf2C_metrics) %>%
+  mutate(
+    metric_block = factor(
+      if_else(metric_name %in% sf2C_mse_metrics, "MSE sensitivity", "Overall amount error"),
+      levels = secondary_block_levels
+    ),
+    object_label = factor(
+      case_when(
+        metric_name %in% names(recovery_mse_labels) ~ unname(recovery_mse_labels[metric_name]),
+        TRUE ~ unname(recovery_amount_labels[metric_name])
+      ),
+      levels = sf2C_object_levels
+    ),
+    display_multiplier = coalesce(
+      display_scaling$display_multiplier[match(metric_name, display_scaling$metric_name)],
+      1
+    )
+  )
+
+sf2C_summary_values <- bind_rows(
+  readr::read_csv(
+    file.path(B3_RAW, "a_benchmark", "condition_summary.csv"),
+    show_col_types = FALSE
+  ) %>%
+    filter(metric_name %in% c("A_MSE_active", "offdiag_mass_abs_error")),
+  readr::read_csv(
+    file.path(B3_RAW, "de_benchmark", "condition_summary.csv"),
+    show_col_types = FALSE
+  ) %>%
+    filter(metric_name %in% c("d_MSE", "e_MSE", "depletion_mass_abs_error", "emergence_mass_abs_error"))
+) %>%
+  filter(method_name %in% baseline_method_levels) %>%
+  select(metric_name, method_name, mean_value, ci_lower, ci_upper)
+
+sf2C_summary <- tidyr::expand_grid(
+  metric_name = sf2C_metrics,
+  method_name = baseline_method_levels
+) %>%
+  left_join(sf2C_metric_metadata, by = "metric_name") %>%
+  left_join(sf2C_summary_values, by = c("metric_name", "method_name")) %>%
+  mutate(
+    method_name = factor(method_name, levels = baseline_method_levels),
+    method_label = factor(
+      unname(method_labels[as.character(method_name)]),
+      levels = sf2C_method_label_levels
+    ),
+    is_missing = is.na(mean_value),
+    mean_display = mean_value * display_multiplier,
+    ci_lower_display = ci_lower * display_multiplier,
+    ci_upper_display = ci_upper * display_multiplier
+  )
+
+sf2C_ranges <- sf2C_summary %>%
+  filter(!is_missing) %>%
+  group_by(metric_name, metric_block, object_label) %>%
+  summarise(
+    x_min = min(ci_lower_display, mean_display, na.rm = TRUE),
+    x_max = max(ci_upper_display, mean_display, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    x_range = pmax(x_max - x_min, abs(x_max) * 0.25, 0.01),
+    x_tick = x_range * 0.025,
+    x_na = x_min + x_range * 0.5
+  )
+
+sf2C_na_slots <- sf2C_summary %>%
+  filter(is_missing) %>%
+  left_join(sf2C_ranges, by = c("metric_name", "metric_block", "object_label"))
+
+sf2C_patient_metrics <- bind_rows(
+  readr::read_csv(
+    file.path(B3_RAW, "a_benchmark", "patient_metrics.csv"),
+    show_col_types = FALSE
+  ) %>%
+    filter(metric_name %in% c("A_MSE_active", "offdiag_mass_abs_error")),
+  readr::read_csv(
+    file.path(B3_RAW, "de_benchmark", "patient_metrics.csv"),
+    show_col_types = FALSE
+  ) %>%
+    filter(metric_name %in% c("d_MSE", "e_MSE", "depletion_mass_abs_error", "emergence_mass_abs_error"))
+) %>%
+  filter(
+    metric_name %in% sf2C_metrics,
+    method_name %in% baseline_method_levels
+  ) %>%
+  group_by(rerun_id, method_name, metric_name) %>%
+  summarise(value_raw = mean(reported_value, na.rm = TRUE), .groups = "drop")
+
+sf2C_reference_stats <- sf2C_patient_metrics %>%
+  filter(method_name == "stride_reference") %>%
+  select(rerun_id, metric_name, stride_value = value_raw)
+sf2C_stat_tests <- sf2C_patient_metrics %>%
+  filter(method_name != "stride_reference") %>%
+  inner_join(sf2C_reference_stats, by = c("rerun_id", "metric_name")) %>%
+  group_by(metric_name, method_name) %>%
+  summarise(
+    n_pairs = sum(is.finite(value_raw) & is.finite(stride_value)),
+    p_value = {
+      keep <- is.finite(value_raw) & is.finite(stride_value)
+      if (sum(keep) > 1 && any(value_raw[keep] != stride_value[keep])) {
+        wilcox.test(value_raw[keep], stride_value[keep], paired = TRUE, exact = FALSE)$p.value
+      } else {
+        NA_real_
+      }
+    },
+    .groups = "drop"
+  ) %>%
+  mutate(
+    q_value = p.adjust(p_value, method = "BH"),
+    significance_label = case_when(
+      is.na(q_value) ~ "ns",
+      q_value < 0.001 ~ "***",
+      q_value < 0.01 ~ "**",
+      q_value <= 0.05 ~ "*",
+      TRUE ~ "ns"
+    )
+  ) %>%
+  left_join(sf2C_metric_metadata, by = "metric_name") %>%
+  mutate(
+    method_name = factor(method_name, levels = baseline_method_levels),
+    method_label = factor(
+      unname(method_labels[as.character(method_name)]),
+      levels = sf2C_method_label_levels
+    )
+  ) %>%
+  left_join(sf2C_ranges, by = c("metric_name", "metric_block", "object_label")) %>%
+  group_by(metric_name, metric_block, object_label) %>%
+  arrange(method_name, .by_group = TRUE) %>%
+  mutate(
+    bracket_rank = row_number(),
+    x_bracket = x_max + x_range * (0.12 + 0.13 * (bracket_rank - 1)),
+    x_lower = x_bracket - x_tick * 1.1,
+    x_label = x_bracket + x_tick * 0.85,
+    start_y = factor("STRIDE", levels = sf2C_method_label_levels),
+    end_y = method_label
+  ) %>%
+  ungroup()
+
+sf2C_mse_plot <- ggplot(
+  sf2C_summary %>% filter(metric_block == "MSE sensitivity"),
+  aes(x = mean_display, y = method_label, color = method_name)
+) +
+  geom_vline(xintercept = 0, color = "grey90", linewidth = 0.2) +
+  geom_errorbarh(
+    data = sf2C_summary %>% filter(metric_block == "MSE sensitivity", !is_missing),
+    aes(xmin = ci_lower_display, xmax = ci_upper_display),
+    height = 0.18,
+    linewidth = 0.28
+  ) +
+  geom_point(
+    data = sf2C_summary %>% filter(metric_block == "MSE sensitivity", !is_missing),
+    aes(fill = method_name),
+    shape = 21,
+    size = 1.8,
+    stroke = 0.25
+  ) +
+  geom_text(
+    data = sf2C_na_slots %>% filter(metric_block == "MSE sensitivity"),
+    aes(x = x_na, y = method_label, label = "NA"),
+    inherit.aes = FALSE,
+    color = na_color,
+    size = 2.1
+  ) +
+  geom_segment(
+    data = sf2C_stat_tests %>% filter(metric_block == "MSE sensitivity"),
+    aes(x = x_bracket, xend = x_bracket, y = start_y, yend = end_y),
+    inherit.aes = FALSE,
+    linewidth = 0.24,
+    color = "grey25"
+  ) +
+  geom_segment(
+    data = sf2C_stat_tests %>% filter(metric_block == "MSE sensitivity"),
+    aes(x = x_lower, xend = x_bracket, y = start_y, yend = start_y),
+    inherit.aes = FALSE,
+    linewidth = 0.24,
+    color = "grey25"
+  ) +
+  geom_segment(
+    data = sf2C_stat_tests %>% filter(metric_block == "MSE sensitivity"),
+    aes(x = x_lower, xend = x_bracket, y = end_y, yend = end_y),
+    inherit.aes = FALSE,
+    linewidth = 0.24,
+    color = "grey25"
+  ) +
+  geom_text(
+    data = sf2C_stat_tests %>% filter(metric_block == "MSE sensitivity"),
+    aes(x = x_label, y = end_y, label = significance_label),
+    inherit.aes = FALSE,
+    hjust = 0,
+    size = 2.1,
+    color = "grey10"
+  ) +
+  facet_wrap(~ object_label, scales = "free_x", nrow = 1) +
+  scale_color_manual(
+    values = method_colors[baseline_method_levels],
+    breaks = baseline_method_levels,
+    labels = method_labels[baseline_method_levels],
+    drop = FALSE,
+    na.translate = FALSE
+  ) +
+  scale_fill_manual(
+    values = method_colors[baseline_method_levels],
+    breaks = baseline_method_levels,
+    labels = method_labels[baseline_method_levels],
+    drop = FALSE,
+    na.translate = FALSE
+  ) +
+  scale_x_continuous(expand = expansion(mult = c(0.04, 0.62))) +
+  coord_cartesian(clip = "off") +
+  labs(title = "Community-level error", x = "MSE, lower is better", y = NULL) +
+  base_theme +
+  theme(
+    legend.position = "none",
+    axis.text.y = element_text(size = 6.5),
+    strip.text = element_text(size = 6.3),
+    plot.title = element_text(size = 7.5, hjust = 0.5),
+    panel.spacing.x = unit(0.55, "lines"),
+    plot.margin = margin(4.5, 30, 3.5, 5.5)
+  )
+
+sf2C_amount_plot <- ggplot(
+  sf2C_summary %>% filter(metric_block == "Overall amount error"),
+  aes(x = mean_display, y = method_label, color = method_name)
+) +
+  geom_vline(xintercept = 0, color = "grey90", linewidth = 0.2) +
+  geom_errorbarh(
+    data = sf2C_summary %>% filter(metric_block == "Overall amount error", !is_missing),
+    aes(xmin = ci_lower_display, xmax = ci_upper_display),
+    height = 0.18,
+    linewidth = 0.28
+  ) +
+  geom_point(
+    data = sf2C_summary %>% filter(metric_block == "Overall amount error", !is_missing),
+    aes(fill = method_name),
+    shape = 21,
+    size = 1.8,
+    stroke = 0.25
+  ) +
+  geom_text(
+    data = sf2C_na_slots %>% filter(metric_block == "Overall amount error"),
+    aes(x = x_na, y = method_label, label = "NA"),
+    inherit.aes = FALSE,
+    color = na_color,
+    size = 2.1
+  ) +
+  geom_segment(
+    data = sf2C_stat_tests %>% filter(metric_block == "Overall amount error"),
+    aes(x = x_bracket, xend = x_bracket, y = start_y, yend = end_y),
+    inherit.aes = FALSE,
+    linewidth = 0.24,
+    color = "grey25"
+  ) +
+  geom_segment(
+    data = sf2C_stat_tests %>% filter(metric_block == "Overall amount error"),
+    aes(x = x_lower, xend = x_bracket, y = start_y, yend = start_y),
+    inherit.aes = FALSE,
+    linewidth = 0.24,
+    color = "grey25"
+  ) +
+  geom_segment(
+    data = sf2C_stat_tests %>% filter(metric_block == "Overall amount error"),
+    aes(x = x_lower, xend = x_bracket, y = end_y, yend = end_y),
+    inherit.aes = FALSE,
+    linewidth = 0.24,
+    color = "grey25"
+  ) +
+  geom_text(
+    data = sf2C_stat_tests %>% filter(metric_block == "Overall amount error"),
+    aes(x = x_label, y = end_y, label = significance_label),
+    inherit.aes = FALSE,
+    hjust = 0,
+    size = 2.1,
+    color = "grey10"
+  ) +
+  facet_wrap(~ object_label, scales = "free_x", nrow = 1) +
+  scale_color_manual(
+    values = method_colors[baseline_method_levels],
+    breaks = baseline_method_levels,
+    labels = method_labels[baseline_method_levels],
+    drop = FALSE,
+    na.translate = FALSE
+  ) +
+  scale_fill_manual(
+    values = method_colors[baseline_method_levels],
+    breaks = baseline_method_levels,
+    labels = method_labels[baseline_method_levels],
+    drop = FALSE,
+    na.translate = FALSE
+  ) +
+  scale_x_continuous(expand = expansion(mult = c(0.04, 0.62))) +
+  coord_cartesian(clip = "off") +
+  labs(title = "Overall amount error", x = "Absolute amount error, lower is better", y = NULL) +
+  base_theme +
+  theme(
+    legend.position = "none",
+    axis.text.y = element_text(size = 6.5),
+    strip.text = element_text(size = 6.3),
+    plot.title = element_text(size = 7.5, hjust = 0.5),
+    panel.spacing.x = unit(0.55, "lines"),
+    plot.margin = margin(3.5, 30, 5.5, 5.5)
+  )
 #
 # PDF export:
-# TODO
+sf2C_pdf <- file.path(FIG_DIR, "sf2_panelC_benchmark_secondary_checks.pdf")
+cairo_pdf(sf2C_pdf, width = 7.4, height = 5.25)
+grid.newpage()
+pushViewport(viewport(layout = grid.layout(nrow = 2, ncol = 1, heights = unit(c(1, 1), "null"))))
+pushViewport(viewport(layout.pos.row = 1, layout.pos.col = 1))
+grid.draw(ggplotGrob(sf2C_mse_plot))
+upViewport()
+pushViewport(viewport(layout.pos.row = 2, layout.pos.col = 1))
+grid.draw(ggplotGrob(sf2C_amount_plot))
+upViewport(2)
+dev.off()
 
 
-###--Supplementary Figure 2 Panel D: Open Benchmark Supplemental Errors--###
-
-# Input:
-#   B3/de_benchmark/raw/de_benchmark/condition_summary.csv
-#   B3/de_benchmark/raw/de_benchmark/patient_metrics.csv
-# Field meaning:
-#   method_name is mapped through method_labels.
-#   metric_name selects source-open mass error, target-open mass error,
-#   source-open profile MSE, and target-open profile MSE.
-#   mean_value, ci_lower, and ci_upper define summary point-ranges.
-#   reported_value supports rerun-level statistical comparisons.
-# Result intent:
-#   Show supplemental open-channel mass and profile errors in the open
-#   benchmark.
-# Visualization:
-#   Faceted lower-is-better point-range or bar plot.
-# Axes/value definition:
-#   x-axis: method.
-#   y-axis: error value with display scaling in facet labels.
-#   facets: depletion_mass_abs_error, emergence_mass_abs_error, d_MSE, e_MSE.
-#   Only methods present in de_benchmark are displayed; do not add a missing
-#   balanced_ot_baseline NA slot in this supplementary panel.
-# Output PDF:
-#   sf2_panelD_open_benchmark_supplemental_errors.pdf
-#
-# Data read and processing:
-# TODO
-#
-# Visualization block:
-# TODO
-#
-# PDF export:
-# TODO
-
-
-###--Supplementary Figure 2 Panel E: Ablation Supplemental Relation and Mass Errors--###
+###--Supplementary Figure 2 Panel D: Ablation Secondary Checks--###
 
 # Input:
-#   B3/subbag_consistency_ablation/raw/subbag_consistency_ablation/condition_summary.csv
-#   B3/geometry_ablation/raw/geometry_ablation/condition_summary.csv
-#   B3/recurrence_ablation/raw/recurrence_ablation/condition_summary.csv
-#   B3/subbag_consistency_ablation/raw/subbag_consistency_ablation/patient_metrics.csv
-#   B3/geometry_ablation/raw/geometry_ablation/patient_metrics.csv
-#   B3/recurrence_ablation/raw/recurrence_ablation/patient_metrics.csv
+#   B3/raw/subbag_consistency_ablation/condition_summary.csv
+#   B3/raw/geometry_ablation/condition_summary.csv
+#   B3/raw/recurrence_ablation/condition_summary.csv
+#   B3/raw/subbag_consistency_ablation/patient_metrics.csv
+#   B3/raw/geometry_ablation/patient_metrics.csv
+#   B3/raw/recurrence_ablation/patient_metrics.csv
 # Field meaning:
 #   evaluation_family identifies the ablation family.
 #   method_name identifies stride_reference or the ablation arm.
-#   metric_name selects A_MSE_active, depletion_mass_abs_error, and
-#   emergence_mass_abs_error.
+#   metric_name selects MSE sensitivity and overall amount error metrics.
 #   mean_value, ci_lower, and ci_upper define summary point-ranges.
 #   reported_value supports rerun-level statistical comparisons.
 # Result intent:
-#   Show supplemental relation and open-mass errors for objective-component
-#   ablations.
+#   Show secondary objective-component ablation checks for larger
+#   community-level errors and aggregate amount recovery.
 # Visualization:
-#   Faceted lower-is-better point-range or bar plot.
+#   Two vertically stacked lower-is-better point-range blocks.
 # Axes/value definition:
-#   x-axis: method or ablation arm.
-#   y-axis: error value with display scaling in facet labels.
-#   facets: Active relation MSE, Source-open mass error, Target-open mass error.
+#   top block: MSE sensitivity for A relation, d source-open, e target-open.
+#   bottom block: overall amount error for A off-diagonal, d source-open,
+#   e target-open.
 # Output PDF:
-#   sf2_panelE_ablation_supplemental_relation_and_mass_errors.pdf
+#   sf2_panelD_ablation_secondary_checks.pdf
 #
 # Data read and processing:
-# TODO
-#
-# Visualization block:
-# TODO
+sf2D_mse_metrics <- c("A_MSE_active", "d_MSE", "e_MSE")
+sf2D_amount_metrics <- c(
+  "offdiag_mass_abs_error",
+  "depletion_mass_abs_error",
+  "emergence_mass_abs_error"
+)
+sf2D_metrics <- c(sf2D_mse_metrics, sf2D_amount_metrics)
+sf2D_object_levels <- c(
+  recovery_object_labels[["A_relation"]],
+  recovery_object_labels[["A_offdiag"]],
+  recovery_object_labels[["d_source_open"]],
+  recovery_object_labels[["e_target_open"]]
+)
+sf2D_method_labels <- c(
+  stride_reference = "STRIDE",
+  consistency_ablation = "w/o consistency",
+  geometry_ablation = "w/o geometry",
+  recurrence_ablation = "w/o recurrence"
+)
+sf2D_method_label_levels <- rev(unname(sf2D_method_labels[ablation_method_levels]))
+sf2D_metric_metadata <- tibble::tibble(metric_name = sf2D_metrics) %>%
+  mutate(
+    metric_block = factor(
+      if_else(metric_name %in% sf2D_mse_metrics, "MSE sensitivity", "Overall amount error"),
+      levels = secondary_block_levels
+    ),
+    object_label = factor(
+      case_when(
+        metric_name %in% names(recovery_mse_labels) ~ unname(recovery_mse_labels[metric_name]),
+        TRUE ~ unname(recovery_amount_labels[metric_name])
+      ),
+      levels = sf2D_object_levels
+    ),
+    display_multiplier = coalesce(
+      display_scaling$display_multiplier[match(metric_name, display_scaling$metric_name)],
+      1
+    )
+  )
+
+sf2D_summary_all <- bind_rows(
+  readr::read_csv(
+    file.path(B3_RAW, "subbag_consistency_ablation", "condition_summary.csv"),
+    show_col_types = FALSE
+  ),
+  readr::read_csv(
+    file.path(B3_RAW, "geometry_ablation", "condition_summary.csv"),
+    show_col_types = FALSE
+  ),
+  readr::read_csv(
+    file.path(B3_RAW, "recurrence_ablation", "condition_summary.csv"),
+    show_col_types = FALSE
+  )
+) %>%
+  filter(
+    metric_name %in% sf2D_metrics,
+    method_name %in% ablation_method_levels
+  )
+
+sf2D_reference_summary <- sf2D_summary_all %>%
+  filter(method_name == "stride_reference") %>%
+  group_by(metric_name, method_name) %>%
+  summarise(
+    mean_value = mean(mean_value, na.rm = TRUE),
+    ci_lower = mean(ci_lower, na.rm = TRUE),
+    ci_upper = mean(ci_upper, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  mutate(evaluation_family = "shared_reference")
+
+sf2D_ablation_summary <- sf2D_summary_all %>%
+  filter(method_name != "stride_reference") %>%
+  select(evaluation_family, method_name, metric_name, mean_value, ci_lower, ci_upper)
+
+sf2D_summary <- bind_rows(sf2D_reference_summary, sf2D_ablation_summary) %>%
+  left_join(sf2D_metric_metadata, by = "metric_name") %>%
+  mutate(
+    method_name = factor(method_name, levels = ablation_method_levels),
+    method_label = factor(
+      unname(sf2D_method_labels[as.character(method_name)]),
+      levels = sf2D_method_label_levels
+    ),
+    mean_display = mean_value * display_multiplier,
+    ci_lower_display = ci_lower * display_multiplier,
+    ci_upper_display = ci_upper * display_multiplier
+  )
+
+sf2D_ranges <- sf2D_summary %>%
+  group_by(metric_name, metric_block, object_label) %>%
+  summarise(
+    x_min = min(ci_lower_display, mean_display, na.rm = TRUE),
+    x_max = max(ci_upper_display, mean_display, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    x_range = pmax(x_max - x_min, abs(x_max) * 0.25, 0.01),
+    x_tick = x_range * 0.025
+  )
+
+sf2D_patient_metrics <- bind_rows(
+  readr::read_csv(
+    file.path(B3_RAW, "subbag_consistency_ablation", "patient_metrics.csv"),
+    show_col_types = FALSE
+  ),
+  readr::read_csv(
+    file.path(B3_RAW, "geometry_ablation", "patient_metrics.csv"),
+    show_col_types = FALSE
+  ),
+  readr::read_csv(
+    file.path(B3_RAW, "recurrence_ablation", "patient_metrics.csv"),
+    show_col_types = FALSE
+  )
+) %>%
+  filter(
+    metric_name %in% sf2D_metrics,
+    method_name %in% ablation_method_levels
+  ) %>%
+  group_by(rerun_id, evaluation_family, method_name, metric_name) %>%
+  summarise(value_raw = mean(reported_value, na.rm = TRUE), .groups = "drop")
+
+sf2D_reference_stats <- sf2D_patient_metrics %>%
+  filter(method_name == "stride_reference") %>%
+  select(rerun_id, evaluation_family, metric_name, stride_value = value_raw)
+sf2D_stat_tests <- sf2D_patient_metrics %>%
+  filter(method_name != "stride_reference") %>%
+  inner_join(sf2D_reference_stats, by = c("rerun_id", "evaluation_family", "metric_name")) %>%
+  group_by(evaluation_family, metric_name, method_name) %>%
+  summarise(
+    n_pairs = sum(is.finite(value_raw) & is.finite(stride_value)),
+    p_value = {
+      keep <- is.finite(value_raw) & is.finite(stride_value)
+      if (sum(keep) > 1 && any(value_raw[keep] != stride_value[keep])) {
+        wilcox.test(value_raw[keep], stride_value[keep], paired = TRUE, exact = FALSE)$p.value
+      } else {
+        NA_real_
+      }
+    },
+    .groups = "drop"
+  ) %>%
+  mutate(
+    q_value = p.adjust(p_value, method = "BH"),
+    significance_label = case_when(
+      is.na(q_value) ~ "ns",
+      q_value < 0.001 ~ "***",
+      q_value < 0.01 ~ "**",
+      q_value <= 0.05 ~ "*",
+      TRUE ~ "ns"
+    )
+  ) %>%
+  left_join(sf2D_metric_metadata, by = "metric_name") %>%
+  mutate(
+    method_name = factor(method_name, levels = ablation_method_levels),
+    method_label = factor(
+      unname(sf2D_method_labels[as.character(method_name)]),
+      levels = sf2D_method_label_levels
+    )
+  ) %>%
+  left_join(sf2D_ranges, by = c("metric_name", "metric_block", "object_label")) %>%
+  group_by(metric_name, metric_block, object_label) %>%
+  arrange(method_name, .by_group = TRUE) %>%
+  mutate(
+    bracket_rank = row_number(),
+    x_bracket = x_max + x_range * (0.12 + 0.13 * (bracket_rank - 1)),
+    x_lower = x_bracket - x_tick * 1.1,
+    x_label = x_bracket + x_tick * 0.85,
+    start_y = factor("STRIDE", levels = sf2D_method_label_levels),
+    end_y = method_label
+  ) %>%
+  ungroup()
+
+sf2D_mse_plot <- ggplot(
+  sf2D_summary %>% filter(metric_block == "MSE sensitivity"),
+  aes(x = mean_display, y = method_label, color = method_name)
+) +
+  geom_vline(xintercept = 0, color = "grey90", linewidth = 0.2) +
+  geom_errorbarh(
+    aes(xmin = ci_lower_display, xmax = ci_upper_display),
+    height = 0.18,
+    linewidth = 0.28
+  ) +
+  geom_point(aes(fill = method_name), shape = 21, size = 1.8, stroke = 0.25) +
+  geom_segment(
+    data = sf2D_stat_tests %>% filter(metric_block == "MSE sensitivity"),
+    aes(x = x_bracket, xend = x_bracket, y = start_y, yend = end_y),
+    inherit.aes = FALSE,
+    linewidth = 0.24,
+    color = "grey25"
+  ) +
+  geom_segment(
+    data = sf2D_stat_tests %>% filter(metric_block == "MSE sensitivity"),
+    aes(x = x_lower, xend = x_bracket, y = start_y, yend = start_y),
+    inherit.aes = FALSE,
+    linewidth = 0.24,
+    color = "grey25"
+  ) +
+  geom_segment(
+    data = sf2D_stat_tests %>% filter(metric_block == "MSE sensitivity"),
+    aes(x = x_lower, xend = x_bracket, y = end_y, yend = end_y),
+    inherit.aes = FALSE,
+    linewidth = 0.24,
+    color = "grey25"
+  ) +
+  geom_text(
+    data = sf2D_stat_tests %>% filter(metric_block == "MSE sensitivity"),
+    aes(x = x_label, y = end_y, label = significance_label),
+    inherit.aes = FALSE,
+    hjust = 0,
+    size = 2.1,
+    color = "grey10"
+  ) +
+  facet_wrap(~ object_label, scales = "free_x", nrow = 1) +
+  scale_color_manual(
+    values = method_colors[ablation_method_levels],
+    breaks = ablation_method_levels,
+    labels = sf2D_method_labels[ablation_method_levels],
+    drop = FALSE,
+    na.translate = FALSE
+  ) +
+  scale_fill_manual(
+    values = method_colors[ablation_method_levels],
+    breaks = ablation_method_levels,
+    labels = sf2D_method_labels[ablation_method_levels],
+    drop = FALSE,
+    na.translate = FALSE
+  ) +
+  scale_x_continuous(expand = expansion(mult = c(0.04, 0.54))) +
+  coord_cartesian(clip = "off") +
+  labs(title = "Community-level error", x = "MSE, lower is better", y = NULL) +
+  base_theme +
+  theme(
+    legend.position = "none",
+    axis.text.y = element_text(size = 6.5),
+    strip.text = element_text(size = 6.3),
+    plot.title = element_text(size = 7.5, hjust = 0.5),
+    panel.spacing.x = unit(0.55, "lines"),
+    plot.margin = margin(4.5, 26, 3.5, 5.5)
+  )
+
+sf2D_amount_plot <- ggplot(
+  sf2D_summary %>% filter(metric_block == "Overall amount error"),
+  aes(x = mean_display, y = method_label, color = method_name)
+) +
+  geom_vline(xintercept = 0, color = "grey90", linewidth = 0.2) +
+  geom_errorbarh(
+    aes(xmin = ci_lower_display, xmax = ci_upper_display),
+    height = 0.18,
+    linewidth = 0.28
+  ) +
+  geom_point(aes(fill = method_name), shape = 21, size = 1.8, stroke = 0.25) +
+  geom_segment(
+    data = sf2D_stat_tests %>% filter(metric_block == "Overall amount error"),
+    aes(x = x_bracket, xend = x_bracket, y = start_y, yend = end_y),
+    inherit.aes = FALSE,
+    linewidth = 0.24,
+    color = "grey25"
+  ) +
+  geom_segment(
+    data = sf2D_stat_tests %>% filter(metric_block == "Overall amount error"),
+    aes(x = x_lower, xend = x_bracket, y = start_y, yend = start_y),
+    inherit.aes = FALSE,
+    linewidth = 0.24,
+    color = "grey25"
+  ) +
+  geom_segment(
+    data = sf2D_stat_tests %>% filter(metric_block == "Overall amount error"),
+    aes(x = x_lower, xend = x_bracket, y = end_y, yend = end_y),
+    inherit.aes = FALSE,
+    linewidth = 0.24,
+    color = "grey25"
+  ) +
+  geom_text(
+    data = sf2D_stat_tests %>% filter(metric_block == "Overall amount error"),
+    aes(x = x_label, y = end_y, label = significance_label),
+    inherit.aes = FALSE,
+    hjust = 0,
+    size = 2.1,
+    color = "grey10"
+  ) +
+  facet_wrap(~ object_label, scales = "free_x", nrow = 1) +
+  scale_color_manual(
+    values = method_colors[ablation_method_levels],
+    breaks = ablation_method_levels,
+    labels = sf2D_method_labels[ablation_method_levels],
+    drop = FALSE,
+    na.translate = FALSE
+  ) +
+  scale_fill_manual(
+    values = method_colors[ablation_method_levels],
+    breaks = ablation_method_levels,
+    labels = sf2D_method_labels[ablation_method_levels],
+    drop = FALSE,
+    na.translate = FALSE
+  ) +
+  scale_x_continuous(expand = expansion(mult = c(0.04, 0.54))) +
+  coord_cartesian(clip = "off") +
+  labs(title = "Overall amount error", x = "Absolute amount error, lower is better", y = NULL) +
+  base_theme +
+  theme(
+    legend.position = "none",
+    axis.text.y = element_text(size = 6.5),
+    strip.text = element_text(size = 6.3),
+    plot.title = element_text(size = 7.5, hjust = 0.5),
+    panel.spacing.x = unit(0.55, "lines"),
+    plot.margin = margin(3.5, 26, 5.5, 5.5)
+  )
 #
 # PDF export:
-# TODO
-
-
-###--Supplementary Figure 2 Panel F: Ablation Supplemental Open-Profile MSE--###
-
-# Input:
-#   B3/subbag_consistency_ablation/raw/subbag_consistency_ablation/condition_summary.csv
-#   B3/geometry_ablation/raw/geometry_ablation/condition_summary.csv
-#   B3/recurrence_ablation/raw/recurrence_ablation/condition_summary.csv
-#   B3/subbag_consistency_ablation/raw/subbag_consistency_ablation/patient_metrics.csv
-#   B3/geometry_ablation/raw/geometry_ablation/patient_metrics.csv
-#   B3/recurrence_ablation/raw/recurrence_ablation/patient_metrics.csv
-# Field meaning:
-#   evaluation_family identifies the ablation family.
-#   method_name identifies stride_reference or the ablation arm.
-#   metric_name selects d_MSE and e_MSE.
-#   mean_value, ci_lower, and ci_upper define summary point-ranges.
-#   reported_value supports rerun-level statistical comparisons.
-# Result intent:
-#   Show supplemental open-profile MSEs for objective-component ablations.
-# Visualization:
-#   Faceted lower-is-better point-range or bar plot.
-# Axes/value definition:
-#   x-axis: method or ablation arm.
-#   y-axis: error value.
-#   facets: Source-open profile MSE (x10^3), Target-open profile MSE (x10^3).
-# Output PDF:
-#   sf2_panelF_ablation_supplemental_open_profile_mse.pdf
-#
-# Data read and processing:
-# TODO
-#
-# Visualization block:
-# TODO
-#
-# PDF export:
-# TODO
+sf2D_pdf <- file.path(FIG_DIR, "sf2_panelD_ablation_secondary_checks.pdf")
+cairo_pdf(sf2D_pdf, width = 7.0, height = 5.1)
+grid.newpage()
+pushViewport(viewport(layout = grid.layout(nrow = 2, ncol = 1, heights = unit(c(1, 1), "null"))))
+pushViewport(viewport(layout.pos.row = 1, layout.pos.col = 1))
+grid.draw(ggplotGrob(sf2D_mse_plot))
+upViewport()
+pushViewport(viewport(layout.pos.row = 2, layout.pos.col = 1))
+grid.draw(ggplotGrob(sf2D_amount_plot))
+upViewport(2)
+dev.off()

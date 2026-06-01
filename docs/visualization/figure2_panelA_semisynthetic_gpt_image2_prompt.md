@@ -52,8 +52,8 @@ open-mass error, represented by a diamond or mass-balance icon.
 
 Shared visual anchor:
 Run a subtle colored bead ribbon along the bottom of the panel, connecting all modules.
-Label it once: "same 25 shared communities".
-Show beads C0, C1, ..., C24 visually, but do not write every community name.
+Label it once: "same 10 shared communities".
+Show beads C0, C1, ..., C9 visually, but do not write every community name.
 
 Important scientific constraints:
 Do not imply real biological causality, temporal disease progression, or a real TC-to-IM clinical transition.
@@ -82,7 +82,7 @@ Keep only essential labels:
 "score vs hidden benchmark truth"
 "A error"
 "open-mass error"
-"same 25 shared communities"
+"same 10 shared communities"
 
 Rendering quality:
 High-resolution, vector-like biomedical infographic. Balanced spacing, soft pastel scientific palette with red/teal/green/orange community accents, subtle shadows, no watermark, no decorative clutter. The panel should look suitable for a Nature Methods main figure.
