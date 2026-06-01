@@ -6,8 +6,11 @@ package surface, and broader estimator completeness remains a separate question.
 
 ## API Stability
 
-The current public Python surface is beta. The root package and API facade expose
-only the review-facing entrypoints:
+### Current implemented API
+
+The current public Python surface has two implemented layers.
+
+The beta root estimator surface remains:
 
 - `stride.fit_stride(...)`
 - `stride.build_patient_relation(...)`
@@ -16,6 +19,12 @@ only the review-facing entrypoints:
 - `stride.DatasetHandle`
 - `stride.ContractError`
 - `stride.__version__`
+
+The implemented package I/O surface is:
+
+- `stride.io.build_adata(...)`
+- `stride.io.read_h5ad(...)`
+- `stride.io.write_h5ad(...)`
 
 `fit_stride(data, *, source, target, K, ...)` remains an explicit keyword API:
 `data` is the only positional argument, and task semantics such as `source`,
@@ -32,6 +41,16 @@ stability commitment.
 Scientific contract versions and runtime API stability are separate. The v1
 objective/provenance/operator names define the current reference contract, while
 the Python API and supported input envelope remain beta.
+
+### Target user API
+
+The target user-facing namespace design is `stride.io`, `stride.pp`,
+`stride.tl`, `stride.pl`, and `stride.ds`; see
+`docs/package_api_design.md`. `stride.io` v1 is implemented as the raw AnnData
+assembly and h5ad persistence surface. `stride.pp`, `stride.tl`, `stride.pl`,
+and `stride.ds` remain target namespaces until their contracts are reviewed and
+implemented. The future `stride.tl.fit(...)` user entry should delegate to the
+same core estimator contract as `fit_stride(...)`.
 
 ## 1. Canonical Method Objects
 
@@ -428,7 +447,7 @@ Any recurrence layer must be able to emit:
 
 ### 4.4 Required compact provenance
 
-Default manuscript-level STRIDE results must include compact successful-fit
+Default full-estimator STRIDE results include compact successful-fit
 provenance alongside biological outputs. The provenance payload is a compact
 parameter, loss, and protocol record for a successful full-estimator
 `fit_stride(...)` fit. It is not a separate audit module and does not duplicate
@@ -621,13 +640,11 @@ Implementation namespaces that realize the current first-pass contract include:
   canonical-field normalization,
 - `stride.observation` for observation-layer cloud comparison,
 - `stride.workflows.fit_stride` for the canonical fit workflow,
-- `stride.latent.recurrence` for the conservative first-pass recurrence
-  estimator.
+- `stride.latent` for patient and cohort relation objects.
 
-Formal Full-Estimator Contract And Current Implementation Boundary:
+Full-Estimator Contract And Current Implementation Boundary:
 
-- `fit_stride(...)` is the formal manuscript-level full STRIDE estimator
-  surface.
+- `fit_stride(...)` is the current beta root full-estimator surface.
 - The full contract requires `fit_stride(...)` to fit objective-driven
   patient-level `A_p`, `d_p`, and `e_p` under source-row simplex accounting for
   `[A_p | d_p]` and bounded `e_p` constraints.

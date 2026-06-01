@@ -8,6 +8,7 @@ surface. For the current scientific framing use `README.md`,
 use `docs/task_A/spec.md`.
 
 ## Unreleased
+- feat(io): add `stride.io` v1 raw AnnData assembly and h5ad persistence surface
 - feat(task-a-block0): release cache-backed Block 0 exchangeability calibration surface and result-packet intake
 - docs: realign active repo docs around `src/stride/` as the target core architecture, `src/slotar/` as transitional compatibility, and `history/` as archive-only
 - docs: rename the live project/scientific framing to STRIDE while retaining the `slotar` package namespace

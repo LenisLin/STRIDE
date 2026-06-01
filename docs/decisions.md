@@ -247,13 +247,13 @@ decision register, not a task log and not a changelog.
   - `build_patient_relation(...)` remains keyword-only,
   - `losses`, `optimize`, `audit`, `workflows`, and private `_*.py` modules are
     implementation surfaces with no public stability commitment,
-  - `fit_stride(...)` is the formal full STRIDE estimator entrypoint for
-    manuscript-level use, with beta runtime/input-support status,
+  - `fit_stride(...)` is the current implemented full-estimator entrypoint,
+    with beta runtime/input-support status,
   - proxy or bridge-estimator style public entrypoints are not part of the live
     public API contract,
-  - scverse-style `tl`, `read`, and `pl` namespaces are deferred until the root
-    API, result schema, provenance schema, input envelope, and docs are all
-    stable enough to justify a broader namespace layer,
+  - the target user-facing package architecture is recorded in
+    `docs/package_api_design.md`; current implementation remains the beta root
+    API until those namespaces are implemented,
   - scientific contract versions and Python API stability are separate: the
     objective/provenance/operator identifiers may remain v1 while the Python
     API remains beta.
@@ -273,7 +273,7 @@ decision register, not a task log and not a changelog.
   that resemble the canonical patient relation. That resemblance is not enough
   to define the full estimator.
 - Decision:
-  - `fit_stride(...)` is the formal manuscript-level full STRIDE estimator
+  - `fit_stride(...)` is the current implemented full STRIDE estimator
     entrypoint,
   - patient-level `A_p`, `d_p`, and `e_p` are objective-driven fitted
     variables,
@@ -741,3 +741,28 @@ detailed_optimizer_trace: bool
     `A_p`, `d_p`, and `e_p` under the ablated objective,
   - later implementation work must preserve the raw, normalized, and effective
     geometry ledger distinction.
+
+## D024 - STRIDE User Package API Target
+
+- Context: The live root API is intentionally small while the repository also
+  needs a positive design target for the eventual user-facing package layer.
+- Decision:
+  - the package target adopts compact user namespaces: `io`, `pp`, `tl`, `pl`,
+    and `ds`,
+  - current root `fit_stride(...)` remains the implemented entry to the core
+    estimator contract,
+  - implementation namespaces such as `losses`, `optimize`, `audit`, and
+    `workflows` remain internal development surfaces.
+- Consequences:
+  - user-facing namespace implementation follows
+    `docs/package_api_design.md`,
+  - API migration and package cleanup use the review workflow in
+    `docs/package_api_design.md`,
+  - stable public exposure is created through target namespace contracts,
+    implementation review, and narrow tests.
+- Current status:
+  - `stride.io` v1 is implemented with `build_adata`, `read_h5ad`, and
+    `write_h5ad`,
+  - root estimator entrypoints remain the implemented fitting surface,
+  - `pp`, `tl`, `pl`, and `ds` remain target namespaces pending reviewed
+    implementation.

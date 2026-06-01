@@ -23,9 +23,13 @@ This file records the live repository structure for STRIDE.
 ## Current Repository Reading
 
 - `src/stride/` is the reusable core package surface.
+- `src/stride/io/` contains the implemented v1 package I/O surface for raw
+  AnnData assembly and h5ad persistence.
 - `tasks/task_A/` owns the current Task A runtime, contracts, and internal
   Block 3 rebuild package.
 - `tasks/_shared/benchmarks/` contains shared benchmark helpers used by task
   code.
 - `docs/` contains the canonical method contract, task specs, and maintenance
   docs used by agents and developers.
+- `docs/package_api_design.md` records the user package API architecture,
+  current `stride.io` v1 surface, and cleanup review workflow.
