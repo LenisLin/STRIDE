@@ -283,6 +283,40 @@ class Block3GeneratorStabilityRow:
 
 
 @dataclass(frozen=True)
+class Block3GeneratorTargetSurfaceProfileRow:
+    """Typed raw row for `3A` per-patient target surface profiles."""
+
+    rerun_id: str
+    subexperiment_id: str
+    condition_id: str
+    evaluation_family: str
+    patient_id: str
+    split_role: str
+    surface_source: str
+    validation_object_id: ValidationObjectId
+    state_id: int | str
+    feature_index: int
+    reported_value: float
+
+    def to_record(self) -> dict[str, object]:
+        """Convert a per-patient target surface profile row into flat columns."""
+
+        return {
+            "rerun_id": self.rerun_id,
+            "subexperiment_id": self.subexperiment_id,
+            "condition_id": self.condition_id,
+            "evaluation_family": self.evaluation_family,
+            "patient_id": self.patient_id,
+            "split_role": self.split_role,
+            "surface_source": self.surface_source,
+            "validation_object_id": self.validation_object_id.value,
+            "state_id": self.state_id,
+            "feature_index": self.feature_index,
+            "reported_value": self.reported_value,
+        }
+
+
+@dataclass(frozen=True)
 class Block3PatientMetricRow:
     """Typed raw row for patient-level method-bearing metrics in `3B`/`3C-*`."""
 
@@ -504,6 +538,7 @@ class Block3SubexperimentRawRows:
 
     object_scores: tuple[Block3GeneratorObjectScoreRow, ...] = ()
     rerun_stability: tuple[Block3GeneratorStabilityRow, ...] = ()
+    target_surface_profiles: tuple[Block3GeneratorTargetSurfaceProfileRow, ...] = ()
     patient_metrics: tuple[Block3PatientMetricRow, ...] = ()
     condition_summaries: tuple[Block3ConditionSummaryRow, ...] = ()
     shared_tables: dict[str, tuple[dict[str, object], ...]] = field(default_factory=dict)
@@ -607,6 +642,7 @@ __all__ = [
     "Block3GeneratorObjectScoreRow",
     "Block3GeneratorReviewRow",
     "Block3GeneratorStabilityRow",
+    "Block3GeneratorTargetSurfaceProfileRow",
     "Block3MethodClass",
     "Block3MethodName",
     "Block3MetricName",

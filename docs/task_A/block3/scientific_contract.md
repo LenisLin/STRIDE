@@ -80,8 +80,12 @@ or too noisy.
 
 `3A` exports generator-validation raw and review surfaces for manual inspection
 before running `3B/3C`; it is not a formal pass/fail gate. It reports
-`object_scores`, `rerun_stability`, and `review_surface` for the held-out
-community-space target surface and the identity-projected target surface.
+`object_scores`, `rerun_stability`, `target_surface_profiles`, and
+`review_surface` for the held-out target audit surface. `object_scores` and
+`rerun_stability` cover the community-space target surface and the
+identity-projected target surface. `target_surface_profiles` preserves
+per-rerun, per-test-patient community-space real and synthetic target profiles
+for direct audit; patient-by-rerun rows are not IID evidence units.
 
 Manual review checks whether metrics are finite, whether real and synthetic
 target surfaces show no evident shape or scale anomaly, and whether rerun

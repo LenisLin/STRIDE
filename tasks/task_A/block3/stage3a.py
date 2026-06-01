@@ -15,6 +15,7 @@ from .contracts import (
     Block3GeneratorObjectScoreRow,
     Block3GeneratorReviewRow,
     Block3GeneratorStabilityRow,
+    Block3GeneratorTargetSurfaceProfileRow,
     Block3MetricName,
     Block3SubexperimentId,
     Block3SubexperimentRawRows,
@@ -41,6 +42,7 @@ def build_3a_rows(
 
     object_rows: list[Block3GeneratorObjectScoreRow] = []
     stability_rows: list[Block3GeneratorStabilityRow] = []
+    target_surface_rows: list[Block3GeneratorTargetSurfaceProfileRow] = []
     review_rows: list[Block3GeneratorReviewRow] = []
     truth_records: list[dict[str, object]] = []
     object_vectors: dict[ValidationObjectId, list[np.ndarray]] = {
@@ -53,6 +55,35 @@ def build_3a_rows(
     }
 
     for rerun in reruns:
+        for patient_id in rerun.test_patient_ids:
+            real_profile = np.asarray(cohort_inputs.patient_target_profiles[patient_id], dtype=float)
+            synthetic_profile = np.asarray(rerun.generator_truths[patient_id].y, dtype=float)
+            if real_profile.shape != synthetic_profile.shape:
+                raise ContractError(
+                    f"3A target profile shape mismatch for rerun {rerun.rerun_id!r}, patient {patient_id!r}"
+                )
+            if real_profile.shape[0] != len(cohort_inputs.state_ids):
+                raise ContractError("3A target profile length must match the Stage 0 state axis")
+            for surface_source, profile in (
+                ("heldout_real", real_profile),
+                ("synthetic", synthetic_profile),
+            ):
+                for feature_index, reported_value in enumerate(profile):
+                    target_surface_rows.append(
+                        Block3GeneratorTargetSurfaceProfileRow(
+                            rerun_id=rerun.rerun_id,
+                            subexperiment_id=subexperiment_id,
+                            condition_id=condition.condition_id,
+                            evaluation_family=subexperiment.evaluation_family,
+                            patient_id=patient_id,
+                            split_role="test",
+                            surface_source=surface_source,
+                            validation_object_id=ValidationObjectId.COMMUNITY_SPACE_TARGET,
+                            state_id=cohort_inputs.state_ids[feature_index],
+                            feature_index=feature_index,
+                            reported_value=float(reported_value),
+                        )
+                    )
         real_surface = shared._mean_profile(
             [cohort_inputs.patient_target_profiles[patient_id] for patient_id in rerun.test_patient_ids]
         )
@@ -160,6 +191,7 @@ def build_3a_rows(
         Block3SubexperimentRawRows(
             object_scores=tuple(object_rows),
             rerun_stability=tuple(stability_rows),
+            target_surface_profiles=tuple(target_surface_rows),
             shared_tables=shared_tables,
         ),
         Block3SubexperimentReviewRows(generator_rows=tuple(review_rows)),

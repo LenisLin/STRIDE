@@ -216,6 +216,20 @@ def build_raw_table_schema(subexperiment_id: str, artifact_role: str) -> tuple[s
             + _BASE_ROUTING_COLUMNS[4:]
             + ("stability_summary_level",)
         )
+    if subexperiment_id == "3A" and artifact_role == "generator_validation_target_surface_profiles":
+        return (
+            "rerun_id",
+            "subexperiment_id",
+            "condition_id",
+            "evaluation_family",
+            "patient_id",
+            "split_role",
+            "surface_source",
+            "validation_object_id",
+            "state_id",
+            "feature_index",
+            "reported_value",
+        )
     if artifact_role.endswith("patient_metrics"):
         return _BASE_ROUTING_COLUMNS[:4] + _METHOD_ROUTING_COLUMNS + _BASE_ROUTING_COLUMNS[4:] + (
             "open_mass_scale",
@@ -369,6 +383,13 @@ def build_block3_bundle_layout(
             relative_path="raw/generator_validation/rerun_stability.csv",
             format="csv",
             schema_columns=build_raw_table_schema("3A", "generator_validation_rerun_stability"),
+            subexperiment_id="3A",
+        ),
+        Block3ArtifactLayout(
+            role="generator_validation_target_surface_profiles",
+            relative_path="raw/generator_validation/target_surface_profiles.csv",
+            format="csv",
+            schema_columns=build_raw_table_schema("3A", "generator_validation_target_surface_profiles"),
             subexperiment_id="3A",
         ),
         Block3ArtifactLayout(
@@ -625,15 +646,20 @@ def _raw_role_records(
     if subexperiment_id == "3A":
         if raw_rows.patient_metrics or raw_rows.condition_summaries:
             raise ContractError("3A raw artifacts must remain non-method-bearing")
-        if not raw_rows.object_scores or not raw_rows.rerun_stability:
-            raise ContractError("3A raw artifacts require object scores and rerun stability rows")
+        if not raw_rows.object_scores or not raw_rows.rerun_stability or not raw_rows.target_surface_profiles:
+            raise ContractError(
+                "3A raw artifacts require object scores, rerun stability rows, and target surface profiles"
+            )
         role_records = {
             "generator_validation_object_scores": [row.to_record() for row in raw_rows.object_scores],
             "generator_validation_rerun_stability": [row.to_record() for row in raw_rows.rerun_stability],
+            "generator_validation_target_surface_profiles": [
+                row.to_record() for row in raw_rows.target_surface_profiles
+            ],
         }
         role_records.update({role: list(records) for role, records in raw_rows.shared_tables.items()})
         return role_records
-    if raw_rows.object_scores or raw_rows.rerun_stability:
+    if raw_rows.object_scores or raw_rows.rerun_stability or raw_rows.target_surface_profiles:
         raise ContractError(f"{subexperiment_id} raw artifacts must not carry 3A validation-object rows")
     if not raw_rows.patient_metrics or not raw_rows.condition_summaries:
         raise ContractError(f"{subexperiment_id} raw artifacts require patient rows and condition summaries")
