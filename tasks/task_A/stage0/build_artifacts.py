@@ -29,13 +29,13 @@ from stride.data.longitudinal import (
     resolve_state_id_key,
     validate_longitudinal_adata,
 )
-from stride.errors import ContractError, DataContractError
+from stride.errors import ContractError
 
 from ..contracts import CONTRACT_PASSED_STATE, SCAFFOLD_ACTIVE_STATE
 
 DEFAULT_RDS_PATH: str | None = None
 DEFAULT_OUTPUT_DIR: str | None = None
-DEFAULT_K = 25
+DEFAULT_K = 10
 DEFAULT_KNN = 20
 DEFAULT_N_BAL = 200
 DEFAULT_RANDOM_STATE = 42
@@ -212,38 +212,38 @@ def validate_representation_completeness(adata: ad.AnnData) -> None:
     try:
         subtype_key = resolve_cell_subtype_key(adata)
     except ContractError as exc:
-        raise DataContractError(f"representation completeness: {exc}") from exc
+        raise ContractError(f"representation completeness: {exc}") from exc
     if subtype_key not in adata.obs.columns:
-        raise DataContractError(
+        raise ContractError(
             "representation completeness: missing canonical-or-alias cell subtype column"
         )
 
     try:
         feature_key = resolve_feature_key(adata)
     except ContractError as exc:
-        raise DataContractError(f"representation completeness: {exc}") from exc
+        raise ContractError(f"representation completeness: {exc}") from exc
     features = np.asarray(adata.obsm[feature_key], dtype=float)
     if features.ndim != 2 or features.shape[0] != adata.obs.shape[0]:
-        raise DataContractError(
+        raise ContractError(
             f"representation completeness: adata.obsm[{feature_key!r}] must have shape [n_cells, d]"
         )
 
     feature_metadata = adata.uns.get(CANONICAL_STATE_FEATURE_METADATA_KEY)
     if isinstance(feature_metadata, Mapping):
         if "feature_names" not in feature_metadata:
-            raise DataContractError(
+            raise ContractError(
                 "representation completeness: state_feature_metadata missing key 'feature_names'"
             )
     else:
         scaler_params = adata.uns.get("scaler_params")
         if not isinstance(scaler_params, Mapping):
-            raise DataContractError(
+            raise ContractError(
                 "representation completeness: missing uns mapping "
                 "'state_feature_metadata' or compatibility 'scaler_params'"
             )
         missing_scaler = [key for key in REPRESENTATION_REQUIRED_SCALER_KEYS if key not in scaler_params]
         if missing_scaler:
-            raise DataContractError(
+            raise ContractError(
                 f"representation completeness: scaler_params missing keys {missing_scaler}"
             )
 
@@ -252,20 +252,20 @@ def validate_representation_completeness(adata: ad.AnnData) -> None:
     elif "prototype_centroids" in adata.uns:
         centroids_key = "prototype_centroids"
     else:
-        raise DataContractError(
+        raise ContractError(
             "representation completeness: missing uns key 'state_centroids' or 'prototype_centroids'"
         )
     centroids = np.asarray(adata.uns.get(centroids_key), dtype=float)
     if centroids.ndim != 2:
-        raise DataContractError(
+        raise ContractError(
             f"representation completeness: {centroids_key} must be 2D"
         )
 
     if "cost_matrix" not in adata.uns:
-        raise DataContractError("representation completeness: missing uns key 'cost_matrix'")
+        raise ContractError("representation completeness: missing uns key 'cost_matrix'")
     cost_matrix = np.asarray(adata.uns["cost_matrix"], dtype=float)
     if centroids.shape[0] != cost_matrix.shape[0]:
-        raise DataContractError(
+        raise ContractError(
             "representation completeness: prototype_centroids and cost_matrix disagree on K"
         )
 

@@ -26,8 +26,20 @@ Required outputs:
 
 - `object_scores`
 - `rerun_stability`
+- `target_surface_profiles`
 - `review_surface`
 - `generator_diagnostics`
+
+`target_surface_profiles` is a raw audit export at
+`raw/generator_validation/target_surface_profiles.csv`. It records one row per
+rerun, held-out test patient, target-surface source, and community feature for
+the `community_space_target_fraction` validation object. `surface_source` is
+`heldout_real` for the Stage 0 real target-domain profile and `synthetic` for
+the generator target endpoint used by 3A scoring. Rows preserve patients and
+reruns as audit units; they are not independent observations for formal
+inference. Identity-projected rows are not exported in this patient-level table
+because the current projection is defined and scored as a rerun-level
+cohort-summary view.
 
 Manual inspection checks:
 

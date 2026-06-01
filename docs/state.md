@@ -13,8 +13,8 @@ This file records the current live STRIDE repository state.
   task documentation.
 - Current uncertainty means bootstrap/sampling-variance uncertainty over
   fitted patient relation outputs.
-- `stride.api.fit.fit_stride(...)` is the public beta full-estimator API
-  surface for manuscript-level STRIDE review.
+- `stride.api.fit.fit_stride(...)` is the current beta root full-estimator API
+  surface.
 - The current `fit_stride(...)` code path contains a bounded PyTorch/AdamW
   full-estimator implementation for supported inputs, with explicit
   optimizer/status surfaces for unsupported or numerically incomplete fits.
@@ -104,16 +104,20 @@ Supporting core method docs are:
 
 - The live `src/stride` implementation uses the three-block v1 reference
   objective and compact successful-fit provenance schema.
-- `fit_stride(...)` remains the manuscript-level beta public STRIDE estimator
-  surface for objective-driven fitting of `A_p`, `d_p`, and `e_p`.
+- `fit_stride(...)` remains the current beta root estimator surface for
+  objective-driven fitting of `A_p`, `d_p`, and `e_p`.
 - The root public package surface is intentionally small:
   `fit_stride`, `build_patient_relation`, `summarize_fit`, `BasisSpec`,
   `DatasetHandle`, `ContractError`, and `__version__`.
 - `losses`, `optimize`, `audit`, and `workflows` are implementation namespaces,
   not stable public API.
-- scverse-style `stride.tl`, `stride.read`, or `stride.pl` namespaces are
-  deferred until the root API, result schema, provenance schema, input envelope,
-  and docs have stabilized together.
+- The selected user package namespace design is `stride.io`, `stride.pp`,
+  `stride.tl`, `stride.pl`, and `stride.ds`, recorded in
+  `docs/package_api_design.md`.
+- `stride.io` v1 is implemented with `build_adata`, `read_h5ad`, and
+  `write_h5ad` for raw AnnData assembly and h5ad persistence.
+- `stride.pp`, `stride.tl`, `stride.pl`, and `stride.ds` remain target
+  namespaces for later reviewed implementation.
 - public `fit_stride(...)` no longer exposes direct `lr`, `max_steps`, or
   `min_steps` controls; reference optimizer protocol changes must go through
   the frozen docs/contracts first.
@@ -129,6 +133,9 @@ Supporting core method docs are:
 ## Remaining Engineering Work
 
 - Run approved small validation only after implementation migration.
+- Continue package API cleanup review before exposing additional objects through
+  `stride.pp`, `stride.tl`, `stride.pl`, or `stride.ds`, and before extending
+  `stride.io` beyond v1 raw AnnData and h5ad persistence.
 - Broaden the full-estimator supported-input envelope beyond the first-pass
   uniform-mass, exactly-two-ordered-group configuration.
 - Calibrate optimizer stopping criteria and runtime packaging at production
@@ -151,9 +158,9 @@ Supporting core method docs are:
 - The full estimator v1 optimizer requires PyTorch availability at runtime;
   missing optimizer dependencies surface as explicit failures rather than
   successful compact provenance.
-- Namespace direction, package naming, and estimator completeness remain
-  separate questions: `stride` is the live package identity, while input-support
-  expansion and historical-workflow migration continue.
+- Namespace direction is selected at the package-design level; implementation
+  timing, input-support expansion, and historical-workflow migration remain
+  open engineering work.
 - The public API is beta even when the objective/provenance/operator contract
   versions are v1.
 - Some current implementation terms still use `prototype` language where the

@@ -18,6 +18,7 @@ deferred.
 - [Migration Status](state.md)
 - [Decisions](decisions.md)
 - [API Specifications](api_specs.md)
+- [Package API Design](package_api_design.md)
 - [Data Contracts](data_contracts.md)
 - [Overall Validation Plan](overall_validation_plan.md)
 - [Constraints](constraints.md)
@@ -30,6 +31,8 @@ Use these files for the active repository story and normative STRIDE contracts:
 - the domain-stratified bag-of-FOV observation layer and OT/Sinkhorn boundary,
 - the rule that domain is an observation-layer surface rather than state
   identity,
+- the target user-facing namespace layer and cleanup review workflow recorded
+  in the package API design,
 - the boundary between reusable `src/stride/` code and task-owned `tasks/` workflows.
 
 For ambiguities, use this source-of-truth order:

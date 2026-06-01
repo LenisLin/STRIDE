@@ -7,8 +7,6 @@ surfaces toward a STRIDE-oriented core architecture.
 
 - `src/stride/` is the canonical task-insensitive core package and live
   first-pass implementation surface.
-- `src/slotar/` is the current transitional compatibility surface and migration
-  bridge.
 - `tasks/` owns task-specific workflows, runtime configuration, benchmark
   helpers, and operational task documentation.
 - `history/` is archival only and is not part of the live installable surface.
@@ -21,11 +19,13 @@ surface. Its current top-level areas are:
 
 - `stride.adapters`
 - `stride.api`
+- `stride.audit`
 - `stride.basis`
 - `stride.data`
 - `stride.geometry`
+- `stride.io`
 - `stride.latent`
-- `stride.objectives`
+- `stride.losses`
 - `stride.observation`
 - `stride.optimize`
 - `stride.outputs`
@@ -37,16 +37,10 @@ These directories document the reusable core decomposition. Their presence
 should not be read as a promise that every `stride.*` surface is already a
 stable public API.
 
-## `src/slotar/`
-
-The `slotar` namespace remains installable and currently hosts compatibility
-wrappers, migration shims, and transitional entry surfaces.
-
-- Use `slotar.*` references in docs only when naming current implementation
-  locations.
-- Do not describe `slotar` as the canonical future architecture.
-- Compatibility-only surfaces such as `slotar.compat.*`, `slotar.uot`, and
-  related shim modules remain transitional.
+The user-facing API layer is defined in `docs/package_api_design.md`.
+`stride.io` v1 is the implemented raw AnnData assembly and h5ad persistence
+surface; the remaining user namespaces follow the same review workflow before
+implementation.
 
 ## `tasks/`
 

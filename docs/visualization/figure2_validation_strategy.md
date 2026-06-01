@@ -128,9 +128,9 @@ Input data:
 | Path | Format and shape | Role |
 | --- | --- | --- |
 | `DESC/task_a_descriptive_atlas_manifest.json` | JSON metadata | Cohort and atlas counts. |
-| `B3/generator_validation/raw/generator_rerun_registry.csv` | CSV, `10 x 7` | Rerun count and split sizes. |
-| `B3/generator_validation/raw/generator_split_registry.csv` | CSV, `320 x 4` | Train/test split membership. |
-| `B3/generator_validation/raw/patient_truth_store.csv` | CSV, `80 x 16` | Hidden truth object availability. |
+| `B3/raw/generator_rerun_registry.csv` | CSV, `10 x 7` | Rerun count and split sizes. |
+| `B3/raw/generator_split_registry.csv` | CSV, `320 x 4` | Train/test split membership. |
+| `B3/raw/patient_truth_store.csv` | CSV, `80 x 16` | Hidden truth object availability. |
 
 Key fields:
 
@@ -170,10 +170,10 @@ Input data:
 
 | Path | Format and shape | Role |
 | --- | --- | --- |
-| `DESC/tables/community_cell_subtype_row_fractions.csv` | CSV, `25 x 22` | Community x cell-subtype composition. |
-| `DESC/tables/community_domain_distribution.csv` | CSV, `75 x 7` | TC/IM/PT distribution for each community. |
-| `DESC/tables/community_patient_occurrence_summary.csv` | CSV, `25 x 10` | Patient and ROI prevalence summary. |
-| `DESC/tables/community_domain_roi_prevalence.csv` | CSV, `75 x 5` | Optional domain-specific ROI prevalence. |
+| `DESC/tables/community_cell_subtype_row_fractions.csv` | CSV, `K x 22` | Community x cell-subtype composition. |
+| `DESC/tables/community_domain_distribution.csv` | CSV, `3K x 7` | TC/IM/PT distribution for each community. |
+| `DESC/tables/community_patient_occurrence_summary.csv` | CSV, `K x 10` | Patient and ROI prevalence summary. |
+| `DESC/tables/community_domain_roi_prevalence.csv` | CSV, `3K x 5` | Optional domain-specific ROI prevalence. |
 
 Key fields:
 
@@ -283,10 +283,10 @@ Input data:
 
 | Path | Format and shape | Role |
 | --- | --- | --- |
-| `DESC/tables/community_cell_subtype_row_fractions.csv` | CSV, `25 x 22` | Tumor-dominant community selection. |
-| `B1/block1_source_community_comparison.csv` | CSV, `2400 x 21` | Patient-level source community paired values. |
-| `B1/block1_source_community_statistical_supplement.csv` | CSV, `75 x 35` | Cohort medians and statistical support. |
-| `DESC/tables/community_patient_occurrence_summary.csv` | CSV, `25 x 10` | Optional prevalence annotation. |
+| `DESC/tables/community_cell_subtype_row_fractions.csv` | CSV, `K x 22` | Tumor-dominant community selection. |
+| `B1/block1_source_community_comparison.csv` | CSV, patient/community/metric rows, K-dependent | Patient-level source community paired values. |
+| `B1/block1_source_community_statistical_supplement.csv` | CSV, `3K x 35` | Cohort medians and statistical support. |
+| `DESC/tables/community_patient_occurrence_summary.csv` | CSV, `K x 10` | Optional prevalence annotation. |
 
 Key fields:
 
@@ -302,14 +302,10 @@ Required filters:
 
 - Tumor-dominant community rule:
   `TC_CAIX + TC_EpCAM + TC_Ki67 + TC_VEGF > 0.5`.
-- Current formal outputs select communities `0`, `1`, `3`, `6`, `10`, `11`,
-  `12`, `16`, and `17` under this rule.
 - Main heatmap metrics:
   `summary_name in c("self_retention", "depletion")`.
-- Patient example facets:
-  - `source_community_id == 6` and `summary_name == "self_retention"`;
-  - `source_community_id == 10` and `summary_name == "self_retention"`;
-  - `source_community_id == 12` and `summary_name == "depletion"`.
+- Patient example facets should use the tumor-dominant communities inferred
+  from the current descriptive atlas table.
 - Patient example rows should use `comparison_status == "estimable"`.
 
 Data interface for plotting:
@@ -343,36 +339,34 @@ Statistical comparison:
 - If visible support labels are used, keep them compact and tied to the
   displayed community-metric pairs.
 
-### Panel E: Semi-Synthetic Benchmark Against Transport Baselines
+### Panel E: Benchmark Primary Community-Resolved MAE
 
 Content:
 
-- Controlled hidden-truth recovery benchmark for relation and open-channel
-  error metrics.
+- Controlled hidden-truth benchmark primary recovery display.
+- Primary recovery panels report community-resolved MAE for `A`, `d`, and `e`.
+- Errors for `A` and `d` are evaluated on burden-weighted carriers, `F = xA`
+  and `g = xd`; `e` is evaluated directly.
 
 Input data:
 
 | Path | Format and shape | Role |
 | --- | --- | --- |
-| `B3/a_benchmark/raw/a_benchmark/condition_summary.csv` | CSV, `90 x 16` | Relation benchmark summary bars and intervals. |
-| `B3/a_benchmark/raw/a_benchmark/patient_metrics.csv` | CSV, `7200 x 12` | Relation benchmark rerun-level statistical input. |
-| `B3/de_benchmark/raw/de_benchmark/condition_summary.csv` | CSV, `72 x 16` | Open-channel benchmark summary bars and intervals. |
-| `B3/de_benchmark/raw/de_benchmark/patient_metrics.csv` | CSV, `5760 x 12` | Open-channel benchmark rerun-level statistical input. |
+| `B3/raw/a_benchmark/patient_metrics.csv` | CSV, `7200 x 12` | Relation benchmark rerun-level statistical input. |
+| `B3/raw/de_benchmark/patient_metrics.csv` | CSV, `5760 x 12` | Open-channel benchmark rerun-level statistical input. |
 
 Key fields:
 
-- Summary tables: `method_name`, `method_class`, `metric_name`,
-  `metric_role`, `mean_value`, `ci_lower`, `ci_upper`,
-  `paired_difference_vs_stride_reference`.
 - Patient metrics: `rerun_id`, `patient_id`, `method_name`, `method_class`,
   `metric_name`, `reported_value`.
 
 Required metrics:
 
-- Relation metrics from `a_benchmark`:
-  `F_L1_total`, `A_MAE_active`, `offdiag_mass_abs_error`.
-- Open-channel metrics from `de_benchmark`:
-  `g_L1_total`, `d_MAE`, `e_L1_total`, `e_MAE`.
+| Formal metric | Display label |
+| --- | --- |
+| `A_MAE_active` | `A relation` |
+| `d_MAE` | `d source-open` |
+| `e_MAE` | `e target-open` |
 
 Required methods:
 
@@ -392,21 +386,20 @@ NA handling:
 
 Data interface for plotting:
 
-- Build a summary plotting table with fields `metric_label`, `method_label`,
-  `mean_display`, `ci_lower_display`, `ci_upper_display`, `is_missing`.
-- Build a statistical table by aggregating `reported_value` to
-  `rerun_id + method_name + metric_name`; keep unscaled raw means for tests.
+- Aggregate `reported_value` to `rerun_id + method_name + metric_name`.
+- Use scaled values only for display; keep unscaled rerun-level means for
+  statistical tests.
 
 Visualization:
 
-- Single faceted lower-is-better point-range or bar plot.
+- Rerun-level horizontal boxplot with overlaid rerun points.
+- Right-side ladder brackets compare each baseline to STRIDE.
 
 Axes and aesthetics:
 
-- x-axis: method.
-- y-axis: error value, with display scaling stated in facet labels.
-- facets: metric.
-- Optional points: rerun-level mean values.
+- x-axis: community-resolved MAE, displayed as `x10^3`.
+- y-axis: method.
+- facets: `A relation`, `d source-open`, `e target-open`.
 
 Statistical comparison:
 
@@ -414,36 +407,40 @@ Statistical comparison:
   signed-rank tests across rerun-level means.
 - Apply BH adjustment across displayed baseline-by-metric comparisons.
 - Run tests on unscaled rerun-level values.
+- Statistical labels show paired Wilcoxon signed-rank comparisons against
+  STRIDE across rerun-level means, with BH adjustment across displayed
+  comparisons.
+- Display bracket labels only.
 
-### Panel F: Semi-Synthetic Objective-Component Ablation
+### Panel F: Ablation Primary Community-Resolved MAE
 
 Content:
 
-- Objective-component ablation benchmark using the same lower-is-better error
-  vocabulary as Panel E where possible.
+- Objective-component ablation primary recovery display.
+- Primary recovery panels report community-resolved MAE for `A`, `d`, and `e`.
+- Errors for `A` and `d` are evaluated on burden-weighted carriers, `F = xA`
+  and `g = xd`; `e` is evaluated directly.
 
 Input data:
 
 | Path | Format and shape | Role |
 | --- | --- | --- |
-| `B3/subbag_consistency_ablation/raw/subbag_consistency_ablation/condition_summary.csv` | CSV, `36 x 16` | Consistency ablation summary bars and intervals. |
-| `B3/subbag_consistency_ablation/raw/subbag_consistency_ablation/patient_metrics.csv` | CSV, `2880 x 12` | Consistency ablation rerun-level statistical input. |
-| `B3/geometry_ablation/raw/geometry_ablation/condition_summary.csv` | CSV, `36 x 16` | Geometry ablation summary bars and intervals. |
-| `B3/geometry_ablation/raw/geometry_ablation/patient_metrics.csv` | CSV, `2880 x 12` | Geometry ablation rerun-level statistical input. |
-| `B3/recurrence_ablation/raw/recurrence_ablation/condition_summary.csv` | CSV, `36 x 16` | Recurrence ablation summary bars and intervals. |
-| `B3/recurrence_ablation/raw/recurrence_ablation/patient_metrics.csv` | CSV, `2880 x 12` | Recurrence ablation rerun-level statistical input. |
+| `B3/raw/subbag_consistency_ablation/patient_metrics.csv` | CSV, `2880 x 12` | Consistency ablation rerun-level statistical input. |
+| `B3/raw/geometry_ablation/patient_metrics.csv` | CSV, `2880 x 12` | Geometry ablation rerun-level statistical input. |
+| `B3/raw/recurrence_ablation/patient_metrics.csv` | CSV, `2880 x 12` | Recurrence ablation rerun-level statistical input. |
 
 Key fields:
 
-- Summary tables: `evaluation_family`, `method_name`, `method_class`,
-  `metric_name`, `mean_value`, `ci_lower`, `ci_upper`.
 - Patient metrics: `rerun_id`, `patient_id`, `evaluation_family`,
   `method_name`, `method_class`, `metric_name`, `reported_value`.
 
 Required metrics:
 
-- `F_L1_total`, `A_MAE_active`, `offdiag_mass_abs_error`, `g_L1_total`,
-  `d_MAE`, `e_L1_total`, `e_MAE`.
+| Formal metric | Display label |
+| --- | --- |
+| `A_MAE_active` | `A relation` |
+| `d_MAE` | `d source-open` |
+| `e_MAE` | `e target-open` |
 
 Required methods:
 
@@ -454,24 +451,23 @@ Required methods:
 
 Data interface for plotting:
 
-- Build a combined summary table with fields `ablation_family`,
-  `method_label`, `metric_label`, `mean_display`, `ci_lower_display`,
-  `ci_upper_display`.
-- Build a statistical table by aggregating raw `reported_value` to
-  `rerun_id + ablation_family + method_name + metric_name`.
-- A shared reference bar may be used for display if selected reference summary
-  rows are identical, but paired tests should use the matched reference rows
-  from each ablation file.
+- Aggregate raw `reported_value` to
+  `rerun_id + evaluation_family + method_name + metric_name`.
+- A shared STRIDE row may be used for display, but paired tests use the matched
+  STRIDE reference from each ablation family.
 
 Visualization:
 
-- Faceted lower-is-better point-range or bar plot.
+- Rerun-level horizontal boxplot with overlaid rerun points.
+- Use the same visual grammar as Main Figure 2E.
+- Right-side ladder brackets compare each ablation arm to its matched STRIDE
+  reference.
 
 Axes and aesthetics:
 
-- x-axis: reference and ablation arms.
-- y-axis: error value, with display scaling stated in facet labels.
-- facets: metric.
+- x-axis: community-resolved MAE, displayed as `x10^3`.
+- y-axis: STRIDE and ablation arms.
+- facets: `A relation`, `d source-open`, `e target-open`.
 
 Statistical comparison:
 
@@ -479,6 +475,10 @@ Statistical comparison:
   Wilcoxon signed-rank tests across rerun-level means.
 - Apply BH adjustment across displayed ablation-by-metric comparisons.
 - Run tests on unscaled rerun-level values.
+- Statistical labels show paired Wilcoxon signed-rank comparisons against
+  STRIDE across rerun-level means, with BH adjustment across displayed
+  comparisons.
+- Display bracket labels only.
 
 ## Supplementary Figure 1
 
@@ -496,7 +496,7 @@ Input data:
 
 | Path | Format and shape | Role |
 | --- | --- | --- |
-| `DESC/tables/community_domain_distribution.csv` | CSV, `75 x 7` | Domain fractions by community. |
+| `DESC/tables/community_domain_distribution.csv` | CSV, `3K x 7` | Domain fractions by community. |
 
 Key fields:
 
@@ -528,7 +528,7 @@ Input data:
 
 | Path | Format and shape | Role |
 | --- | --- | --- |
-| `/mnt/NAS_21T/ProjectData/STRIDE/task_A_stage0/task_A_stage0_k25.h5ad` | H5AD, cell-level Stage 0 object | Read-only source for patient-domain community fractions. |
+| `/mnt/NAS_21T/ProjectData/STRIDE/task_A_stage0_k10/task_A_stage0_k10.h5ad` | H5AD, cell-level Stage 0 object | Read-only source for patient-domain community fractions. |
 
 Key fields:
 
@@ -564,7 +564,7 @@ Statistical comparison:
 
 - For each displayed community, run paired Wilcoxon tests for `TC-IM`,
   `TC-PT`, and `IM-PT`.
-- Apply BH adjustment across the 36 displayed pairwise comparisons.
+- Apply BH adjustment across all displayed pairwise comparisons.
 - Display compact significance brackets (`*`, `**`, `***`, `ns`) rather than
   full q-values to avoid overloading the small facets.
 
@@ -662,8 +662,8 @@ Input data:
 
 | Path | Format and shape | Role |
 | --- | --- | --- |
-| `B1/block1_cohort_relation_comparison.csv` | CSV, `675 x 13` | Cohort-level raw relation elements. |
-| `B1/block1_relation_element_statistical_supplement.csv` | CSV, `675 x 38` | Optional q-supported cell outlines. |
+| `B1/block1_cohort_relation_comparison.csv` | CSV, `(K^2 + 2K) x 13` | Cohort-level raw relation elements. |
+| `B1/block1_relation_element_statistical_supplement.csv` | CSV, `(K^2 + 2K) x 38` | Optional q-supported cell outlines. |
 
 Key fields:
 
@@ -723,8 +723,8 @@ Input data:
 
 | Path | Format and shape | Role |
 | --- | --- | --- |
-| `B1/block1_source_community_statistical_supplement.csv` | CSV, `75 x 35` | Source-side statistical support. |
-| `B1/block1_target_community_statistical_supplement.csv` | CSV, `75 x 35` | Target-side statistical support. |
+| `B1/block1_source_community_statistical_supplement.csv` | CSV, `3K x 35` | Source-side statistical support. |
+| `B1/block1_target_community_statistical_supplement.csv` | CSV, `3K x 35` | Target-side statistical support. |
 
 Key fields:
 
@@ -774,17 +774,16 @@ Input data:
 
 | Path | Format and shape | Role |
 | --- | --- | --- |
-| `B1/block1_target_community_comparison.csv` | CSV, `2400 x 21` | Target-side paired patient values. |
-| `B1/block1_target_community_statistical_supplement.csv` | CSV, `75 x 35` | Target-side support labels. |
-| `DESC/tables/community_domain_distribution.csv` | CSV, `75 x 7` | PT-rich target annotation support. |
+| `B1/block1_target_community_comparison.csv` | CSV, patient/community/metric rows, K-dependent | Target-side paired patient values. |
+| `B1/block1_target_community_statistical_supplement.csv` | CSV, `3K x 35` | Target-side support labels. |
+| `DESC/tables/community_domain_distribution.csv` | CSV, `3K x 7` | PT-rich target annotation support. |
 
 Target-side filters:
 
 - Select target communities from `community_domain_distribution.csv` where
   `domain_label == "PT"` and `fraction_within_community > 0.5`.
-- Under the current formal atlas this rule gives C2, C13, C14, C20, C21,
-  C22, and C23; plotting code should infer this set from the table rather
-  than hard-coding it.
+- Plotting code should infer this set from the current descriptive atlas table
+  rather than hard-coding community ids.
 - `summary_name == "matched_incoming_burden"`.
 - `comparison_status == "estimable"`.
 - Plot only complete paired patient values with non-missing `tc_im_value` and
@@ -808,8 +807,8 @@ Axes and aesthetics:
 - facets: PT-rich target communities.
 - connect paired patient points.
 - use `facet_wrap(~ community_facet, scales = "free_y", ncol = 4)`.
-- keep non-q-supported PT-rich communities, such as C13, because community
-  selection is based on tissue composition rather than statistical support.
+- keep non-q-supported PT-rich communities because community selection is
+  based on tissue composition rather than statistical support.
 
 Statistical comparison:
 
@@ -820,283 +819,276 @@ Statistical comparison:
 
 Figure title:
 
-Supplemental semi-synthetic generator credibility and selected recovery metrics
+Supplemental held-out generator audit and selected recovery metrics
 
 Supplementary Figure 2 uses selected supplemental validation metrics rather
 than the full formal metric vocabulary. It should not display endpoint-closure,
-support-set, ratio, or capture metrics unless the visualization scope changes.
-Benchmark and ablation panels retain lower-is-better error values with linear
-display scaling where needed.
+support-set, formal method-bearing ratio, or capture metrics unless the
+visualization scope changes. Panels A and B audit the fixed semi-synthetic
+generator in the held-out TC-to-IM proxy setting. They use existing
+composition metrics to compare observed TC, observed IM, and generated IM
+compositions without introducing a biological claim about real TC-to-IM
+remodeling. Panels C and D report secondary recovery checks. Main Figure 2
+uses community-resolved MAE as the primary recovery display; Supplementary
+Figure 2C-D use community-level MSE sensitivity and overall amount error for
+the same recovery objects.
 
-### Panel A: Generator Rerun Consistency
+Notation for Panels A and B:
+
+- `x_TC` denotes the observed TC composition.
+- `q_IM` denotes the observed IM composition.
+- `\hat{q}_{IM}` denotes the generated IM composition.
+
+### Panel A: Community-Level TC-to-IM Difference Audit
 
 Content:
 
-- Rerun variability for generator target summaries across repeated train-test
-  splits.
+- Community-level comparison between `q_IM - x_TC` and
+  `\hat{q}_{IM} - x_TC` for each rerun.
 
 Input data:
 
 | Path | Format and shape | Role |
 | --- | --- | --- |
-| `B3/generator_validation/raw/generator_validation/rerun_stability.csv` | CSV, `2 x 10` | Between-rerun variability summary. |
+| `B3/raw/generator_validation/target_surface_profiles.csv` | CSV, formal full-data `160K x 11` | Held-out observed IM community profiles. |
+| `B3/raw/patient_truth_store.csv` | CSV | Observed TC compositions and generated IM compositions. |
 
 Key fields:
 
-- `validation_object_id`, `metric_name`, `reported_value`,
-  `stability_summary_level`.
+- `rerun_id`, `patient_id`, `split_role`, `surface_source`,
+  `validation_object_id`, `state_id`, `feature_index`, `reported_value`.
+- `x_json` stores `x_TC` and `y_json` stores `\hat{q}_{IM}`.
 
 Required filters:
 
-- `validation_object_id in c("community_space_target_fraction",
-  "identity_projected_target_fraction")`.
-- `metric_name == "rerun variability"`.
+- `split_role == "test"`.
+- `surface_source == "heldout_real"`.
+- `validation_object_id == "community_space_target_fraction"`.
+- Use one row per `rerun_id` and `patient_id` from `patient_truth_store`.
 
 Visualization:
 
-- Compact point or bar plot.
+- One side-by-side heatmap with two facets after averaging over held-out test
+  patients: `q_IM - x_TC` and `\hat{q}_{IM} - x_TC`.
 
 Axes and aesthetics:
 
-- x-axis: validation object label.
-- y-axis: rerun variability.
+- x-axis: rerun.
+- y-axis: community/state.
+- fill: mean community-fraction difference.
+- Use one shared symmetric diverging color scale for both facets.
 
 Statistical comparison:
 
-- None; diagnostic display only.
+- None at the community level. The panel is a visual audit of direction and
+  magnitude patterns, not a per-community significance test.
 
-### Panel B: Synthetic-Real Target Agreement
+Output PDF:
+
+- `sf2_panelA_tc_to_im_difference_heatmap.pdf`.
+
+### Panel B: Rerun-Level Generator Audit
 
 Content:
 
-- Rerun-level numerical agreement between synthetic targets and held-out real
-  target profiles.
+- Rerun-level direct comparisons among `x_TC`, `q_IM`, and
+  `\hat{q}_{IM}` using Pearson Cor, MAE, and JS profile metrics.
 
 Input data:
 
 | Path | Format and shape | Role |
 | --- | --- | --- |
-| `B3/generator_validation/raw/generator_validation/object_scores.csv` | CSV, `80 x 9` | Rerun-level generator validation scores. |
+| `B3/raw/generator_validation/target_surface_profiles.csv` | CSV, formal full-data `160K x 11` | Held-out observed IM community profiles. |
+| `B3/raw/patient_truth_store.csv` | CSV | Observed TC compositions and generated IM compositions. |
 
 Key fields:
 
-- `rerun_id`, `validation_object_id`, `metric_name`, `reported_value`.
+- Target profiles: `rerun_id`, `patient_id`, `split_role`, `surface_source`,
+  `validation_object_id`, `state_id`, `feature_index`, `reported_value`.
+- Patient truth store: `rerun_id`, `patient_id`, `x_json`, `y_json`.
 
 Required filters:
 
-- `validation_object_id in c("community_space_target_fraction",
-  "identity_projected_target_fraction")`.
-- `metric_name in c("Pearson correlation", "MAE", "JS divergence")`.
-- Omit `MSE` from the visual layer.
+- Target profiles: `split_role == "test"`,
+  `surface_source == "heldout_real"`, and
+  `validation_object_id == "community_space_target_fraction"`.
+- Use one row per `rerun_id` and `patient_id` from `patient_truth_store`.
 
 Visualization:
 
-- Rerun-level dot plot with median or point-range summary.
+- One PDF with two side-by-side comparison blocks.
+- Left block: comparison to `q_IM`, with facets for Pearson Cor, MAE, and JS.
+- Right block: comparison to `x_TC`, with facets for MAE and JS.
+- Each facet displays rerun-level boxplots, paired rerun points, and one
+  paired-comparison bracket.
 
 Axes and aesthetics:
 
-- x-axis: metric.
-- y-axis: reported value.
-- color or facet: validation object label.
+- x-axis: displayed pair of compositions.
+- y-axis: rerun-level value.
+- facet labels: metric name.
 
 Statistical comparison:
 
-- None; diagnostic display only.
+- Aggregate patient-level profile metrics to rerun-level means before testing.
+- Left block comparisons:
+  - Pearson Cor: `cor(\hat{q}_{IM}, q_IM)` versus `cor(x_TC, q_IM)`.
+  - MAE: `MAE(\hat{q}_{IM}, q_IM)` versus `MAE(x_TC, q_IM)`.
+  - JS: `JS(\hat{q}_{IM}, q_IM)` versus `JS(x_TC, q_IM)`.
+- Right block comparisons:
+  - MAE: `MAE(\hat{q}_{IM}, x_TC)` versus `MAE(q_IM, x_TC)`.
+  - JS: `JS(\hat{q}_{IM}, x_TC)` versus `JS(q_IM, x_TC)`.
+- Use paired Wilcoxon tests across rerun-level summaries with BH adjustment
+  across the five displayed comparisons.
+- Display only bracket labels (`*`, `**`, `***`, or `ns`) in the panel.
+- The right-side comparisons are not equivalence tests. A non-significant
+  result would indicate no detectable rerun-level difference under this test,
+  not proof of matched or calibrated change magnitude.
+- Do not display generator MSE in this panel.
 
-### Panel C: Relation Benchmark Supplemental Error
+Output PDF:
+
+- `sf2_panelB_rerun_audit_dotplot.pdf`.
+
+### Panel C: Benchmark Secondary Checks
 
 Content:
 
-- Supplemental active relation MSE in the relation benchmark.
+- Secondary benchmark checks for the same recovery objects shown in Main
+  Figure 2E.
+- Secondary panels report community-level MSE sensitivity and overall amount
+  error for the same recovery objects.
+- Errors for `A` and `d` are evaluated on burden-weighted carriers, `F = xA`
+  and `g = xd`; `e` is evaluated directly.
 
 Input data:
 
 | Path | Format and shape | Role |
 | --- | --- | --- |
-| `B3/a_benchmark/raw/a_benchmark/condition_summary.csv` | CSV, `90 x 16` | Summary bars and intervals. |
-| `B3/a_benchmark/raw/a_benchmark/patient_metrics.csv` | CSV, `7200 x 12` | Rerun-level statistical input. |
+| `B3/raw/a_benchmark/condition_summary.csv` | CSV, `90 x 16` | Relation benchmark summary intervals. |
+| `B3/raw/a_benchmark/patient_metrics.csv` | CSV, `7200 x 12` | Relation benchmark rerun-level statistical input. |
+| `B3/raw/de_benchmark/condition_summary.csv` | CSV, `72 x 16` | Open-channel benchmark summary intervals. |
+| `B3/raw/de_benchmark/patient_metrics.csv` | CSV, `5760 x 12` | Open-channel benchmark rerun-level statistical input. |
 
-Key fields:
+Metric mapping:
 
-- Summary: `method_name`, `method_class`, `metric_name`, `mean_value`,
-  `ci_lower`, `ci_upper`.
-- Patient metrics: `rerun_id`, `patient_id`, `method_name`, `metric_name`,
-  `reported_value`.
+| Block | Formal metric | Display label |
+| --- | --- | --- |
+| Community-level error | `A_MSE_active` | `A relation` |
+| Community-level error | `d_MSE` | `d source-open` |
+| Community-level error | `e_MSE` | `e target-open` |
+| Overall amount error | `offdiag_mass_abs_error` | `A off-diagonal` |
+| Overall amount error | `depletion_mass_abs_error` | `d source-open` |
+| Overall amount error | `emergence_mass_abs_error` | `e target-open` |
 
-Required filters:
+Required methods:
 
-- `metric_name == "A_MSE_active"`.
-- Methods: `stride_reference`, `balanced_ot_baseline`, `uot_baseline`,
-  `partial_ot_baseline`, `diagonal_transport_baseline`.
+- `stride_reference`.
+- `balanced_ot_baseline`.
+- `uot_baseline`.
+- `partial_ot_baseline`.
+- `diagonal_transport_baseline`.
+
+NA handling:
+
+- Show one shared method universe across benchmark secondary-check facets.
+- `balanced_ot_baseline` has relation metrics from `a_benchmark`; open-channel
+  metrics absent from `de_benchmark` are displayed as light-gray `NA` slots.
 
 Visualization:
 
-- Lower-is-better point-range or bar plot.
-
-Axes and aesthetics:
-
-- x-axis: method.
-- y-axis: `Active relation MSE (x10^6)`.
+- One PDF with two vertically stacked point-range blocks.
+- Top block: `Community-level error`.
+- Bottom block: `Overall amount error`.
+- Each block uses right-side ladder brackets comparing each baseline to STRIDE.
 
 Statistical comparison:
 
-- Aggregate patient metrics to rerun-level means.
-- Compare each baseline to `stride_reference` with paired Wilcoxon signed-rank
-  tests.
-- Apply BH adjustment across displayed baseline comparisons.
+- Aggregate patient metrics to rerun-level means before testing.
+- Statistical labels show paired Wilcoxon signed-rank comparisons against
+  STRIDE across rerun-level means, with BH adjustment across displayed
+  comparisons.
 - Run tests on unscaled values.
+- Display bracket labels only.
 
-### Panel D: Open Benchmark Supplemental Errors
+Output PDF:
+
+- `sf2_panelC_benchmark_secondary_checks.pdf`.
+
+### Panel D: Ablation Secondary Checks
 
 Content:
 
-- Supplemental open-channel mass and profile errors in the open benchmark.
+- Secondary objective-component ablation checks for the same recovery objects
+  shown in Main Figure 2F.
+- Secondary panels report community-level MSE sensitivity and overall amount
+  error for the same recovery objects.
+- Errors for `A` and `d` are evaluated on burden-weighted carriers, `F = xA`
+  and `g = xd`; `e` is evaluated directly.
 
 Input data:
 
 | Path | Format and shape | Role |
 | --- | --- | --- |
-| `B3/de_benchmark/raw/de_benchmark/condition_summary.csv` | CSV, `72 x 16` | Summary bars and intervals. |
-| `B3/de_benchmark/raw/de_benchmark/patient_metrics.csv` | CSV, `5760 x 12` | Rerun-level statistical input. |
+| `B3/raw/subbag_consistency_ablation/condition_summary.csv` | CSV, `36 x 16` | Consistency ablation summary intervals. |
+| `B3/raw/geometry_ablation/condition_summary.csv` | CSV, `36 x 16` | Geometry ablation summary intervals. |
+| `B3/raw/recurrence_ablation/condition_summary.csv` | CSV, `36 x 16` | Recurrence ablation summary intervals. |
+| `B3/raw/subbag_consistency_ablation/patient_metrics.csv` | CSV, `2880 x 12` | Consistency ablation rerun-level statistical input. |
+| `B3/raw/geometry_ablation/patient_metrics.csv` | CSV, `2880 x 12` | Geometry ablation rerun-level statistical input. |
+| `B3/raw/recurrence_ablation/patient_metrics.csv` | CSV, `2880 x 12` | Recurrence ablation rerun-level statistical input. |
 
-Key fields:
+Metric mapping:
 
-- Summary: `method_name`, `method_class`, `metric_name`, `mean_value`,
-  `ci_lower`, `ci_upper`.
-- Patient metrics: `rerun_id`, `patient_id`, `method_name`, `metric_name`,
-  `reported_value`.
-
-Required filters:
-
-- `metric_name in c("depletion_mass_abs_error",
-  "emergence_mass_abs_error", "d_MSE", "e_MSE")`.
-- Methods: `stride_reference`, `uot_baseline`, `partial_ot_baseline`,
-  `diagonal_transport_baseline`.
-- This supplemental open-benchmark panel displays only methods present in the `de_benchmark` formal output; unlike Main Figure 2E, it does not add a missing `balanced_ot_baseline` NA slot.
-
-Visualization:
-
-- Faceted lower-is-better point-range or bar plot.
-
-Axes and aesthetics:
-
-- x-axis: method.
-- y-axis: error value with display scaling in facet labels.
-- facets: `Source-open mass error`, `Target-open mass error`,
-  `Source-open profile MSE`, `Target-open profile MSE`.
-
-Statistical comparison:
-
-- Aggregate patient metrics to rerun-level means.
-- Compare each baseline to `stride_reference` with paired Wilcoxon signed-rank
-  tests within each displayed metric.
-- Apply BH adjustment across displayed comparisons.
-- Run tests on unscaled values.
-
-### Panel E: Ablation Supplemental Relation and Mass Errors
-
-Content:
-
-- Supplemental relation and open-mass errors for objective-component ablations.
-
-Input data:
-
-| Path | Format and shape | Role |
+| Block | Formal metric | Display label |
 | --- | --- | --- |
-| `B3/subbag_consistency_ablation/raw/subbag_consistency_ablation/condition_summary.csv` | CSV, `36 x 16` | Consistency ablation summary. |
-| `B3/geometry_ablation/raw/geometry_ablation/condition_summary.csv` | CSV, `36 x 16` | Geometry ablation summary. |
-| `B3/recurrence_ablation/raw/recurrence_ablation/condition_summary.csv` | CSV, `36 x 16` | Recurrence ablation summary. |
-| `B3/subbag_consistency_ablation/raw/subbag_consistency_ablation/patient_metrics.csv` | CSV, `2880 x 12` | Consistency ablation rerun-level statistical input. |
-| `B3/geometry_ablation/raw/geometry_ablation/patient_metrics.csv` | CSV, `2880 x 12` | Geometry ablation rerun-level statistical input. |
-| `B3/recurrence_ablation/raw/recurrence_ablation/patient_metrics.csv` | CSV, `2880 x 12` | Recurrence ablation rerun-level statistical input. |
+| Community-level error | `A_MSE_active` | `A relation` |
+| Community-level error | `d_MSE` | `d source-open` |
+| Community-level error | `e_MSE` | `e target-open` |
+| Overall amount error | `offdiag_mass_abs_error` | `A off-diagonal` |
+| Overall amount error | `depletion_mass_abs_error` | `d source-open` |
+| Overall amount error | `emergence_mass_abs_error` | `e target-open` |
 
-Key fields:
+Required methods:
 
-- Summary: `evaluation_family`, `method_name`, `method_class`,
-  `metric_name`, `mean_value`, `ci_lower`, `ci_upper`.
-- Patient metrics: `rerun_id`, `patient_id`, `evaluation_family`,
-  `method_name`, `metric_name`, `reported_value`.
-
-Required filters:
-
-- `metric_name in c("A_MSE_active", "depletion_mass_abs_error",
-  "emergence_mass_abs_error")`.
-- Methods: `stride_reference`, `consistency_ablation`,
-  `geometry_ablation`, `recurrence_ablation`.
+- `stride_reference`.
+- `consistency_ablation`.
+- `geometry_ablation`.
+- `recurrence_ablation`.
 
 Visualization:
 
-- Faceted lower-is-better point-range or bar plot.
-
-Axes and aesthetics:
-
-- x-axis: method or ablation arm.
-- y-axis: error value with display scaling in facet labels.
-- facets: `Active relation MSE`, `Source-open mass error`,
-  `Target-open mass error`.
+- One PDF with two vertically stacked point-range blocks.
+- Top block: `Community-level error`.
+- Bottom block: `Overall amount error`.
+- Each block uses right-side ladder brackets comparing each ablation arm to its
+  matched STRIDE reference.
 
 Statistical comparison:
 
-- Aggregate patient metrics to rerun-level means.
-- Compare each ablation to its matched `stride_reference` with paired Wilcoxon
-  signed-rank tests.
-- Apply BH adjustment across displayed ablation-by-metric comparisons.
+- Aggregate patient metrics to rerun-level means before testing.
+- Compare each ablation arm to the matched `stride_reference` rows from the
+  same ablation family.
+- Statistical labels show paired Wilcoxon signed-rank comparisons against
+  STRIDE across rerun-level means, with BH adjustment across displayed
+  comparisons.
 - Run tests on unscaled values.
+- Display bracket labels only.
 
-### Panel F: Ablation Supplemental Open-Profile MSE
+Output PDF:
 
-Content:
-
-- Supplemental open-profile MSEs for objective-component ablations.
-
-Input data:
-
-| Path | Format and shape | Role |
-| --- | --- | --- |
-| `B3/subbag_consistency_ablation/raw/subbag_consistency_ablation/condition_summary.csv` | CSV, `36 x 16` | Consistency ablation summary. |
-| `B3/geometry_ablation/raw/geometry_ablation/condition_summary.csv` | CSV, `36 x 16` | Geometry ablation summary. |
-| `B3/recurrence_ablation/raw/recurrence_ablation/condition_summary.csv` | CSV, `36 x 16` | Recurrence ablation summary. |
-| `B3/subbag_consistency_ablation/raw/subbag_consistency_ablation/patient_metrics.csv` | CSV, `2880 x 12` | Consistency ablation rerun-level statistical input. |
-| `B3/geometry_ablation/raw/geometry_ablation/patient_metrics.csv` | CSV, `2880 x 12` | Geometry ablation rerun-level statistical input. |
-| `B3/recurrence_ablation/raw/recurrence_ablation/patient_metrics.csv` | CSV, `2880 x 12` | Recurrence ablation rerun-level statistical input. |
-
-Key fields:
-
-- Summary: `evaluation_family`, `method_name`, `method_class`,
-  `metric_name`, `mean_value`, `ci_lower`, `ci_upper`.
-- Patient metrics: `rerun_id`, `patient_id`, `evaluation_family`,
-  `method_name`, `metric_name`, `reported_value`.
-
-Required filters:
-
-- `metric_name in c("d_MSE", "e_MSE")`.
-- Methods: `stride_reference`, `consistency_ablation`,
-  `geometry_ablation`, `recurrence_ablation`.
-
-Visualization:
-
-- Faceted lower-is-better point-range or bar plot.
-
-Axes and aesthetics:
-
-- x-axis: method or ablation arm.
-- y-axis: error value.
-- facets: `Source-open profile MSE (x10^3)` and
-  `Target-open profile MSE (x10^3)`.
-
-Statistical comparison:
-
-- Aggregate patient metrics to rerun-level means.
-- Compare each ablation to its matched `stride_reference` with paired Wilcoxon
-  signed-rank tests.
-- Apply BH adjustment across displayed ablation-by-metric comparisons.
-- Run tests on unscaled values.
+- `sf2_panelD_ablation_secondary_checks.pdf`.
 
 ## Metrics Not Planned For Visual Panels
 
-The following formal metrics are retained in formal outputs but are not planned
-for Main Figure 2 or Supplementary Figure 2 visual panels under the current
-visualization scope:
+Formal outputs retain additional Block 3 metrics beyond the figure-level
+display vocabulary. Figure 2 visual panels use the MAE/MSE/overall-amount
+vocabulary defined above. `F_L1_total`, `g_L1_total`, and `e_L1_total` remain
+available in formal outputs and are not part of the revised Figure 2 or
+Supplementary Figure 2 display vocabulary.
+
+The direct rerun-level comparisons in Supplementary Figure 2B are held-out
+generator-audit displays. They are separate from the formal Block 3
+method-bearing ratio metrics listed below.
 
 - `offdiag_ratio`;
 - `depletion_capture`;
@@ -1104,4 +1096,3 @@ visualization scope:
 - `endpoint_y_MAE`;
 - `target_recall_at_k`;
 - `open_support_F1`;
-- generator `MSE`.

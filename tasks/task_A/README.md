@@ -298,8 +298,8 @@ Full-cohort Step 1:
 ```bash
 PYTHONPATH=.:src python -m tasks.task_A.workflows.prepare \
   --task-config tasks/task_A/config.yaml \
-  --stage0-h5ad /mnt/NAS_21T/ProjectData/STRIDE/task_A_stage0/task_A_stage0_k25.h5ad \
-  --output-dir /tmp/task_a_prepare_full
+  --stage0-h5ad /mnt/NAS_21T/ProjectData/STRIDE/task_A_stage0_k10/task_A_stage0_k10.h5ad \
+  --output-dir /mnt/NAS_21T/ProjectResult/STRIDE/task_A/prepare
 ```
 
 Descriptive atlas from Stage 0:
@@ -307,8 +307,8 @@ Descriptive atlas from Stage 0:
 ```bash
 PYTHONPATH=.:src python -m tasks.task_A.descriptive \
   --task-config tasks/task_A/config.yaml \
-  --stage0-h5ad /mnt/NAS_21T/ProjectData/STRIDE/task_A_stage0/task_A_stage0_k25.h5ad \
-  --output-dir /tmp/task_a_descriptive_atlas_full
+  --stage0-h5ad /mnt/NAS_21T/ProjectData/STRIDE/task_A_stage0_k10/task_A_stage0_k10.h5ad \
+  --output-dir /mnt/NAS_21T/ProjectResult/STRIDE/task_A/descriptive
 ```
 
 Block 0 execution-cache diagnostic subset:
@@ -316,7 +316,7 @@ Block 0 execution-cache diagnostic subset:
 ```bash
 PYTHONPATH=.:src python -m tasks.task_A.block0 execute \
   --task-config tasks/task_A/config.yaml \
-  --stage0-h5ad /mnt/NAS_21T/ProjectData/STRIDE/task_A_stage0/task_A_stage0_k25.h5ad \
+  --stage0-h5ad /mnt/NAS_21T/ProjectData/STRIDE/task_A_stage0_k10/task_A_stage0_k10.h5ad \
   --n-permutations 9 \
   --master-seed 20260503 \
   --patient-id B10 \
@@ -331,7 +331,7 @@ Block 0 full execution cache:
 ```bash
 PYTHONPATH=.:src python -m tasks.task_A.block0 execute \
   --task-config tasks/task_A/config.yaml \
-  --stage0-h5ad /mnt/NAS_21T/ProjectData/STRIDE/task_A_stage0/task_A_stage0_k25.h5ad \
+  --stage0-h5ad /mnt/NAS_21T/ProjectData/STRIDE/task_A_stage0_k10/task_A_stage0_k10.h5ad \
   --n-permutations 199 \
   --master-seed 20260503 \
   --parallel-permutations 8 \
@@ -355,15 +355,16 @@ Block 1 real-data discovery:
 ```bash
 PYTHONPATH=.:src python -m tasks.task_A.block1 execute \
   --task-config tasks/task_A/config.yaml \
-  --stage0-h5ad /mnt/NAS_21T/ProjectData/STRIDE/task_A_stage0/task_A_stage0_k25.h5ad \
+  --stage0-h5ad /mnt/NAS_21T/ProjectData/STRIDE/task_A_stage0_k10/task_A_stage0_k10.h5ad \
+  --confirm-full-cohort \
   --device cuda \
-  --output-dir /tmp/task_a_block1_execute
+  --output-dir /mnt/NAS_21T/ProjectResult/STRIDE/task_A/block1
 ```
 
 ```bash
 PYTHONPATH=.:src python -m tasks.task_A.block1 analyze \
-  --execute-manifest /tmp/task_a_block1_execute/block1_execute_manifest.json \
-  --output-dir /tmp/task_a_block1_execute
+  --execute-manifest /mnt/NAS_21T/ProjectResult/STRIDE/task_A/block1/block1_execute_manifest.json \
+  --output-dir /mnt/NAS_21T/ProjectResult/STRIDE/task_A/block1
 ```
 
 Objective Step 3 result packet from the canonical atlas plus Block 0/1
@@ -371,10 +372,10 @@ surfaces, with Block 3 explicitly deferred:
 
 ```bash
 PYTHONPATH=.:src python -m tasks.task_A.workflows.package_results \
-  --atlas-manifest /tmp/task_a_descriptive_atlas_full/task_a_descriptive_atlas_manifest.json \
-  --prepare-manifest /tmp/task_a_prepare_full/task_a_prepare_manifest.json \
+  --atlas-manifest /mnt/NAS_21T/ProjectResult/STRIDE/task_A/descriptive/task_a_descriptive_atlas_manifest.json \
+  --prepare-manifest /mnt/NAS_21T/ProjectResult/STRIDE/task_A/prepare/task_a_prepare_manifest.json \
   --block0-calibration-manifest /mnt/NAS_21T/ProjectResult/STRIDE/task_A/block0/block0_calibration_manifest.json \
-  --output-dir tasks/task_A/result_packets/DATE_task_a_objective_packet
+  --output-dir /mnt/NAS_21T/ProjectResult/STRIDE/task_A/result_packet
 ```
 
 Packet notes:
