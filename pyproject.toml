@@ -17,7 +17,13 @@ dependencies = [
   "scipy>=1.8.0",
   "scikit-learn>=1.0.0",
   "anndata>=0.8.0",
+  "matplotlib>=3.7",
+  "seaborn>=0.13",
+  "PyComplexHeatmap>=1.8.5",
+  "statannotations>=0.7",
+  "torch>=2.0",
   "POT>=0.9.0", # Python Optimal Transport
+  "tensorly>=0.9.0",
 ]
 
 [project.optional-dependencies]
@@ -62,3 +68,7 @@ no_implicit_optional = true
 warn_unused_ignores = true
 warn_redundant_casts = true
 ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["stride.pl", "stride.pl.*"]
+ignore_errors = true
