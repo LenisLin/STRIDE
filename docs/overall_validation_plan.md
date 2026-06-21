@@ -96,7 +96,7 @@ Every validation scenario should first check contract-level invariants:
   outputs and remain documented as domain-stratified bag-of-FOV measures in
   composition space,
 - source/target declaration changes task input but not the identity of
-  `fit_stride(...)` as the full estimator,
+  `stride.tl.fit(...)` as the full estimator,
 - any emitted retired observation residual diagnostics remain distinguishable
   from fitted biological `d/e`,
 - state-geometry cost matrices are finite, nonnegative, symmetric on the
@@ -321,7 +321,7 @@ Validation success is defined by pipeline behavior and output contracts, not by
 | current normative layer | `A_p` semantics | Any emitted patient relation obeys row-substochastic semantics, and docs do not substitute a pure conditional kernel for canonical `A_p`. |
 | current normative layer | Burden/composition honesty | `mu_p^-`, `mu_p^+`, `m_p^(d)`, and `m_p^(e)` remain burden-scale quantities, while normalized compositions remain derived views; burden claims are not documented as robust when comparability is weak. |
 | current normative layer | Observation-layer boundary | Observation-layer outputs remain distinguishable from patient-level outputs and remain documented as domain-stratified bag-of-FOV empirical measures rather than as the primary biological object; retired residual diagnostics, when emitted, remain separate from fitted biological `d/e`. |
-| current normative layer | Estimator invariance | Source/target declaration changes task input and comparison eligibility, while `fit_stride(...)` remains the same task-insensitive full estimator with the canonical observation discrepancy backend. |
+| current normative layer | Estimator invariance | Source/target declaration changes task input and comparison eligibility, while `stride.tl.fit(...)` remains the same task-insensitive full estimator with the canonical observation discrepancy backend. |
 | current normative layer | Claim boundary | Manuscript-level biological process language is supported only after cohort-level recurrence/support/dispersion over fitted patient-level `A/d/e`, not from a single-patient observation diagnostic or open tendency alone. |
 | current normative layer | State/domain separation | Canonical docs and interfaces treat domain as an observation-layer stratification variable and do not encode domain identity into the shared state basis. |
 | current normative layer | State-geometry validity | Canonical fitting validates finite, nonnegative, symmetric shared-state `C_raw/C_norm`, diagonal `0`, and a positive finite off-diagonal `s_C` scale before using geometry in the objective. |

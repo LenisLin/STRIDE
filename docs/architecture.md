@@ -17,30 +17,20 @@ The on-disk `stride` package is the active architectural direction for the
 reusable core and now contains the live first-pass canonical implementation
 surface. Its current top-level areas are:
 
-- `stride.adapters`
-- `stride.api`
-- `stride.audit`
-- `stride.basis`
-- `stride.data`
-- `stride.geometry`
 - `stride.io`
-- `stride.latent`
-- `stride.losses`
-- `stride.observation`
-- `stride.optimize`
-- `stride.outputs`
-- `stride.settings`
-- `stride.types`
-- `stride.workflows`
+- `stride.pp`
+- `stride.tl`
+- `stride.da`
+- `stride.pl`
 
-These directories document the reusable core decomposition. Their presence
-should not be read as a promise that every `stride.*` surface is already a
-stable public API.
+These namespaces document the implemented first-pass reusable core
+decomposition. Their presence should not be read as a promise that every
+function is production-stable public API.
 
 The user-facing API layer is defined in `docs/package_api_design.md`.
-`stride.io` v1 is the implemented raw AnnData assembly and h5ad persistence
-surface; the remaining user namespaces follow the same review workflow before
-implementation.
+`stride.io`, `stride.pp`, `stride.tl`, `stride.da`, and `stride.pl` are beta
+package surfaces whose current scope is recorded in `docs/api_specs.md` and
+`docs/state.md`.
 
 ## `tasks/`
 

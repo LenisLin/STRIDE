@@ -73,3 +73,26 @@ When Git index writes fail with a read-only filesystem error in this workspace, 
 - Reproducible: unknown
 - Related Files: .git/index
 - Tags: git, sandbox, commit
+
+---
+
+## [ERR-20260605-001] Full Pytest Collection Imports Retired Geometry Path
+
+**Logged**: 2026-06-05T11:15:06+08:00
+**Priority**: medium
+**Status**: pending
+**Area**: tests
+
+### Summary
+`env PYTHONPATH=src pytest -q` failed during collection because a Task A test imports `stride.geometry.state_geometry`, which is not present in the current source tree.
+
+### Details
+The failure occurs before the new `stride.pp` observation tests run. The current source tree contains `src/stride/pp/_geometry.py`, but no `src/stride/geometry/` package.
+
+### Suggested Action
+Resolve the Task A compatibility boundary separately: either restore/route the expected `stride.geometry` module path or update the Task A test/import surface to the current canonical geometry location.
+
+### Metadata
+- Source: error
+- Related Files: tests/test_task_a_block3_generator_validation_profiles.py, src/stride/pp/_geometry.py
+- Tags: pytest, import, task-a, geometry

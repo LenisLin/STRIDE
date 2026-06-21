@@ -1,14 +1,16 @@
 """Small conversion helpers for STRIDE AnnData I/O assembly."""
+
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from typing import Any
+from typing import Any, cast
 
 import numpy as np
 import pandas as pd
 from scipy import sparse
 
 from stride._schema import (
+    ALLOWED_COMMUNITY_MODES,
     OBS_CELL_TYPE_KEY,
     OBS_DOMAIN_KEY,
     OBS_FOV_KEY,
@@ -17,6 +19,8 @@ from stride._schema import (
     OBSM_SPATIAL_KEY,
     STRIDE_CONFIG_KEY,
     STRIDE_FOV_METADATA_KEY,
+    STRIDE_RELATION_IDS_KEY,
+    STRIDE_RELATIONS_KEY,
     STRIDE_UNS_KEY,
 )
 from stride.errors import ContractError
@@ -29,11 +33,22 @@ CANONICAL_OBS_COLUMNS: tuple[str, ...] = (
     OBS_CELL_TYPE_KEY,
 )
 
+REQUIRED_CONFIG_KEYS: tuple[str, ...] = (
+    "source",
+    "target",
+    "time_order",
+    "community_mode",
+    "n_states",
+    "k_neighbors",
+    STRIDE_RELATIONS_KEY,
+    STRIDE_RELATION_IDS_KEY,
+)
+
 
 def _as_matrix(X: object, *, n_obs: int | None = None, name: str = "X") -> np.ndarray:
     """Return a finite dense numeric matrix, optionally checking row count."""
     if sparse.issparse(X):  # noqa: SIM108 - keep sparse densification explicit.
-        matrix_input = X.toarray()
+        matrix_input = cast(Any, X).toarray()
     else:
         matrix_input = X
     try:
@@ -44,9 +59,7 @@ def _as_matrix(X: object, *, n_obs: int | None = None, name: str = "X") -> np.nd
     if matrix.ndim != 2:
         raise ContractError(f"{name} must have shape [n_obs, n_vars]")
     if n_obs is not None and matrix.shape[0] != n_obs:
-        raise ContractError(
-            f"{name} row count {matrix.shape[0]} does not match cell rows {n_obs}"
-        )
+        raise ContractError(f"{name} row count {matrix.shape[0]} does not match cell rows {n_obs}")
     if not np.isfinite(matrix).all():
         raise ContractError(f"{name} contains NaN/Inf")
     return np.asarray(matrix, dtype=float, order="C")
@@ -77,7 +90,7 @@ def _as_identifier(value: object, *, name: str) -> str:
     if isinstance(value, (dict, list, set, tuple)):
         raise ContractError(f"{name} must be a scalar identifier")
     try:
-        missing = pd.isna(value)
+        missing = pd.isna(cast(Any, value))
     except (TypeError, ValueError):
         missing = False
     if isinstance(missing, (bool, np.bool_)) and missing:
@@ -152,3 +165,81 @@ def validate_raw_adata(adata: Any) -> None:
     for key in (STRIDE_CONFIG_KEY, STRIDE_FOV_METADATA_KEY):
         if key not in stride_uns:
             raise ContractError(f"adata.uns['stride']: missing required key {key!r}")
+
+    config = stride_uns[STRIDE_CONFIG_KEY]
+    if not isinstance(config, Mapping):
+        raise ContractError("adata.uns['stride']['config'] must be a mapping")
+    missing_config = [key for key in REQUIRED_CONFIG_KEYS if key not in config]
+    if missing_config:
+        raise ContractError(f"config: missing required keys: {missing_config}")
+
+    normalized_source = _as_identifier(config["source"], name="config['source']")
+    normalized_target = _as_identifier(config["target"], name="config['target']")
+    if normalized_source == normalized_target:
+        raise ContractError("config['source'] and config['target'] must be distinct")
+
+    raw_time_order = config["time_order"]
+    if isinstance(raw_time_order, str):
+        raise ContractError("config['time_order'] must be a sequence, not a string")
+    try:
+        normalized_time_order = tuple(
+            _as_identifier(value, name="config['time_order'] value") for value in raw_time_order
+        )
+    except TypeError as exc:
+        raise ContractError("config['time_order'] must be a sequence") from exc
+    if not normalized_time_order:
+        raise ContractError("config['time_order'] must contain at least one timepoint")
+    if len(set(normalized_time_order)) != len(normalized_time_order):
+        raise ContractError("config['time_order'] contains duplicate values")
+    if normalized_source not in normalized_time_order:
+        raise ContractError("config['source'] must be present in config['time_order']")
+    if normalized_target not in normalized_time_order:
+        raise ContractError("config['target'] must be present in config['time_order']")
+
+    community_mode = _as_identifier(config["community_mode"], name="config['community_mode']")
+    if community_mode not in ALLOWED_COMMUNITY_MODES:
+        raise ContractError(
+            f"config['community_mode'] must be one of {list(ALLOWED_COMMUNITY_MODES)}"
+        )
+
+    for key in ("n_states", "k_neighbors"):
+        value = config[key]
+        if not isinstance(value, (int, np.integer)) or isinstance(value, (bool, np.bool_)):
+            raise ContractError(f"config[{key!r}] must be a positive integer")
+        if int(value) <= 0:
+            raise ContractError(f"config[{key!r}] must be a positive integer")
+
+    _validate_config_relations(config)
+
+
+def _validate_config_relations(config: Mapping[str, Any]) -> None:
+    """Validate declared relation arrays stored by stride.io."""
+    relations = np.asarray(config[STRIDE_RELATIONS_KEY], dtype=object)
+    if relations.ndim != 2 or relations.shape[1] != 2:
+        raise ContractError("config['relations'] must have shape [n_relations, 2]")
+    if relations.shape[0] == 0:
+        raise ContractError("config['relations'] must contain at least one relation")
+
+    raw_relation_ids = config[STRIDE_RELATION_IDS_KEY]
+    if isinstance(raw_relation_ids, str):
+        raise ContractError("config['relation_ids'] must be a sequence, not a string")
+    try:
+        relation_ids = [
+            _as_identifier(value, name="config['relation_ids'] value") for value in raw_relation_ids
+        ]
+    except TypeError as exc:
+        raise ContractError("config['relation_ids'] must be a sequence") from exc
+    if len(relation_ids) != int(relations.shape[0]):
+        raise ContractError("config['relation_ids'] length must match config['relations']")
+    if len(set(relation_ids)) != len(relation_ids):
+        raise ContractError("config['relation_ids'] contains duplicate values")
+
+    seen_pairs: set[tuple[str, str]] = set()
+    for index, (source_domain, target_domain) in enumerate(relations.tolist()):
+        pair = (
+            _as_identifier(source_domain, name=f"config['relations'][{index}] source_domain_label"),
+            _as_identifier(target_domain, name=f"config['relations'][{index}] target_domain_label"),
+        )
+        if pair in seen_pairs:
+            raise ContractError(f"config['relations'] contains duplicate domain pair: {pair}")
+        seen_pairs.add(pair)

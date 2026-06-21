@@ -10,7 +10,7 @@ import pandas as pd
 from anndata import AnnData
 
 from stride._schema import (
-    ALLOWED_INPUT_MASS_MODES,
+    ALLOWED_COMMUNITY_MODES,
     OBS_CELL_TYPE_KEY,
     OBS_DOMAIN_KEY,
     OBS_FOV_KEY,
@@ -19,6 +19,8 @@ from stride._schema import (
     OBSM_SPATIAL_KEY,
     STRIDE_CONFIG_KEY,
     STRIDE_FOV_METADATA_KEY,
+    STRIDE_RELATION_IDS_KEY,
+    STRIDE_RELATIONS_KEY,
     STRIDE_UNS_KEY,
 )
 from stride.errors import ContractError
@@ -58,7 +60,8 @@ def build_adata(
     source: object,
     target: object,
     time_order: Sequence[object],
-    mass_mode: Literal["fraction", "density"],
+    relations: Sequence[tuple[object, object]],
+    community_mode: Literal["fraction"] = "fraction",
     n_states: int,
     k_neighbors: int,
 ) -> AnnData:
@@ -69,19 +72,20 @@ def build_adata(
             are densified at this .io boundary.
         var: Sequence of feature names aligned to ``X`` columns.
         cell: Cell-level metadata table aligned row-for-row to ``X``.
-        fov: Optional FOV-level metadata table. Required for
-            ``mass_mode="density"`` and allowed to contain unused FOV rows.
+        fov: Optional FOV-level metadata table, allowed to contain unused FOV
+            rows.
         cell_id: Column in ``cell`` used for ``adata.obs_names``. When omitted,
             the first cell table column is used.
         patient, time, fov_id, domain, cell_type: Column names in ``cell`` and,
             where applicable, ``fov`` that map to canonical STRIDE metadata.
         x, y: Column names in ``cell`` used to populate
             ``adata.obsm["spatial"]``.
-        area: FOV-level area column in ``fov``; required for density inputs.
-        source, target, time_order: Caller-resolved ordered relation
-            declarations stored without task-specific inference.
-        mass_mode: Input mass declaration, limited to ``"fraction"`` or
-            ``"density"`` at the ``stride.io`` boundary.
+        area: Optional FOV-level area metadata column in ``fov``.
+        source, target, time_order: Caller-resolved ordered-side declarations.
+        relations: Source-domain and target-domain pairs. Each pair is combined
+            with the declared source and target timepoints to define one relation.
+        community_mode: Community observation declaration. The implemented v1
+            ``stride.io`` boundary supports only ``"fraction"``.
         n_states: Declared shared-state count for downstream preparation.
         k_neighbors: Declared neighborhood size for downstream preparation.
 
@@ -148,17 +152,15 @@ def build_adata(
     spatial_coordinates = _as_spatial(cell_table, x=x, y=y, where="cell")
 
     # ---- FOV metadata ----
-    if mass_mode not in ALLOWED_INPUT_MASS_MODES:
+    if community_mode not in ALLOWED_COMMUNITY_MODES:
         raise ContractError(
-            f"mass_mode must be one of {list(ALLOWED_INPUT_MASS_MODES)}, got {mass_mode!r}"
+            f"community_mode must be one of {list(ALLOWED_COMMUNITY_MODES)}, got {community_mode!r}"
         )
     area_column = _as_identifier(area, name="area column") if area is not None else None
-    if mass_mode == "density" and area_column is None:
-        raise ContractError("area is required when mass_mode == 'density'")
+    if fov is None and area_column is not None:
+        raise ContractError("area can only be supplied with a fov metadata table")
 
     if fov is None:
-        if mass_mode == "density":
-            raise ContractError("fov is required when mass_mode == 'density'")
         fov_rows = _derive_fov_rows_from_cell(cell_table, keys=(patient, time, fov_id, domain))
     else:
         if not isinstance(fov, pd.DataFrame):
@@ -186,14 +188,14 @@ def build_adata(
             cell_table,
             fov_table,
             keys=(patient, time, fov_id, domain),
-            area=area_column if mass_mode == "density" else None,
+            area=area_column,
         )
 
     canonical_fov_metadata = _build_fov_metadata(
         cell_table,
         fov_rows,
         keys=(patient, time, fov_id, domain),
-        area=area_column if mass_mode == "density" else None,
+        area=area_column,
     )
 
     # ---- STRIDE config declarations ----
@@ -223,6 +225,18 @@ def build_adata(
     if normalized_target not in normalized_time_order:
         raise ContractError("target must be present in time_order")
 
+    normalized_relations, relation_ids = _normalize_relation_domain_pairs(
+        relations,
+        source=normalized_source,
+        target=normalized_target,
+    )
+    _validate_relation_domain_support(
+        canonical_fov_metadata,
+        relations=normalized_relations,
+        source=normalized_source,
+        target=normalized_target,
+    )
+
     unselected_times = sorted(
         set(cell_table[time].unique()) - {normalized_source, normalized_target}
     )
@@ -249,9 +263,11 @@ def build_adata(
             "source": normalized_source,
             "target": normalized_target,
             "time_order": list(normalized_time_order),
-            "mass_mode": mass_mode,
+            "community_mode": community_mode,
             "n_states": n_states,
             "k_neighbors": k_neighbors,
+            STRIDE_RELATIONS_KEY: normalized_relations,
+            STRIDE_RELATION_IDS_KEY: relation_ids,
         },
         # Keep FOV metadata tabular so h5ad round-trips mixed string/numeric columns.
         STRIDE_FOV_METADATA_KEY: canonical_fov_metadata,
@@ -259,6 +275,81 @@ def build_adata(
 
     validate_raw_adata(adata)
     return adata
+
+
+def _normalize_relation_domain_pairs(
+    relations: Sequence[tuple[object, object]],
+    *,
+    source: str,
+    target: str,
+) -> tuple[np.ndarray, list[str]]:
+    """Normalize relation domain pairs and build stable relation identifiers."""
+    if isinstance(relations, str) or not isinstance(relations, Sequence):
+        raise ContractError("relations must be a sequence of domain-label pairs")
+    if not relations:
+        raise ContractError("relations must contain at least one domain-label pair")
+
+    normalized_pairs: list[tuple[str, str]] = []
+    relation_ids: list[str] = []
+    seen_pairs: set[tuple[str, str]] = set()
+    seen_relation_ids: set[str] = set()
+    for index, relation in enumerate(relations):
+        if not isinstance(relation, (list, tuple)) or len(relation) != 2:
+            raise ContractError(
+                f"relations[{index}] must be a pair of source and target domain labels"
+            )
+
+        source_domain = _as_identifier(
+            relation[0], name=f"relations[{index}] source_domain_label"
+        )
+        target_domain = _as_identifier(
+            relation[1], name=f"relations[{index}] target_domain_label"
+        )
+        pair = (source_domain, target_domain)
+        if pair in seen_pairs:
+            raise ContractError(f"relations contains duplicate domain pair: {pair}")
+        seen_pairs.add(pair)
+
+        relation_id = f"{source}_{source_domain}_to_{target}_{target_domain}"
+        if relation_id in seen_relation_ids:
+            raise ContractError(f"relations generated duplicate relation_id: {relation_id!r}")
+        seen_relation_ids.add(relation_id)
+        normalized_pairs.append(pair)
+        relation_ids.append(relation_id)
+
+    # Store domain pairs as a two-column array so h5ad preserves the declaration.
+    return np.asarray(normalized_pairs, dtype=object), relation_ids
+
+
+def _validate_relation_domain_support(
+    fov_metadata: pd.DataFrame,
+    *,
+    relations: np.ndarray,
+    source: str,
+    target: str,
+) -> None:
+    """Check that declared relation domain labels have FOV support."""
+    # This links relation declarations to the canonical FOV metadata surface.
+    for index, (source_domain, target_domain) in enumerate(relations.tolist()):
+        source_supported = (
+            (fov_metadata[OBS_TIMEPOINT_KEY] == source)
+            & (fov_metadata[OBS_DOMAIN_KEY] == source_domain)
+        ).any()
+        if not source_supported:
+            raise ContractError(
+                f"relations[{index}] source domain_label {source_domain!r} "
+                f"must have FOV support at source timepoint {source!r}"
+            )
+
+        target_supported = (
+            (fov_metadata[OBS_TIMEPOINT_KEY] == target)
+            & (fov_metadata[OBS_DOMAIN_KEY] == target_domain)
+        ).any()
+        if not target_supported:
+            raise ContractError(
+                f"relations[{index}] target domain_label {target_domain!r} "
+                f"must have FOV support at target timepoint {target!r}"
+            )
 
 
 def _derive_fov_rows_from_cell(
@@ -314,7 +405,7 @@ def _select_fov_rows(
         try:
             numeric_area = pd.to_numeric(used_fov[area], errors="raise").astype(float)
         except (TypeError, ValueError) as exc:
-            raise ContractError("fov: area column must be numeric when mass_mode == 'density'") from exc
+            raise ContractError("fov: area column must be numeric") from exc
         if not np.isfinite(numeric_area).all() or (numeric_area <= 0).any():
             raise ContractError("fov: area values must be finite positive numbers")
         used_fov = used_fov.copy()

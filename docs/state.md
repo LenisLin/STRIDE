@@ -13,9 +13,11 @@ This file records the current live STRIDE repository state.
   task documentation.
 - Current uncertainty means bootstrap/sampling-variance uncertainty over
   fitted patient relation outputs.
-- `stride.api.fit.fit_stride(...)` is the current beta root full-estimator API
-  surface.
-- The current `fit_stride(...)` code path contains a bounded PyTorch/AdamW
+- `stride.tl.fit(...)` is the current formal full-estimator API surface, with
+  `stride.fit(...)` as the package-root convenience export.
+- The public fitting wrapper permits default CUDA-to-CPU fallback when CUDA is
+  unavailable; invalid explicit device identifiers still fail.
+- The current `stride.tl.fit(...)` code path contains a bounded PyTorch/AdamW
   full-estimator implementation for supported inputs, with explicit
   optimizer/status surfaces for unsupported or numerically incomplete fits.
 - The live reference optimizer protocol is fixed as warm-up `20` steps at
@@ -65,7 +67,7 @@ The active STRIDE story is stable at the design level:
 - optimizer start initialization uses `offdiag_init_mass = 1e-2` and
   `numerical_min_mass = 1e-12`,
 - the reference optimizer protocol is fixed and provenance-visible rather than
-  caller-configurable through public `fit_stride(...)` knobs,
+  caller-configurable through public `stride.tl.fit(...)` knobs,
 - finite capped optimizer exits now remain successful fits and are annotated
   with an explicit optimizer exit flag,
 - geometry records raw, scale, normalized, and effective values,
@@ -104,40 +106,46 @@ Supporting core method docs are:
 
 - The live `src/stride` implementation uses the three-block v1 reference
   objective and compact successful-fit provenance schema.
-- `fit_stride(...)` remains the current beta root estimator surface for
-  objective-driven fitting of `A_p`, `d_p`, and `e_p`.
+- `stride.tl.fit(...)` remains the current beta estimator surface for
+  objective-driven fitting of `A_p`, `d_p`, and `e_p`, with `stride.fit(...)`
+  exported at the package root.
 - The root public package surface is intentionally small:
-  `fit_stride`, `build_patient_relation`, `summarize_fit`, `BasisSpec`,
-  `DatasetHandle`, `ContractError`, and `__version__`.
-- `losses`, `optimize`, `audit`, and `workflows` are implementation namespaces,
-  not stable public API.
+  `fit`, `FitResult`, `RelationResult`, `CohortResult`, `ContractError`, and
+  `__version__`.
+- Private `_*.py` modules and numerical helper internals are implementation
+  surfaces, not stable public API.
 - The selected user package namespace design is `stride.io`, `stride.pp`,
-  `stride.tl`, `stride.pl`, and `stride.ds`, recorded in
+  `stride.tl`, `stride.pl`, and `stride.da`, recorded in
   `docs/package_api_design.md`.
 - `stride.io` v1 is implemented with `build_adata`, `read_h5ad`, and
-  `write_h5ad` for raw AnnData assembly and h5ad persistence.
-- `stride.pp`, `stride.tl`, `stride.pl`, and `stride.ds` remain target
-  namespaces for later reviewed implementation.
-- public `fit_stride(...)` no longer exposes direct `lr`, `max_steps`, or
+  `write_h5ad` for raw AnnData assembly and h5ad persistence, plus explicit
+  CSV R handover helpers for downstream plotting tables.
+- `stride.io.build_adata(...)` records `community_mode = "fraction"` for the
+  current `.io -> .pp -> .tl` supported path. Density community observations
+  are not part of that path.
+- `stride.pp`, `stride.tl`, `stride.pl`, and `stride.da` are implemented beta
+  namespaces. Their public contracts remain first-pass and bounded by
+  `docs/api_specs.md`.
+- public `stride.tl.fit(...)` no longer exposes direct `lr`, `max_steps`, or
   `min_steps` controls; reference optimizer protocol changes must go through
   the frozen docs/contracts first.
-- Task A Block 0/1 workflows may call `fit_stride(...)` as part of first-pass
+- Task A Block 0/1 workflows may call `stride.tl.fit(...)` as part of first-pass
   validation. Historical outputs that predate this implementation remain
   proxy/history unless rerun through the current contract.
 - The Task A internal Block 3 rebuild package is the current method-validation
   implementation carrier for semisynthetic generator validation, baseline
   comparison, and ablation studies. Its `stride_reference` target is the
-  formal `fit_stride(...)` frozen reference configuration, with task adapters
+  formal `stride.tl.fit(...)` frozen reference configuration, with task adapters
   limited to input conversion and comparison-plan instantiation.
 
 ## Remaining Engineering Work
 
 - Run approved small validation only after implementation migration.
-- Continue package API cleanup review before exposing additional objects through
-  `stride.pp`, `stride.tl`, `stride.pl`, or `stride.ds`, and before extending
+- Continue package API cleanup review before expanding public objects through
+  `stride.pp`, `stride.tl`, `stride.pl`, or `stride.da`, and before extending
   `stride.io` beyond v1 raw AnnData and h5ad persistence.
-- Broaden the full-estimator supported-input envelope beyond the first-pass
-  uniform-mass, exactly-two-ordered-group configuration.
+- Broaden the full-estimator supported-input envelope beyond the first-pass FOV
+  community-composition, exactly-two-ordered-group configuration.
 - Calibrate optimizer stopping criteria and runtime packaging at production
   scale while preserving explicit non-`ok` status for numerical
   non-completion.
@@ -158,8 +166,8 @@ Supporting core method docs are:
 - The full estimator v1 optimizer requires PyTorch availability at runtime;
   missing optimizer dependencies surface as explicit failures rather than
   successful compact provenance.
-- Namespace direction is selected at the package-design level; implementation
-  timing, input-support expansion, and historical-workflow migration remain
+- Namespace direction is selected at the package-design level; input-support
+  expansion, public-contract hardening, and historical-workflow migration remain
   open engineering work.
 - The public API is beta even when the objective/provenance/operator contract
   versions are v1.

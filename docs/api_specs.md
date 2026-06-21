@@ -8,15 +8,14 @@ package surface, and broader estimator completeness remains a separate question.
 
 ### Current implemented API
 
-The current public Python surface has two implemented layers.
+The current public Python surface has three implemented layers.
 
-The beta root estimator surface remains:
+The package root exposes the formal fitting entry and result/error identities:
 
-- `stride.fit_stride(...)`
-- `stride.build_patient_relation(...)`
-- `stride.summarize_fit(...)`
-- `stride.BasisSpec`
-- `stride.DatasetHandle`
+- `stride.fit(...)`
+- `stride.FitResult`
+- `stride.RelationResult`
+- `stride.CohortResult`
 - `stride.ContractError`
 - `stride.__version__`
 
@@ -25,18 +24,39 @@ The implemented package I/O surface is:
 - `stride.io.build_adata(...)`
 - `stride.io.read_h5ad(...)`
 - `stride.io.write_h5ad(...)`
+- `stride.io.write_r_handover(...)`
+- `stride.io.write_descriptive_tables(...)`
+- `stride.io.write_fraction_table(...)`
+- `stride.io.write_cohort_table(...)`
+- `stride.io.write_program_score_table(...)`
 
-`fit_stride(data, *, source, target, K, ...)` remains an explicit keyword API:
-`data` is the only positional argument, and task semantics such as `source`,
-`target`, and `K` are keyword-only. `build_patient_relation(...)` is also
-keyword-only. The public API is not config-first in this beta phase. The
-reference optimizer protocol is internal and fixed; public `fit_stride(...)`
-does not expose `lr`, `max_steps`, or `min_steps`.
+The implemented formal fitting surface is:
 
-`stride.losses`, `stride.optimize`, `stride.audit`, and `stride.workflows` are
-implementation namespaces. They may be imported by tests or development checks,
-but they are not stable public API. Private modules named `_*.py` have no
-stability commitment.
+- `stride.tl.fit(...)`
+- `stride.tl.FitResult`
+- `stride.tl.RelationResult`
+- `stride.tl.CohortResult`
+
+`stride.io.build_adata(...)` currently declares fraction-scale community
+observations through `community_mode = "fraction"`; density community
+observations are not part of the current implemented `.io -> .pp -> .tl`
+supported path.
+
+The R handover helpers write explicit CSV payloads for downstream plotting.
+They require caller-supplied output directories, file names, and primary-key
+columns; reusable library code does not discover export conventions from
+configuration files.
+
+`stride.tl.fit(adata, *, device="cuda:0")` consumes `.pp-ready` AnnData.
+`stride.fit(...)` is the package-root convenience export of the same formal
+fitting function. The reference optimizer protocol is internal and fixed;
+public fitting does not expose `lr`, `max_steps`, or `min_steps`. The public
+wrapper may resolve the default CUDA device to CPU when CUDA is unavailable;
+explicitly invalid device identifiers still fail with `ContractError`.
+
+Private modules named `_*.py` are implementation surfaces and have no stability
+commitment. The live reusable public namespaces are the package root plus
+`stride.io`, `stride.pp`, `stride.tl`, `stride.da`, and `stride.pl`.
 
 Scientific contract versions and runtime API stability are separate. The v1
 objective/provenance/operator names define the current reference contract, while
@@ -45,12 +65,12 @@ the Python API and supported input envelope remain beta.
 ### Target user API
 
 The target user-facing namespace design is `stride.io`, `stride.pp`,
-`stride.tl`, `stride.pl`, and `stride.ds`; see
-`docs/package_api_design.md`. `stride.io` v1 is implemented as the raw AnnData
-assembly and h5ad persistence surface. `stride.pp`, `stride.tl`, `stride.pl`,
-and `stride.ds` remain target namespaces until their contracts are reviewed and
-implemented. The future `stride.tl.fit(...)` user entry should delegate to the
-same core estimator contract as `fit_stride(...)`.
+`stride.tl`, `stride.pl`, and `stride.da`; see
+`docs/package_api_design.md`. `stride.io`, `stride.pp`, and `stride.tl` now
+cover the implemented AnnData assembly, shared-state preprocessing, and formal
+fitting route. `stride.pl` and `stride.da` are implemented beta downstream
+surfaces for plotting and analysis of fitted outputs. The current `.pp/.tl`
+handoff design uses fraction-scale community-composition observations.
 
 ## 1. Canonical Method Objects
 
@@ -74,10 +94,6 @@ A valid `v_{p,t,f}` is:
   `sum_k v_{p,t,f}[k] = 1` within declared numerical tolerance,
 - defined on the same shared `K`-state basis as every other observation in the
   same analysis,
-- accompanied by declared `mass_mode`, which is `uniform` in the current first
-  pass,
-- accompanied by observation mass, which is `1` for every ROI/FOV in the
-  current first pass,
 - accompanied by design-level `domain_label` metadata when
   domain-stratified comparison is used; the current AnnData route realizes this
   metadata through the concrete field `compartment`,
@@ -88,9 +104,7 @@ For the current first pass:
 - `v_{p,t,f}[k]` is formed by counting the cells in ROI/FOV `f` assigned to
   shared community/state `k` and dividing by the total cell count in that
   ROI/FOV,
-- `c(v_{p,t,f}) = v_{p,t,f}`,
-- observation mass is carried separately as `mass = 1` rather than as ROI-level
-  tissue amount or `||v||_1`.
+- `c(v_{p,t,f}) = v_{p,t,f}`.
 
 When domain/compartment stratification is present, the canonical comparison
 object is a domain-stratified bag-of-FOV empirical measure in
@@ -228,7 +242,6 @@ Any valid analysis must provide:
 - ordered timepoint identifiers or an equivalent ordered relation,
 - FOV/ROI identifiers,
 - a shared `K`-state basis or an official route to derive one,
-- declared `mass_mode`, which is `uniform` in the current first pass,
 - declared ordered source/target observation comparison plan, including valid
   domain strata when domain-stratified comparison is used,
 - design-level `domain_label` metadata when domain-stratified observation
@@ -256,8 +269,8 @@ A valid method entry surface must provide one of the following:
 1. official observation data sufficient to derive the shared `K`-state basis
    and the observation-layer vectors `v_{p,t,f}`, or
 2. direct FOV/ROI state vectors `v_{p,t,f}` on an already-declared shared
-   `K`-state basis, together with explicit observation-layer domain metadata and
-   declared observation mass semantics.
+   `K`-state basis, together with explicit observation-layer domain metadata
+   and patient/time/FOV linkage.
 
 ### 2.3 Optional priors and side inputs
 
@@ -296,8 +309,8 @@ The minimal method pipeline is:
    proportion vectors -> k-means shared community states,
 4. aggregate shared community/state assignments within each ROI/FOV into
    normalized community-composition vectors `v_{p,t,f}`,
-5. attach observation-layer `domain_label` metadata and uniform observation
-   mass (`mass = 1`, `mass_mode = "uniform"`),
+5. attach observation-layer `domain_label` metadata and construct FOV-level
+   community-composition observations for bag-of-FOV comparison,
 6. accept the task-resolved source/target observation evidence blocks and the
    resolved comparison plan, including the provenance of valid domain strata,
    as explicit estimator input,
@@ -379,7 +392,7 @@ Important boundary:
 - they contribute to the observation data-fit term within the full objective,
 - canonical `L_obs` has no observation-layer unbalanced unmatched residual;
   open behavior is expressed only through fitted biological `d/e`,
-- task-local observation solver substitution is outside the `fit_stride(...)`
+- task-local observation solver substitution is outside the `stride.tl.fit(...)`
   full-estimator contract,
 - canonical patient-level `A/d/e` outputs are emitted by the objective-driven
   patient-relation fit,
@@ -450,7 +463,7 @@ Any recurrence layer must be able to emit:
 Default full-estimator STRIDE results include compact successful-fit
 provenance alongside biological outputs. The provenance payload is a compact
 parameter, loss, and protocol record for a successful full-estimator
-`fit_stride(...)` fit. It is not a separate audit module and does not duplicate
+`stride.tl.fit(...)` fit. It is not a separate audit module and does not duplicate
 result-container status fields.
 
 Required compact successful-fit provenance schema:
@@ -544,7 +557,7 @@ Ablation/refit experiment fits may add `ablation_mode`,
 `ablation_term_handling`, and
 `ablation_denominator_policy="fixed_denominator_no_reweighting"` as
 experiment-only provenance. Ordinary successful reference-fit provenance is not
-required to expose ablation as a user-level `fit_stride(...)` control.
+required to expose ablation as a user-level `stride.tl.fit(...)` control.
 Compatibility payloads may temporarily record `ablation_mode: "none"` only as a
 migration label.
 
@@ -590,19 +603,15 @@ In the current first-pass official route:
 - ROI/FOV observation vectors are then formed by counting cells assigned to
   each shared community/state within the ROI/FOV and dividing by the ROI/FOV
   total cell count,
-- observation mass is set separately to `1` with `mass_mode = "uniform"`,
 - tissue/domain labels remain observation-layer metadata only.
 
 The current implementation locations for the official route are mainly:
 
-- `stride.basis` and `stride.api.basis` for shared-basis construction,
-- `stride.data.longitudinal` and `stride.api.dataset` for longitudinal input
-  validation and canonical-field normalization,
-- `stride.observation` for observation-layer cloud comparison,
-- `stride.api.fit`, `stride.workflows.fit_stride`, and
-  `stride.outputs.fit_result` for the canonical full STRIDE fit surface,
-- `stride.outputs.uncertainty` for bootstrap uncertainty over fitted patient
-  relation outputs.
+- `stride.io` for AnnData assembly and h5ad persistence,
+- `stride.pp` for shared-basis construction, state geometry, and FOV
+  observation handoff validation,
+- `stride.tl` for declared relation resolution, canonical observation
+  discrepancy, full-objective fitting, and result assembly.
 
 
 ### 5.2 Custom route
@@ -611,9 +620,10 @@ A custom route is allowed only if it ends in the same contracts:
 
 - same shared `K`-state semantics,
 - valid nonnegative observation-layer vectors,
-- declared `mass_mode`,
 - explicit patient/ordering/FOV indexing,
 - domain handling that does not redefine state identity,
+- finite, nonnegative, symmetric zero-diagonal `[K, K]` shared-state cost
+  geometry with positive off-diagonal median scale,
 - a compatible path to patient-level `(A_p, d_p, e_p)`.
 
 ## 6. Live API Surface
@@ -623,38 +633,36 @@ The live reusable API surface is organized under `stride.*`.
 Stable first-pass public surfaces are:
 
 - package root `stride`,
-- `stride.api.dataset.DatasetHandle`,
-- `stride.api.basis.BasisSpec`,
-- `stride.api.fit.fit_stride(...)`,
-- `stride.api.fit.build_patient_relation(...)`,
-- result contracts in `stride.outputs.fit_result`,
-- uncertainty contracts in `stride.outputs.uncertainty`,
-- observation-layer helpers in `stride.observation` including
-  `match_observation_clouds(...)`, `build_observation_kernels(...)`,
-  `calibrate_match_penalty(...)`, and `compute_active_state_support(...)`.
+- `stride.io`,
+- `stride.pp`,
+- `stride.tl`,
+- `stride.da`,
+- `stride.pl`,
+- result containers exposed by `stride.tl`.
 
 Implementation namespaces that realize the current first-pass contract include:
 
-- `stride.basis` for shared state-basis construction,
-- `stride.data.longitudinal` for longitudinal input validation and
-  canonical-field normalization,
-- `stride.observation` for observation-layer cloud comparison,
-- `stride.workflows.fit_stride` for the canonical fit workflow,
-- `stride.latent` for patient and cohort relation objects.
+- `stride.io` for AnnData assembly and h5ad persistence,
+- `stride.pp` for shared state-basis construction, state geometry, and
+  FOV observation handoff validation,
+- `stride.tl` for declared relation resolution, full-objective fitting, and
+  public result assembly,
+- `stride.da` for downstream analysis over fitted result objects,
+- `stride.pl` for plotting fitted results and derived summaries.
 
 Full-Estimator Contract And Current Implementation Boundary:
 
-- `fit_stride(...)` is the current beta root full-estimator surface.
-- The full contract requires `fit_stride(...)` to fit objective-driven
+- `stride.tl.fit(...)` is the current formal full-estimator surface.
+- The full contract requires `stride.tl.fit(...)` to fit objective-driven
   patient-level `A_p`, `d_p`, and `e_p` under source-row simplex accounting for
   `[A_p | d_p]` and bounded `e_p` constraints.
-- The full contract requires `fit_stride(...)` to use the three-block reference
+- The full contract requires `stride.tl.fit(...)` to use the three-block reference
   objective, separate scale and optimizer-start initialization contracts,
   optimizer-effective geometry, subbag consistency in the fit block, and
   row-simplex cohort recurrence over `T_p = [A_p | d_p]` plus `e_p`.
 - The full contract requires ablation configurations to refit `A_p`, `d_p`,
   and `e_p` under the ablated three-block objective.
-- The full contract requires `fit_stride(...)` to emit biological outputs plus
+- The full contract requires `stride.tl.fit(...)` to emit biological outputs plus
   compact provenance.
 - The current code implementation status is described by `docs/state.md`.
 - Inputs or runtimes outside that supported envelope must surface explicit
@@ -662,20 +670,17 @@ Full-Estimator Contract And Current Implementation Boundary:
   route; they are not successful full-objective fits.
 - Current implementation coverage is described by `docs/state.md`; this API
   specification records the formal contract and public interpretation boundary.
-- `build_patient_relation(...)` assembles already constructed patient-level
-  arrays into the canonical patient relation object.
-- Observation matching contributes as an internal objective term, diagnostic,
-  or backend comparison within the full-estimator contract.
-- `estimate_recurrence(...)` currently implements a conservative
-  consensus-template estimator with explicit deferred status when support is
-  insufficient.
+- Observation matching contributes as an internal objective term and diagnostic
+  surface within the full-estimator contract.
+- Current cohort templates are emitted by `stride.tl.fit(...)` as
+  recurrence-regularized mean consensus summaries over fitted patient-level
+  `A_p`, `d_p`, and `e_p`, with support and dispersion provenance.
 
 ## 7. Backend Numerical Surfaces
 
-Observation-layer OT/Sinkhorn helpers live behind `stride.observation` and
-`stride.adapters`. These functions provide numerical comparison support for the
-domain-stratified bag-of-FOV observation layer. Canonical full-estimator
-`L_obs` uses the fixed, versioned, auditable
+Observation-layer OT/Sinkhorn helpers are internal numerical support for the
+domain-stratified bag-of-FOV observation layer. Canonical full-estimator `L_obs`
+uses the fixed, versioned, auditable
 `D_obs^BalancedSinkhornDivergence-v1` operator with `C_norm = C_raw / s_C`.
 The operator is torch-native, `float64`, log-domain, differentiable, balanced,
 and debiased. Dense transport plans and solver diagnostics remain backend

@@ -310,7 +310,7 @@ def main() -> None:
     # Part 2: Bootstrap loop
     print("\n--- Part 2: Benchmark-local bootstrap loop thread sensitivity ---")
     print(f"  N_REPS={N_REPS_BOOT}, N_PAIRS={N_PAIRS_BOOT}, {N_REPEATS} repeats (median)")
-    print("  Current production setting: Block 2 outer replicate loop remains serial")
+    print("  Current production setting: benchmark-local outer replicate loop remains serial")
     print()
 
     A_reps = np.stack([
@@ -338,7 +338,7 @@ def main() -> None:
     print("  - max_workers=2 is a safe small cap for calibration on this machine.")
     print("  - Larger thread pools regress sharply, consistent with BLAS/OpenMP")
     print("    oversubscription and Python scheduling overhead.")
-    print("  - Keep Block 2 outer replicate loops serial unless nested thread limits")
+    print("  - Keep benchmark outer replicate loops serial unless nested thread limits")
     print("    are enforced explicitly.")
     print("  - Production calibration workers are capped by RuntimeSettings and")
     print("    candidate-grid size.")
