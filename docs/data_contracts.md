@@ -83,7 +83,6 @@ explicitly:
 | `domain_label` | observation stratum | required at the design level for the domain-aware route | observation-layer tissue/domain metadata used for stratification, grouped discrepancy organization, and patient-relation input grouping |
 | `compartment` | observation stratum | required for the current AnnData official route | concrete AnnData field realizing design-level `domain_label` metadata |
 | `state_id` | shared basis | required | index on the shared `K`-state basis |
-| `mass_mode` | analysis | required | declared semantics for observation mass; current first-pass canonical value is `uniform` |
 | `group_id` | optional grouping | optional | benchmark-agnostic grouping variable if used |
 
 The method contract does not allow implicit time ordering or implicit
@@ -113,7 +112,7 @@ The state/domain split is also part of the input contract:
 The task layer must provide resolved ordered comparison metadata before calling
 the reusable estimator. The core receives this plan and the resolved
 source/target observation evidence blocks explicitly, then applies the same
-task-insensitive `fit_stride(...)` estimator to the resolved inputs.
+task-insensitive `stride.tl.fit(...)` estimator to the resolved inputs.
 
 Each comparison record must be able to represent:
 
@@ -123,7 +122,6 @@ Each comparison record must be able to represent:
 | `source_group` | required | ordered source-side observation group |
 | `target_group` | required | ordered target-side observation group |
 | `valid_domain_strata` | required when domain-stratified comparison is used | permitted source/target domain strata or domain mapping |
-| `mass_mode` | required | declared observation mass semantics for this comparison |
 | `patient_fov_linkage` | required | patient, source-side FOV, and target-side FOV membership used to build the empirical measures |
 
 The comparison plan declares which observation groups and domain strata are
@@ -141,7 +139,7 @@ requires or resolves:
 - one accepted FOV/ROI identifier from the `fov_id` alias set,
 - `adata.obs['compartment']`,
 - `adata.obsm['spatial']`,
-- ROI area metadata only for future/custom non-uniform mass semantics.
+- ROI area metadata only for future/custom density community semantics.
 
 Additional route requirements are stage-conditional:
 
@@ -190,9 +188,7 @@ Definition:
   shared community/state `k` for patient `p`, ordered side `t`, and FOV/ROI
   `f`,
 - in the current first pass,
-  `v_{p,t,f}[k] = (# cells in ROI/FOV f assigned to state k) / (# total cells in ROI/FOV f)`,
-- current first-pass observation mass is separate from `v_{p,t,f}` and is fixed
-  to `mass = 1` with `mass_mode = "uniform"` for each ROI/FOV in a study.
+  `v_{p,t,f}[k] = (# cells in ROI/FOV f assigned to state k) / (# total cells in ROI/FOV f)`.
 
 A valid observation vector must satisfy all of the following:
 
@@ -200,7 +196,6 @@ A valid observation vector must satisfy all of the following:
 - finite entries,
 - nonnegative entries,
 - sum to `1` within declared numerical tolerance in the current first pass,
-- explicit `mass_mode`,
 - explicit linkage to `patient_id`, `timepoint`, and `fov_id`.
 
 ### 4.2 State-construction composition versus observation composition
@@ -215,8 +210,8 @@ A valid observation vector must satisfy all of the following:
 ### 4.3 Domain-stratified empirical measure
 
 The canonical observation-layer comparison object is a domain-stratified
-bag-of-FOV empirical measure in community-composition space with equal
-ROI/FOV mass:
+bag-of-FOV empirical measure in community-composition space with one
+observation support point per eligible ROI/FOV:
 
 - `nu_obs = sum_f w_f delta_{c(v_f)}`
 
@@ -273,17 +268,18 @@ Contract boundary:
   observation object,
 - docs should not leave the observation layer as an abstract placeholder `P`.
 
-### 4.4 Current first-pass `mass_mode` semantics
+### 4.4 Current first-pass FOV observation semantics
 
 The current canonical first-pass declaration is:
 
-- `mass_mode = "uniform"`,
-- `mass = 1` for every ROI/FOV within a study,
-- no ROI/FOV weighting by tissue amount is applied in the current first pass,
-- `mass` remains part of the contract as a future-extensible field.
+- current first-pass observation vectors are normalized community compositions
+  of state assignments within each ROI/FOV,
+- each eligible ROI/FOV contributes one support point to the bag-of-FOV
+  empirical measure,
+- ROI/FOVs are not weighted by tissue amount in the current first pass,
+- task-specific count, density, or proportion inputs must first be mapped into
+  the current observation contract.
 
-Task-specific `count`, `density`, or `proportion` fields must be mapped into
-the canonical first-pass observation contract before reusable fitting.
 
 ### 4.5 Optional observation-layer priors
 
@@ -431,7 +427,6 @@ The minimum patient-audit surface should be able to report:
 |---|---|
 | `patient_id` | patient membership key |
 | `timepoint_order` | ordered relation used for the patient |
-| `mass_mode` | declared mass semantics |
 | `n_pre_observations` | count of pre-side FOVs/ROIs used |
 | `n_post_observations` | count of post-side FOVs/ROIs used |
 | `observation_fit_status` | observation-layer status summary |

@@ -239,16 +239,15 @@ decision register, not a task log and not a changelog.
   - the Python distribution name is `stride`,
   - `src/stride/` is the task-insensitive core architecture and live
     first-pass implementation surface,
-  - the root public API remains deliberately small and beta:
-    `fit_stride`, `build_patient_relation`, `summarize_fit`, `BasisSpec`,
-    `DatasetHandle`, `ContractError`, and `__version__`,
-  - `fit_stride(data, *, source, target, K, ...)` keeps an explicit
-    keyword-only task surface rather than becoming a config-first public API,
-  - `build_patient_relation(...)` remains keyword-only,
+  - the root public API remains deliberately small:
+    `fit`, `FitResult`, `RelationResult`, `CohortResult`, `ContractError`, and
+    `__version__`,
+  - `stride.tl.fit(adata, *, device="cuda:0")` consumes `.pp-ready` AnnData
+    rather than becoming a config-first public API,
   - `losses`, `optimize`, `audit`, `workflows`, and private `_*.py` modules are
     implementation surfaces with no public stability commitment,
-  - `fit_stride(...)` is the current implemented full-estimator entrypoint,
-    with beta runtime/input-support status,
+  - `stride.tl.fit(...)` is the current implemented full-estimator entrypoint,
+    with `stride.fit(...)` as the package-root convenience export,
   - proxy or bridge-estimator style public entrypoints are not part of the live
     public API contract,
   - the target user-facing package architecture is recorded in
@@ -259,7 +258,8 @@ decision register, not a task log and not a changelog.
     API remains beta.
 - Consequences:
   - docs must name `stride` as the live package identity,
-  - `fit_stride(...)` is the only live public full-estimator method surface,
+  - `stride.tl.fit(...)` is the only live public full-estimator method surface,
+    with `stride.fit(...)` as the package-root convenience export,
   - proxy or bridge-estimator names must not be described as active full-STRIDE
     estimator surfaces,
   - archived/history paths must not be presented as active installable surfaces,
@@ -273,7 +273,7 @@ decision register, not a task log and not a changelog.
   that resemble the canonical patient relation. That resemblance is not enough
   to define the full estimator.
 - Decision:
-  - `fit_stride(...)` is the current implemented full STRIDE estimator
+  - `stride.tl.fit(...)` is the current implemented full STRIDE estimator
     entrypoint,
   - patient-level `A_p`, `d_p`, and `e_p` are objective-driven fitted
     variables,
@@ -299,14 +299,14 @@ decision register, not a task log and not a changelog.
 - Context: Historical Task A and transitional implementations used proxy and
   bridge naming that can be mistaken for the full method surface.
 - Decision:
-  - public `fit_stride_proxy(...)` is removed from the live public API contract,
-  - public `bridge_observation_matches(...)` and bridge-estimator surfaces are
-    removed from the live public API contract,
+  - proxy estimator surfaces are outside the live public API contract,
+  - bridge-observation and bridge-estimator surfaces are outside the live public
+    API contract,
   - proxy may appear only as historical, retired, or compatibility context,
   - observation matching may remain inside the full estimator as a loss,
     diagnostic, or backend comparison but does not emit canonical `A/d/e`.
 - Consequences:
-  - live docs must define public STRIDE through `fit_stride(...)`,
+  - live docs must define public STRIDE through `stride.tl.fit(...)`,
   - implementation code retaining retired names is implementation debt unless
     explicitly marked as compatibility-only and excluded from the live method
     contract.
@@ -428,7 +428,7 @@ decision register, not a task log and not a changelog.
     three-block ablation objective policy, and the remove versus zero-weight
     implementation route for each ablated fit,
   - ordinary successful reference-fit provenance is not required to expose
-    ablation as a user-level `fit_stride(...)` control; compatibility payloads
+    ablation as a user-level `stride.tl.fit(...)` control; compatibility payloads
     may temporarily record `ablation_mode: "none"` only as a migration label.
 
 ## D019 - Compact Provenance Is Required For Manuscript-Level Results
@@ -440,7 +440,7 @@ decision register, not a task log and not a changelog.
   - default STRIDE package output must include the biological result plus
     compact successful-fit provenance,
   - compact provenance is a parameter, loss, and protocol record for a
-    successful `fit_stride(...)` full-estimator fit,
+    successful `stride.tl.fit(...)` full-estimator fit,
   - compact provenance does not replace fail-fast input or configuration
     validation and does not duplicate status fields already owned by result
     containers,
@@ -519,7 +519,7 @@ detailed_optimizer_trace: bool
     `ablation_term_handling`, and
     `ablation_objective_policy="three_block_reference_term_zeroing"` as
     experiment-only provenance fields; they are not required user-facing fields
-    for an ordinary successful `fit_stride(...)` fit,
+    for an ordinary successful `stride.tl.fit(...)` fit,
   - `D_obs^BalancedSinkhornDivergence-v1` is the canonical successful-fit
     observation-discrepancy operator version in provenance,
   - detailed optimizer traces are off by default and may be emitted only as
@@ -553,7 +553,7 @@ detailed_optimizer_trace: bool
   - once resolved evidence blocks enter the core, domain is not a loss axis,
     state axis, relation axis, or recurrence axis,
   - once resolved, every analysis uses the same task-insensitive
-    `fit_stride(...)` full estimator and canonical v1 observation-discrepancy
+    `stride.tl.fit(...)` full estimator and canonical v1 observation-discrepancy
     operator,
   - `D_obs` is the fixed operator inside `L_obs`, not a sixth loss term and
     not an independently weighted component,
@@ -749,8 +749,8 @@ detailed_optimizer_trace: bool
 - Decision:
   - the package target adopts compact user namespaces: `io`, `pp`, `tl`, `pl`,
     and `ds`,
-  - current root `fit_stride(...)` remains the implemented entry to the core
-    estimator contract,
+  - `stride.tl.fit(...)` remains the implemented entry to the core estimator
+    contract, with `stride.fit(...)` as a root convenience export,
   - implementation namespaces such as `losses`, `optimize`, `audit`, and
     `workflows` remain internal development surfaces.
 - Consequences:
@@ -762,7 +762,8 @@ detailed_optimizer_trace: bool
     implementation review, and narrow tests.
 - Current status:
   - `stride.io` v1 is implemented with `build_adata`, `read_h5ad`, and
-    `write_h5ad`,
+    `write_h5ad`, plus explicit CSV R handover helpers that require
+    caller-supplied output paths, filenames, and primary-key columns,
   - root estimator entrypoints remain the implemented fitting surface,
   - `pp`, `tl`, `pl`, and `ds` remain target namespaces pending reviewed
     implementation.

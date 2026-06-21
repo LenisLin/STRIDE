@@ -470,7 +470,7 @@ Full STRIDE is expected to produce:
 - patient-level audits, fit-status fields, and uncertainty summaries,
 - cohort-level recurrence/common-structure outputs such as consensus `T/e`,
   patient support count, dispersion around consensus, and embeddings,
-- compact successful-fit provenance for `fit_stride(...)` with schema version
+- compact successful-fit provenance for `stride.tl.fit(...)` with schema version
   `stride_fit_provenance.v1`,
 - downstream task-ready summaries derived from the patient and cohort objects.
 
@@ -582,7 +582,7 @@ ablation_objective_policy: "three_block_reference_term_zeroing"
 
 Compatibility payloads may temporarily record `ablation_mode: "none"` for a
 reference fit, but that is a migration/provenance label rather than an ordinary
-user-facing `fit_stride(...)` control.
+user-facing `stride.tl.fit(...)` control.
 
 The only optional provenance diagnostics are `objective_sensitivity` and
 `optimizer_trace_ref`. These optional fields do not change objective semantics,
@@ -597,14 +597,15 @@ Existing result containers may continue to carry their own status fields.
 ## 8. Current Live Implementation Status
 
 The live repo now contains the bounded first-pass implementation of the full
-objective contract described above for supported `fit_stride(...)` inputs. This
+objective contract described above for supported `stride.tl.fit(...)` inputs. This
 status is an implementation claim about the current Python surface, not a
 claim of global optimizer optimality or unrestricted input coverage.
 
 The current implementation surface includes:
 
 - a tissue-agnostic shared-state construction route,
-- a domain-stratified bag-of-FOV observation layer with `mass_mode="uniform"`,
+- a domain-stratified bag-of-FOV observation layer over FOV
+  community-composition vectors,
 - a PyTorch/AdamW constrained full-estimator fit of patient-level `A_p`, `d_p`,
   and `e_p` for supported patient bundles,
 - the canonical `D_obs^BalancedSinkhornDivergence-v1` observation discrepancy
@@ -619,7 +620,7 @@ The current implementation surface includes:
 The current full-estimator path supports a bounded first-pass configuration:
 
 - exactly two ordered groups per patient,
-- uniform-mass patient inputs,
+- first-pass FOV community-composition observations,
 - valid shared-state geometry with finite `C_raw`, positive `s_C`, and derived
   `C_norm`,
 - deterministic initialization and explicit optimizer status.
