@@ -531,8 +531,15 @@ def _assemble_optimizer_payload(run_info: Any) -> Mapping[str, Any]:
         "weight_decay": _OPTIMIZER_HANDOFF.weight_decay,
         "protocol_name": _OPTIMIZER_HANDOFF.protocol_name,
         "exit_flag": run_info.optimizer_exit_flag,
+        "reason": run_info.reason,
+        "n_steps": run_info.n_steps,
+        "initial_total": run_info.initial_total,
+        "final_total": run_info.final_total,
+        "absolute_improvement": run_info.absolute_improvement,
+        "relative_improvement": run_info.relative_improvement,
         "warmup": {
             "steps": _OPTIMIZER_HANDOFF.warmup_steps,
+            "steps_completed": run_info.warmup_steps_completed,
             "lr": _OPTIMIZER_HANDOFF.warmup_lr,
             "scheduler_policy": "none",
             "early_stop": "not_allowed",
@@ -540,6 +547,7 @@ def _assemble_optimizer_payload(run_info: Any) -> Mapping[str, Any]:
         "main": {
             "min_steps": _OPTIMIZER_HANDOFF.main_min_steps,
             "max_steps": _OPTIMIZER_HANDOFF.main_max_steps,
+            "steps_completed": run_info.main_steps_completed,
             "lr": _OPTIMIZER_HANDOFF.main_lr,
             "scheduler_policy": _OPTIMIZER_HANDOFF.scheduler_policy,
             "early_stop": "main_after_min_steps",
