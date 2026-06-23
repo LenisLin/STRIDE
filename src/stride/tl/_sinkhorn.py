@@ -225,12 +225,12 @@ def compute_sinkhorn_divergence(
         dtype=torch.float64,
         device=predicted_tensor.device,
     )
-    outer = _sinkhorn_divergence_value(
-        predicted_mass,
-        observed_mass,
-        G_cross.value / s_G_init,
-        G_pred.value / s_G_init,
-        G_obs_value / s_G_init,
+    outer = _batched_sinkhorn_divergence_value(
+        predicted_mass.unsqueeze(0),
+        observed_mass.unsqueeze(0),
+        (G_cross.value / s_G_init).unsqueeze(0),
+        (G_pred.value / s_G_init).unsqueeze(0),
+        (G_obs_value / s_G_init).unsqueeze(0),
         epsilon_schedule=resolved_config.outer_epsilon_schedule,
         config=resolved_config,
         label="outer_fov_bag_divergence",
@@ -238,7 +238,7 @@ def compute_sinkhorn_divergence(
         runtime_checks=runtime_checks,
     )
     value, outer_clipped, outer_warnings = _apply_small_negative_rule(
-        outer.value,
+        outer.value[0],
         label="outer_fov_bag_divergence",
         runtime_checks=runtime_checks,
     )
@@ -390,7 +390,9 @@ def compute_observed_self_ground_cost(
     return SinkhornResult(value=G_obs.value.detach(), metadata=metadata, warnings=G_obs.warnings)
 
 
-def _resolve_sinkhorn_config(config: SinkhornConfig | None) -> SinkhornConfig:
+def _resolve_sinkhorn_config(
+    config: SinkhornConfig | None,
+) -> SinkhornConfig:
     """Return the canonical v1 Sinkhorn config.
 
     Purpose:
@@ -863,6 +865,156 @@ def _sinkhorn_divergence_value(
         value=divergence,
         warnings=warnings,
     )
+
+
+def _batched_sinkhorn_divergence_value(
+    left_mass: torch.Tensor,
+    right_mass: torch.Tensor,
+    cross_cost: torch.Tensor,
+    left_self_cost: torch.Tensor,
+    right_self_cost: torch.Tensor,
+    *,
+    epsilon_schedule: tuple[float, ...],
+    config: SinkhornConfig,
+    label: str,
+    collect_warnings: bool = False,
+    runtime_checks: bool = True,
+) -> _DivergenceValue:
+    """Compute debiased Sinkhorn divergence for a batch of FOV-bag problems.
+
+    This is an execution-shape optimization of the canonical balanced Sinkhorn
+    operator. It preserves the epsilon schedule, max_iter, tol, dtype, debiasing
+    formula, and warning semantics. The equal-size branch fuses the four transport
+    calls only when their mass/cost shapes can be concatenated safely.
+    """
+    if left_mass.ndim != 2 or right_mass.ndim != 2:
+        raise ContractError("batched Sinkhorn divergence masses must be [B,N], [B,M]")
+    if cross_cost.ndim != 3 or left_self_cost.ndim != 3 or right_self_cost.ndim != 3:
+        raise ContractError("batched Sinkhorn divergence costs must be 3D")
+    batch_size = int(left_mass.shape[0])
+    if batch_size <= 0:
+        raise ContractError("batched Sinkhorn divergence requires at least one item")
+    if right_mass.shape[0] != batch_size:
+        raise ContractError("batched Sinkhorn divergence mass batch dimensions must align")
+    if cross_cost.shape != (batch_size, left_mass.shape[1], right_mass.shape[1]):
+        raise ContractError("cross cost batch shape must match divergence masses")
+    if left_self_cost.shape != (batch_size, left_mass.shape[1], left_mass.shape[1]):
+        raise ContractError("left self cost batch shape must match left masses")
+    if right_self_cost.shape != (batch_size, right_mass.shape[1], right_mass.shape[1]):
+        raise ContractError("right self cost batch shape must match right masses")
+
+    if left_mass.shape[1] == right_mass.shape[1]:
+        all_left = torch.cat((left_mass, right_mass, left_mass, right_mass), dim=0)
+        all_right = torch.cat((right_mass, left_mass, left_mass, right_mass), dim=0)
+        all_cost = torch.cat(
+            (
+                cross_cost,
+                cross_cost.transpose(1, 2),
+                left_self_cost,
+                right_self_cost,
+            ),
+            dim=0,
+        )
+        transport = _batched_sinkhorn_transport_value(
+            all_left,
+            all_right,
+            all_cost,
+            epsilon_schedule=epsilon_schedule,
+            config=config,
+            runtime_checks=runtime_checks,
+        )
+        values = transport.value.reshape(4, batch_size)
+        divergence = 0.5 * (values[0] + values[1]) - 0.5 * values[2] - 0.5 * values[3]
+        if collect_warnings:
+            final_updates = transport.final_updates.reshape(
+                4,
+                batch_size,
+                transport.final_updates.shape[1],
+            )
+            iterations = transport.iterations.reshape(
+                4,
+                batch_size,
+                transport.iterations.shape[1],
+            )
+            max_iter_reached = transport.max_iter_reached.reshape(
+                4,
+                batch_size,
+                transport.max_iter_reached.shape[1],
+            )
+            transport_parts = tuple(
+                _BatchedSinkhornValue(
+                    value=values[index],
+                    final_updates=final_updates[index],
+                    iterations=iterations[index],
+                    max_iter_reached=max_iter_reached[index],
+                )
+                for index in range(4)
+            )
+            transports = (
+                (transport_parts[0], f"{label}.cross_forward"),
+                (transport_parts[1], f"{label}.cross_reverse"),
+                (transport_parts[2], f"{label}.left_self"),
+                (transport_parts[3], f"{label}.right_self"),
+            )
+        else:
+            transports = ()
+    else:
+        cross_forward = _batched_sinkhorn_transport_value(
+            left_mass,
+            right_mass,
+            cross_cost,
+            epsilon_schedule=epsilon_schedule,
+            config=config,
+            runtime_checks=runtime_checks,
+        )
+        cross_reverse = _batched_sinkhorn_transport_value(
+            right_mass,
+            left_mass,
+            cross_cost.transpose(1, 2),
+            epsilon_schedule=epsilon_schedule,
+            config=config,
+            runtime_checks=runtime_checks,
+        )
+        left_self = _batched_sinkhorn_transport_value(
+            left_mass,
+            left_mass,
+            left_self_cost,
+            epsilon_schedule=epsilon_schedule,
+            config=config,
+            runtime_checks=runtime_checks,
+        )
+        right_self = _batched_sinkhorn_transport_value(
+            right_mass,
+            right_mass,
+            right_self_cost,
+            epsilon_schedule=epsilon_schedule,
+            config=config,
+            runtime_checks=runtime_checks,
+        )
+        divergence = (
+            0.5 * (cross_forward.value + cross_reverse.value)
+            - 0.5 * left_self.value
+            - 0.5 * right_self.value
+        )
+        transports = (
+            (cross_forward, f"{label}.cross_forward"),
+            (cross_reverse, f"{label}.cross_reverse"),
+            (left_self, f"{label}.left_self"),
+            (right_self, f"{label}.right_self"),
+        )
+    warnings: tuple[Mapping[str, Any], ...] = ()
+    if collect_warnings:
+        warnings = tuple(
+            warning
+            for transport, transport_label in transports
+            for warning in _compact_convergence_warnings(
+                transport,
+                label=transport_label,
+                epsilon_schedule=epsilon_schedule,
+                config=config,
+            )
+        )
+    return _DivergenceValue(value=divergence, warnings=warnings)
 
 
 def _pairwise_composition_ground_cost_value(

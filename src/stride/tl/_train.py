@@ -21,7 +21,10 @@ from ._losses import (
     EPSILON_NORM,
     LossContext,
     LossLedger,
+    _ObservationBatchFallback,
+    _batched_pairwise_composition_ground_cost_result,
     _compute_geometry_loss,
+    _group_blocks_by_fov_shape,
     compute_total_loss,
 )
 from ._optimizer import (
@@ -45,6 +48,7 @@ from ._parameters import (
 from ._resolve import EvidenceBlock, RelationInput
 from ._sinkhorn import (
     SinkhornConfig,
+    _normalized_cost_matrix,
     compute_fov_ground_cost_matrix,
     compute_observed_self_ground_cost,
 )
@@ -241,8 +245,8 @@ def train_relation(
         )
         latest_total = total
         previous_total = total
-        total_steps += 1
         main_steps_completed += 1
+        total_steps += 1
 
         if main_steps_completed >= int(MAIN_MIN_STEPS) and _plateau_condition_met(
             absolute_improvement=absolute_improvement,
@@ -491,23 +495,36 @@ def _build_loss_context_once(
     fov_cost_scale_floor_used: dict[str, bool] = {}
     observed_self_ground_costs: dict[str, torch.Tensor] = {}
     observed_self_clipped_negative: dict[str, bool] = {}
-    for block in blocks:
-        (
-            fov_cost_scale,
-            floor_used,
-            observed_self_ground_cost,
-            clipped_negative,
-        ) = _compute_block_fov_cost_scale(
-            block,
+    try:
+        _populate_batched_block_context(
+            blocks=blocks,
             parameters=scale_params,
             cost_matrix=cost_matrix,
             cost_scale=cost_scale,
             sinkhorn_config=resolved_sinkhorn,
+            fov_cost_scales=fov_cost_scales,
+            fov_cost_scale_floor_used=fov_cost_scale_floor_used,
+            observed_self_ground_costs=observed_self_ground_costs,
+            observed_self_clipped_negative=observed_self_clipped_negative,
         )
-        fov_cost_scales[block.block_id] = fov_cost_scale
-        fov_cost_scale_floor_used[block.block_id] = floor_used
-        observed_self_ground_costs[block.block_id] = observed_self_ground_cost
-        observed_self_clipped_negative[block.block_id] = clipped_negative
+    except _ObservationBatchFallback:
+        for block in blocks:
+            (
+                fov_cost_scale,
+                floor_used,
+                observed_self_ground_cost,
+                clipped_negative,
+            ) = _compute_block_fov_cost_scale(
+                block,
+                parameters=scale_params,
+                cost_matrix=cost_matrix,
+                cost_scale=cost_scale,
+                sinkhorn_config=resolved_sinkhorn,
+            )
+            fov_cost_scales[block.block_id] = fov_cost_scale
+            fov_cost_scale_floor_used[block.block_id] = floor_used
+            observed_self_ground_costs[block.block_id] = observed_self_ground_cost
+            observed_self_clipped_negative[block.block_id] = clipped_negative
 
     unit = torch.tensor(1.0, dtype=torch.float64, device=cost_matrix.device)
     temp_context = LossContext(
@@ -548,6 +565,92 @@ def _build_loss_context_once(
         observed_self_ground_costs=observed_self_ground_costs,
         observed_self_clipped_negative=observed_self_clipped_negative,
     )
+
+
+def _populate_batched_block_context(
+    *,
+    blocks: Sequence[EvidenceBlock],
+    parameters: RelationParameters,
+    cost_matrix: torch.Tensor,
+    cost_scale: float,
+    sinkhorn_config: SinkhornConfig,
+    fov_cost_scales: dict[str, float],
+    fov_cost_scale_floor_used: dict[str, bool],
+    observed_self_ground_costs: dict[str, torch.Tensor],
+    observed_self_clipped_negative: dict[str, bool],
+) -> None:
+    """Populate fixed setup scales/caches in shape-homogeneous batches.
+
+    This preserves the scalar setup contract:
+    - predicted/observed FOV ground costs use the same normalized state geometry;
+    - fov_cost_scale is still the per-block median of positive ground costs;
+    - floor flags remain per block;
+    - observed-self ground costs and clipped-negative flags remain per block.
+    """
+    C_norm = _normalized_cost_matrix(
+        cost_matrix,
+        cost_scale,
+        n_states=int(cost_matrix.shape[0]),
+        device=cost_matrix.device,
+        validate=True,
+    )
+    patient_index_by_id = {
+        str(patient_id): index for index, patient_id in enumerate(parameters.patient_ids)
+    }
+    for group in _group_blocks_by_fov_shape(tuple(blocks)):
+        predicted_init: list[torch.Tensor] = []
+        target_bags: list[torch.Tensor] = []
+        for block in group.blocks:
+            try:
+                pidx = patient_index_by_id[str(block.patient_id)]
+            except KeyError as exc:
+                raise _ObservationBatchFallback from exc
+            predicted_init.append(
+                predict_target_composition(
+                    block.source_bag,
+                    parameters.A[pidx],
+                    parameters.e[pidx],
+                )
+            )
+            target_bags.append(block.target_bag)
+
+        predicted = torch.stack(predicted_init).to(device=cost_matrix.device, dtype=torch.float64)
+        observed = torch.stack(target_bags).to(device=cost_matrix.device, dtype=torch.float64)
+        ground_result = _batched_pairwise_composition_ground_cost_result(
+            predicted,
+            observed,
+            C_norm,
+            config=sinkhorn_config,
+            label="inner_composition_distance.fov_ground_cost.batched_setup",
+            runtime_checks=True,
+        )
+        observed_self_result = _batched_pairwise_composition_ground_cost_result(
+            observed,
+            observed,
+            C_norm,
+            config=sinkhorn_config,
+            label="inner_composition_distance.observed_self.batched_setup",
+            runtime_checks=True,
+        )
+        ground = ground_result.value.detach()
+        observed_self = observed_self_result.value.detach()
+
+        for index, block in enumerate(group.blocks):
+            positive = ground[index][(ground[index] > 0.0) & torch.isfinite(ground[index])]
+            if positive.numel() == 0:
+                fov_cost_scales[block.block_id] = 1.0
+                fov_cost_scale_floor_used[block.block_id] = True
+            else:
+                fov_cost_scale = float(torch.quantile(positive.detach(), 0.5).cpu())
+                if not math.isfinite(fov_cost_scale) or fov_cost_scale <= 0.0:
+                    raise ContractError("computed fov_cost_scale must be finite and positive")
+                fov_cost_scales[block.block_id] = fov_cost_scale
+                fov_cost_scale_floor_used[block.block_id] = False
+            # `s_G_init` quantiles and observed-self clipped flags remain per block.
+            observed_self_ground_costs[block.block_id] = observed_self[index].detach()
+            observed_self_clipped_negative[block.block_id] = (
+                observed_self_result.clipped_negative[index]
+            )
 
 
 def _training_step(

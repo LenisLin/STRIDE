@@ -124,6 +124,8 @@ def _training_result() -> TrainingResult:
             main_steps_completed=2,
             initial_total=4.0,
             final_total=3.5,
+            absolute_improvement=0.5,
+            relative_improvement=0.125,
             random_seed=11,
         ),
         trace={"steps": ({"stage": "main", "step": 1, "total": 3.5},)},
@@ -218,9 +220,19 @@ def test_assemble_relation_result_provenance_contains_compact_contract_facts() -
     assert provenance["observation_discrepancy"]["operator_version"] == (
         "D_obs^BalancedSinkhornDivergence-v1"
     )
-    assert provenance["optimizer"]["exit_flag"] == "max_steps_exhausted_finite"
-    assert provenance["optimizer"]["framework"] == "torch"
-    assert provenance["optimizer"]["algorithm"] == "AdamW"
+    optimizer = provenance["optimizer"]
+    assert optimizer["exit_flag"] == "max_steps_exhausted_finite"
+    assert optimizer["framework"] == "torch"
+    assert optimizer["algorithm"] == "AdamW"
+    assert optimizer["reason"] == "max_steps"
+    assert optimizer["n_steps"] == 3
+    assert optimizer["initial_total"] == 4.0
+    assert optimizer["final_total"] == 3.5
+    assert optimizer["absolute_improvement"] == 0.5
+    assert optimizer["relative_improvement"] == 0.125
+    assert optimizer["warmup"]["steps_completed"] == 1
+    assert optimizer["main"]["steps_completed"] == 2
+    assert "max_steps" in optimizer["main"]
     assert provenance["detailed_optimizer_trace"] is True
     assert provenance["state_geometry"]["s_C"] == 1.5
     assert provenance["observation_comparison_plan"]["block_construction_policy"] == (

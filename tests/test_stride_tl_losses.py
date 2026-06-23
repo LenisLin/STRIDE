@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import dataclasses
 from dataclasses import dataclass
 
 import pytest
@@ -256,6 +257,15 @@ def test_loss_context_mapping_bridge_defaults_scale_floor_flags() -> None:
     assert context.geometry_scale_floor_used is False
 
 
+def test_loss_context_has_no_prepacked_observation_cache() -> None:
+    field_names = {field.name for field in dataclasses.fields(LossContext)}
+    payload_field = "observation" + "_payload"
+    payload_builder = "build_packed_observation" + "_payload"
+
+    assert payload_field not in field_names
+    assert not hasattr(losses_module, payload_builder)
+
+
 def test_observation_loss_calls_sinkhorn_with_hot_path_flags(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -281,7 +291,7 @@ def test_observation_loss_calls_sinkhorn_with_hot_path_flags(
         observed_self_clipped_negative={"b1": True},
     )
 
-    result = _compute_observation_loss(
+    result = losses_module._compute_observation_loss_single_block_path(
         _parameters(),
         _blocks(),
         torch.tensor([[0.0, 1.0], [1.0, 0.0]], dtype=torch.float64),
@@ -337,7 +347,7 @@ def test_observation_loss_balances_by_patient_not_block_count(
         fov_cost_scales={"b0": 1.0, "b1": 1.0, "b2": 1.0},
     )
 
-    result = _compute_observation_loss(
+    result = losses_module._compute_observation_loss_single_block_path(
         _parameters(),
         _blocks(),
         torch.tensor([[0.0, 1.0], [1.0, 0.0]], dtype=torch.float64),
@@ -352,3 +362,92 @@ def test_observation_loss_balances_by_patient_not_block_count(
         result.normalized_block_values,
         torch.tensor([0.5, 1.5, 4.0], dtype=torch.float64),
     )
+
+
+def test_observation_loss_batch_path_matches_single_block_path_for_1x1_and_1x2() -> None:
+    parameters = RelationParameters(
+        patient_ids=("p1", "p2"),
+        A=torch.tensor(
+            [
+                [[0.82, 0.10], [0.12, 0.78]],
+                [[0.72, 0.18], [0.22, 0.68]],
+            ],
+            dtype=torch.float64,
+        ),
+        d=torch.tensor([[0.08, 0.10], [0.10, 0.10]], dtype=torch.float64),
+        e=torch.tensor([[0.01, 0.04], [0.03, 0.02]], dtype=torch.float64),
+    )
+    blocks = (
+        EvidenceBlock(
+            patient_id="p1",
+            source_bag=torch.tensor([[1.0, 0.0]], dtype=torch.float64),
+            target_bag=torch.tensor([[0.84, 0.16]], dtype=torch.float64),
+            block_id="p1_1x1",
+        ),
+        EvidenceBlock(
+            patient_id="p1",
+            source_bag=torch.tensor([[0.0, 1.0]], dtype=torch.float64),
+            target_bag=torch.tensor(
+                [[0.24, 0.76], [0.32, 0.68]],
+                dtype=torch.float64,
+            ),
+            block_id="p1_1x2",
+        ),
+        EvidenceBlock(
+            patient_id="p2",
+            source_bag=torch.tensor([[0.70, 0.30]], dtype=torch.float64),
+            target_bag=torch.tensor([[0.62, 0.38]], dtype=torch.float64),
+            block_id="p2_1x1",
+        ),
+        EvidenceBlock(
+            patient_id="p2",
+            source_bag=torch.tensor([[0.20, 0.80]], dtype=torch.float64),
+            target_bag=torch.tensor(
+                [[0.35, 0.65], [0.58, 0.42]],
+                dtype=torch.float64,
+            ),
+            block_id="p2_1x2",
+        ),
+    )
+    context = LossContext(
+        obs_scale=torch.tensor(1.7, dtype=torch.float64),
+        geometry_scale=torch.tensor(1.0, dtype=torch.float64),
+        fov_cost_scales={
+            "p1_1x1": 1.0,
+            "p1_1x2": 1.2,
+            "p2_1x1": 0.9,
+            "p2_1x2": 1.4,
+        },
+        observed_self_ground_costs={
+            "p1_1x1": torch.zeros((1, 1), dtype=torch.float64),
+            "p1_1x2": torch.tensor([[0.0, 0.2], [0.2, 0.0]], dtype=torch.float64),
+            "p2_1x1": torch.zeros((1, 1), dtype=torch.float64),
+            "p2_1x2": torch.tensor([[0.0, 0.3], [0.3, 0.0]], dtype=torch.float64),
+        },
+    )
+    cost_matrix = torch.tensor([[0.0, 1.0], [1.0, 0.0]], dtype=torch.float64)
+
+    batched = _compute_observation_loss(
+        parameters,
+        blocks,
+        cost_matrix,
+        1.0,
+        context=context,
+    )
+    single = losses_module._compute_observation_loss_single_block_path(
+        parameters,
+        blocks,
+        cost_matrix,
+        1.0,
+        context=context,
+    )
+
+    torch.testing.assert_close(batched.raw, single.raw, atol=1e-8, rtol=0.0)
+    torch.testing.assert_close(batched.normalized, single.normalized, atol=1e-8, rtol=0.0)
+    torch.testing.assert_close(
+        batched.block_values,
+        single.block_values,
+        atol=1e-8,
+        rtol=0.0,
+    )
+    assert batched.block_patient_ids == single.block_patient_ids
