@@ -61,6 +61,129 @@ def test_sinkhorn_config_rejects_noncanonical(kwargs: dict[str, object]) -> None
         SinkhornConfig(**kwargs)
 
 
+def test_noncanonical_config_helper_is_not_part_of_live_sinkhorn_surface() -> None:
+    config_type_name = "_" + "Diagnostic" + "SinkhornConfig"
+    helper_name = "_diagnostic" + "_sinkhorn_config"
+
+    assert not hasattr(sinkhorn_module, config_type_name)
+    assert not hasattr(sinkhorn_module, helper_name)
+
+
+@pytest.mark.parametrize("n_left,n_right", [(2, 2), (2, 3)])
+def test_batched_sinkhorn_divergence_matches_scalar_path(
+    n_left: int,
+    n_right: int,
+) -> None:
+    config = SinkhornConfig()
+    batch_size = 2
+    left_mass = torch.full((batch_size, n_left), 1.0 / float(n_left), dtype=torch.float64)
+    right_mass = torch.full((batch_size, n_right), 1.0 / float(n_right), dtype=torch.float64)
+    cross_cost = torch.arange(
+        1,
+        1 + batch_size * n_left * n_right,
+        dtype=torch.float64,
+    ).reshape(batch_size, n_left, n_right)
+    cross_cost = cross_cost / cross_cost.max()
+    left_self_base = torch.abs(
+        torch.arange(n_left, dtype=torch.float64)[:, None]
+        - torch.arange(n_left, dtype=torch.float64)[None, :]
+    )
+    right_self_base = torch.abs(
+        torch.arange(n_right, dtype=torch.float64)[:, None]
+        - torch.arange(n_right, dtype=torch.float64)[None, :]
+    )
+    left_self_cost = left_self_base.unsqueeze(0).repeat(batch_size, 1, 1)
+    right_self_cost = right_self_base.unsqueeze(0).repeat(batch_size, 1, 1)
+
+    batched = sinkhorn_module._batched_sinkhorn_divergence_value(
+        left_mass,
+        right_mass,
+        cross_cost,
+        left_self_cost,
+        right_self_cost,
+        epsilon_schedule=config.outer_epsilon_schedule,
+        config=config,
+        label="outer_fov_bag_divergence.test",
+    )
+    scalar_values = []
+    for index in range(batch_size):
+        scalar = sinkhorn_module._sinkhorn_divergence_value(
+            left_mass[index],
+            right_mass[index],
+            cross_cost[index],
+            left_self_cost[index],
+            right_self_cost[index],
+            epsilon_schedule=config.outer_epsilon_schedule,
+            config=config,
+            label="outer_fov_bag_divergence.test",
+        )
+        scalar_values.append(scalar.value)
+
+    torch.testing.assert_close(
+        batched.value,
+        torch.stack(scalar_values),
+        atol=1e-8,
+        rtol=0.0,
+    )
+
+
+def test_equal_size_batched_sinkhorn_warning_labels_match_scalar_components(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = SinkhornConfig()
+    batch_size = 2
+    n_fov = 2
+    mass = torch.full((batch_size, n_fov), 1.0 / float(n_fov), dtype=torch.float64)
+    cross_cost = torch.tensor(
+        [
+            [[0.0, 0.2], [0.3, 0.0]],
+            [[0.0, 0.4], [0.1, 0.0]],
+        ],
+        dtype=torch.float64,
+    )
+    self_cost = torch.zeros((batch_size, n_fov, n_fov), dtype=torch.float64)
+    labels: list[str] = []
+    shapes: list[tuple[int, ...]] = []
+
+    def fake_warning(
+        transport: sinkhorn_module._BatchedSinkhornValue,
+        *,
+        label: str,
+        epsilon_schedule: tuple[float, ...],
+        config: SinkhornConfig,
+    ) -> tuple[dict[str, object], ...]:
+        labels.append(label)
+        shapes.append(tuple(transport.value.shape))
+        return ({"type": "diagnostic_called", "label": label},)
+
+    monkeypatch.setattr(
+        sinkhorn_module,
+        "_compact_convergence_warnings",
+        fake_warning,
+    )
+
+    result = sinkhorn_module._batched_sinkhorn_divergence_value(
+        mass,
+        mass,
+        cross_cost,
+        self_cost,
+        self_cost,
+        epsilon_schedule=config.outer_epsilon_schedule,
+        config=config,
+        label="outer_fov_bag_divergence.equal_size",
+        collect_warnings=True,
+    )
+
+    assert result.warnings
+    assert labels == [
+        "outer_fov_bag_divergence.equal_size.cross_forward",
+        "outer_fov_bag_divergence.equal_size.cross_reverse",
+        "outer_fov_bag_divergence.equal_size.left_self",
+        "outer_fov_bag_divergence.equal_size.right_self",
+    ]
+    assert shapes == [(batch_size,), (batch_size,), (batch_size,), (batch_size,)]
+
+
 def test_compute_sinkhorn_divergence_returns_finite_scalar_with_scale_metadata() -> None:
     predicted, observed, cost = _bags_and_cost()
 

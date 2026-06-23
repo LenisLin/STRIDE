@@ -5,6 +5,7 @@ import dataclasses
 import pytest
 import torch
 
+import stride.tl._losses as losses_module
 import stride.tl._train as train_module
 from stride.errors import ContractError
 from stride.tl._losses import LossContext, LossLedger
@@ -16,6 +17,7 @@ from stride.tl._train import (
     TrainingResult,
     _compute_block_fov_cost_scale,
     _materialize_relation_inputs_once,
+    _populate_batched_block_context,
     _plateau_condition_met,
     _resolve_runtime_device,
     _scale_initial_parameters,
@@ -53,6 +55,61 @@ def _relation_fixture() -> tuple[RelationInput, torch.Tensor, float]:
     return relation, cost, 1.5
 
 
+def _multi_shape_relation_fixture() -> tuple[RelationInput, torch.Tensor, float]:
+    blocks = (
+        EvidenceBlock(
+            patient_id="p1",
+            source_bag=torch.tensor([[0.7, 0.2, 0.1]], dtype=torch.float64),
+            target_bag=torch.tensor([[0.6, 0.3, 0.1]], dtype=torch.float64),
+            block_id="p1_1x1",
+        ),
+        EvidenceBlock(
+            patient_id="p1",
+            source_bag=torch.tensor([[0.2, 0.6, 0.2]], dtype=torch.float64),
+            target_bag=torch.tensor(
+                [[0.1, 0.7, 0.2], [0.3, 0.4, 0.3]],
+                dtype=torch.float64,
+            ),
+            block_id="p1_1x2",
+        ),
+        EvidenceBlock(
+            patient_id="p2",
+            source_bag=torch.tensor([[0.5, 0.3, 0.2]], dtype=torch.float64),
+            target_bag=torch.tensor([[0.4, 0.4, 0.2]], dtype=torch.float64),
+            block_id="p2_1x1",
+        ),
+        EvidenceBlock(
+            patient_id="p2",
+            source_bag=torch.tensor([[0.1, 0.2, 0.7]], dtype=torch.float64),
+            target_bag=torch.tensor(
+                [[0.2, 0.3, 0.5], [0.25, 0.25, 0.5]],
+                dtype=torch.float64,
+            ),
+            block_id="p2_1x2",
+        ),
+    )
+    relation = RelationInput(
+        relation_id="r0",
+        source_timepoint="pre",
+        target_timepoint="post",
+        source_domain="TC",
+        target_domain="IM",
+        patient_ids=("p1", "p2"),
+        support_counts={
+            "p1": {"source": 2, "target": 3},
+            "p2": {"source": 2, "target": 3},
+        },
+        skipped_patient_ids=(),
+        blocks=blocks,
+        metadata={"block_construction_policy": "partitioned_fov_subbag_v1"},
+    )
+    cost = torch.tensor(
+        [[0.0, 1.0, 2.0], [1.0, 0.0, 1.5], [2.0, 1.5, 0.0]],
+        dtype=torch.float64,
+    )
+    return relation, cost, 1.5
+
+
 def test_training_scaffold_imports_expected_public_symbols() -> None:
     assert dataclasses.is_dataclass(TrainingResult)
     assert callable(train_relation)
@@ -69,6 +126,29 @@ def test_training_run_info_keeps_random_seed_field_without_public_control() -> N
     run_info = train_module.TrainingRunInfo()
 
     assert run_info.random_seed is None
+
+
+def test_training_run_info_records_optimizer_runtime_facts() -> None:
+    run_info = train_module.TrainingRunInfo(
+        reason="max_steps",
+        optimizer_exit_flag="max_steps_exhausted_finite",
+        n_steps=3,
+        warmup_steps_completed=1,
+        main_steps_completed=2,
+        initial_total=4.0,
+        final_total=3.5,
+        absolute_improvement=0.5,
+        relative_improvement=0.125,
+    )
+
+    assert run_info.reason == "max_steps"
+    assert run_info.n_steps == 3
+    assert run_info.warmup_steps_completed == 1
+    assert run_info.main_steps_completed == 2
+    assert run_info.initial_total == 4.0
+    assert run_info.final_total == 3.5
+    assert run_info.absolute_improvement == 0.5
+    assert run_info.relative_improvement == 0.125
 
 
 def test_resolve_runtime_device_accepts_cpu() -> None:
@@ -236,6 +316,120 @@ def test_compute_block_fov_cost_scale_uses_unit_floor_when_no_positive_ground_co
     assert clipped_negative is True
 
 
+def test_batched_block_context_matches_single_block_context() -> None:
+    relation, cost, scale = _multi_shape_relation_fixture()
+    parameters = _scale_initial_parameters(
+        relation.patient_ids,
+        3,
+        device=torch.device("cpu"),
+    )
+    config = train_module.SinkhornConfig()
+    batched_scales: dict[str, float] = {}
+    batched_floor: dict[str, bool] = {}
+    batched_observed_self: dict[str, torch.Tensor] = {}
+    batched_clipped: dict[str, bool] = {}
+
+    _populate_batched_block_context(
+        blocks=relation.blocks,
+        parameters=parameters,
+        cost_matrix=cost,
+        cost_scale=scale,
+        sinkhorn_config=config,
+        fov_cost_scales=batched_scales,
+        fov_cost_scale_floor_used=batched_floor,
+        observed_self_ground_costs=batched_observed_self,
+        observed_self_clipped_negative=batched_clipped,
+    )
+
+    for block in relation.blocks:
+        (
+            single_scale,
+            single_floor,
+            single_observed_self,
+            single_clipped,
+        ) = _compute_block_fov_cost_scale(
+            block,
+            parameters=parameters,
+            cost_matrix=cost,
+            cost_scale=scale,
+            sinkhorn_config=config,
+        )
+        assert batched_scales[block.block_id] == pytest.approx(single_scale, abs=1e-12)
+        assert bool(batched_floor[block.block_id]) is bool(single_floor)
+        torch.testing.assert_close(
+            batched_observed_self[block.block_id],
+            single_observed_self,
+            atol=1e-8,
+            rtol=0.0,
+        )
+        assert bool(batched_clipped[block.block_id]) is bool(single_clipped)
+
+
+def test_batched_block_context_preserves_observed_self_clipped_flags(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    relation, cost, scale = _relation_fixture()
+    parameters = _scale_initial_parameters(
+        relation.patient_ids,
+        3,
+        device=torch.device("cpu"),
+    )
+    original_result = train_module._batched_pairwise_composition_ground_cost_result
+
+    def fake_batched_ground_result(
+        left: torch.Tensor,
+        right: torch.Tensor,
+        C_norm: torch.Tensor,
+        *,
+        config: train_module.SinkhornConfig,
+        label: str,
+        runtime_checks: bool,
+    ) -> losses_module._BatchedGroundCostValue:
+        assert runtime_checks is True
+        if "observed_self" not in label:
+            return original_result(
+                left,
+                right,
+                C_norm,
+                config=config,
+                label=label,
+                runtime_checks=runtime_checks,
+            )
+        value = torch.zeros(
+            (left.shape[0], left.shape[1], right.shape[1]),
+            dtype=torch.float64,
+            device=left.device,
+        )
+        return losses_module._BatchedGroundCostValue(
+            value=value,
+            clipped_negative=tuple(True for _ in range(left.shape[0])),
+        )
+
+    monkeypatch.setattr(
+        train_module,
+        "_batched_pairwise_composition_ground_cost_result",
+        fake_batched_ground_result,
+    )
+    batched_scales: dict[str, float] = {}
+    batched_floor: dict[str, bool] = {}
+    batched_observed_self: dict[str, torch.Tensor] = {}
+    batched_clipped: dict[str, bool] = {}
+
+    _populate_batched_block_context(
+        blocks=relation.blocks,
+        parameters=parameters,
+        cost_matrix=cost,
+        cost_scale=scale,
+        sinkhorn_config=train_module.SinkhornConfig(),
+        fov_cost_scales=batched_scales,
+        fov_cost_scale_floor_used=batched_floor,
+        observed_self_ground_costs=batched_observed_self,
+        observed_self_clipped_negative=batched_clipped,
+    )
+
+    assert batched_clipped == {"p1:subbag_0": True}
+
+
 def test_train_relation_runs_status_free_smoke_path(monkeypatch: pytest.MonkeyPatch) -> None:
     relation, cost, scale = _relation_fixture()
     context = LossContext(
@@ -281,8 +475,13 @@ def test_train_relation_runs_status_free_smoke_path(monkeypatch: pytest.MonkeyPa
         "max_steps_exhausted_finite",
         "plateau_patience",
     }
+    assert result.run_info.reason in {"max_steps", "plateau_patience"}
+    assert result.run_info.n_steps == 1 + result.run_info.main_steps_completed
+    assert result.run_info.warmup_steps_completed == 1
     assert result.run_info.initial_total is not None
     assert result.run_info.final_total is not None
+    assert result.run_info.absolute_improvement is not None
+    assert result.run_info.relative_improvement is not None
     assert result.run_info.random_seed is None
     assert result.trace is None
 
@@ -323,7 +522,6 @@ def test_train_relation_plateau_counts_only_completed_main_optimizer_steps(
     assert result.run_info.optimizer_exit_flag == "plateau_patience"
     assert result.run_info.main_steps_completed == 2
     assert step_counter["optimizer_steps"] == result.run_info.main_steps_completed
-    assert result.run_info.n_steps == result.run_info.main_steps_completed
 
 
 def test_train_relation_worsening_total_exhausts_main_steps_without_plateau(
