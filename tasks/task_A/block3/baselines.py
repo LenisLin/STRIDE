@@ -25,12 +25,14 @@ from dataclasses import dataclass, field
 import numpy as np
 
 from .calibration import UOTCalibrationResult, calibrate_uot_lambda
-from stride.adapters.ot_sinkhorn import (
-    ObservationMatchConfig,
-    batched_uot_solve,
-    build_observation_kernels,
-)
-from stride.settings import RuntimeSettings
+
+
+@dataclass(frozen=True)
+class RuntimeSettings:
+    """Task-local runtime settings retained for UOT comparator calls."""
+
+    uot_backend: str = "numpy"
+    device: str | None = None
 
 
 LIVE_3B1_BASELINES: tuple[str, ...] = (
@@ -45,6 +47,18 @@ LIVE_3B2_BASELINES: tuple[str, ...] = (
     "diagonal_transport_baseline",
 )
 PARTIAL_OT_NUMERICAL_ATOL = 1e-5
+
+
+def _load_uot_solver():
+    try:
+        from stride.adapters.ot_sinkhorn import (  # type: ignore[import-not-found]
+            ObservationMatchConfig,
+            batched_uot_solve,
+            build_observation_kernels,
+        )
+    except ModuleNotFoundError:
+        return None
+    return ObservationMatchConfig, batched_uot_solve, build_observation_kernels
 
 
 @dataclass(frozen=True)
@@ -217,6 +231,17 @@ def solve_uot_plan(
     lambda_value = float(match_penalty)
     if not np.isfinite(lambda_value) or lambda_value <= 0.0:
         raise ValueError("match_penalty must be finite and positive")
+    solver = _load_uot_solver()
+    if solver is None:
+        return PlanBaselineResult(
+            P=None,
+            status="solver_unavailable",
+            metadata={
+                "solver": "stride.adapters.ot_sinkhorn",
+                "availability": "missing_from_current_core_package",
+            },
+        )
+    ObservationMatchConfig, batched_uot_solve, build_observation_kernels = solver
     cfg = ObservationMatchConfig(
         eps_schedule=(1.0, 0.2),
         max_iter=2000,
@@ -272,6 +297,10 @@ def estimate_uot_matched_mass(
     lambda_value = float(match_penalty)
     if not np.isfinite(lambda_value) or lambda_value <= 0.0:
         raise ValueError("match_penalty must be finite and positive")
+    solver = _load_uot_solver()
+    if solver is None:
+        return float("inf")
+    ObservationMatchConfig, batched_uot_solve, build_observation_kernels = solver
     cfg = ObservationMatchConfig(
         eps_schedule=(1.0, 0.2),
         max_iter=2000,
