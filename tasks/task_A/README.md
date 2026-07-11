@@ -11,8 +11,8 @@ Task A scientific boundaries and preserved proxy-history context remain in
 The canonical Task A results memo through Block 1, with explicit preserved
 proxy-history context, lives in
 [`docs/task_A/result.md`](/home/lenislin/Experiment/projects/STRIDE/docs/task_A/result.md).
-This README is an operational mirror. Current `fit_stride(...)` implementation
-status and supported-input boundaries are owned by
+This README is an operational mirror. Current `stride.tl.fit(...)`
+implementation status and supported-input boundaries are owned by
 [`docs/state.md`](/home/lenislin/Experiment/projects/STRIDE/docs/state.md).
 
 ## Start here
@@ -73,6 +73,8 @@ status and supported-input boundaries are owned by
 ## What Step 2 freezes
 
 - Surface responsibilities stay task-local under `tasks/task_A/`.
+- Task A current migration route is
+  `Stage0 h5ad -> TaskA adapter -> pp-ready pair AnnData -> stride.tl.fit`.
 - The block ids and Python entrypoints are:
   - `block0_calibration`
   - `block1_real_data_discovery`
@@ -169,19 +171,21 @@ retained only as a supportive target-open rollup.
   `--n-test <n>` are internal engineering-smoke controls only; manifests from
   such runs must record `execution_scope=subset_engineering_test`.
 - First export `generator_validation` for manual sanity review. After manual
-  confirmation, run `a_benchmark`, `de_benchmark`,
-  `subbag_consistency_ablation`, `geometry_ablation`, and
-  `recurrence_ablation`.
+  confirmation, `a_benchmark` and `de_benchmark` may run through the formal
+  `stride.tl.fit` reference surface. The three `3C` semantic names are
+  recognized but currently return structured `deferred` status because the
+  public estimator exposes no corresponding ablation hook.
 - Block 3 uses the train-derived multi-FOV generator described in
   `docs/task_A/block3/scientific_contract.md`: train TC-IM templates,
   geometry-gated residual coupling with `tau=2.0`, medoid plus individual
   template mixture with `lambda_individual=0.10`, and FOV generation with
   `eta=0.3`. The live execution route does not use Block1/2 manifests or
   packet-local proxy diagnostics.
-- `3C` is the core STRIDE refit-ablation surface. Each `3C` arm removes or
-  zero-weights the corresponding objective term and refits `A_p`, `d_p`, and
-  `e_p` on the same generated multi-FOV realization, resolved evidence blocks,
-  deterministic initialization, and optimizer protocol as the reference fit.
+- `3C` remains the frozen refit-ablation design. Current execution does not
+  implement those arms: it writes a structured unsupported/deferred record
+  with the experiment name, requested ablation, `fit_surface="stride.tl.fit"`,
+  reason code, and frozen-contract reference. It never copies a reference fit
+  or emits a post-hoc surrogate as an ablation result.
 - `3C` uses fixed full-estimator group denominators. Retained objective terms
   keep the reference-fit objective coefficients.
 - `de_benchmark` is open-focused but keeps the complete shared metric
@@ -264,11 +268,11 @@ Before the next Block 1 coding round, two review notes must be completed:
 | `descriptive_atlas` | `--task-config`, `--stage0-h5ad`, `--output-dir`, optional `--patient-id`, optional `--max-overlay-communities` | `task_a_descriptive_atlas_manifest.json`, `task_a_descriptive_atlas_output_index.csv`, atlas tables/figures | descriptive only | Does not run Block 0/1 or emit confirmatory claims |
 | `block0 execute` | `--task-config`, `--stage0-h5ad`, `--output-dir`, `--n-permutations`, `--master-seed`, optional subset selectors, optional parallel controls | `block0_execution_manifest.json`, `block0_fit_cache.npz`, `block0_fit_cache_index.csv`, `block0_execution_progress.jsonl` | calibration/readiness fields only | Writes reusable fit cache only; does not derive metrics or p-values |
 | `block0 analyze` | `--fit-cache`, `--fit-cache-index`, `--output-dir`, optional `--execution-manifest` | `block0_calibration_manifest.json`, `block0_patient_calibration.csv`, `block0_metric_summary.csv` | calibration/readiness fields only | Reads an existing cache; derives fixed family-summary calibration tables without rerunning STRIDE or permutations |
-| `block1 execute` / `block1 analyze` | `execute: --task-config, --stage0-h5ad, --output-dir, optional --patient-id, optional --device`; `analyze: --execute-manifest, --output-dir` | family-level native relation exports, `block1_execute_manifest.json`, `block1_analysis_manifest.json`, family/source/target summaries, direct `TC-IM` versus `TC-PT` comparison CSVs, and `block1_cohort_relation_comparison.csv` | `diagnostic` for subset routing, `evidence_ready` for full-cohort ready analysis routing | Reads Stage 0 plus config directly during execute, then execute/native exports only during analyze; does not read Block 0, descriptive atlas, result packets, or proxy history |
+| `block1 execute` / `block1 analyze` | `execute: --task-config, --stage0-h5ad, --output-dir, optional --patient-id, optional --device`; `analyze: --execute-manifest, --output-dir` | family-level `stride.tl.fit` native result exports, `block1_execute_manifest.json`, `block1_analysis_manifest.json`, family/source/target summaries, direct `TC-IM` versus `TC-PT` comparison CSVs, and `block1_cohort_relation_comparison.csv` | `diagnostic` for subset routing, `evidence_ready` for full-cohort ready analysis routing | Reads Stage 0 plus config directly through the Task A pair AnnData adapter during execute, then execute/native exports only during analyze; does not read Block 0, descriptive atlas, result packets, or proxy history |
 | `python -m tasks.task_A.block3` | semantic experiment name, `--task-config`, `--stage0-h5ad`, `--output-dir`, optional `--device`, optional engineering-smoke `--max-reruns` and `--n-test` | internal Block 3 raw/review artifacts for one subexperiment | `scaffold_active`; subset runs mark `execution_scope=subset_engineering_test` | Does not expose a public workflow or packet bridge |
 | `package_results` | canonical atlas manifest, prepare manifest, Block 0 calibration manifest, output root; optional Block 1 packet input | `task_a_result_packet_manifest.json`, `task_a_result_packet_index.csv`, `RESULTS_INDEX.md`, layer manifests/review indexes, and mirrored atlas/Block 0 calibration files | packet-local only | Does not interpret biology, re-run large experiments, fabricate missing result surfaces, copy raw Block 0 fit cache by default, or package Block 3 into the Step 3 canonical packet |
 | `write_semisynthetic_artifacts` | output root, manifest filename, patient count, seed | semisynthetic manifest CSV, `task_a_semisynthetic_contract.json` | `contract_passed` | Does not run the real-data graph |
-| `stride_adapter` helpers | Stage 0 h5ad/AnnData, config bundle | mapping summaries, family-sliced observations, dry-run rows | helper only | Does not touch `src/stride/` semantics |
+| `stride_adapter` helpers | Stage 0 h5ad/AnnData, config bundle | mapping summaries, family-sliced observations, pp-ready pair AnnData, dry-run rows | helper only | Does not touch `src/stride/` semantics |
 
 ## Layout
 
@@ -287,9 +291,11 @@ Before the next Block 1 coding round, two review notes must be completed:
 
 ## Deferred surfaces
 
-- Task A Block 0/1 call canonical `fit_stride(...)`.
+- Task A Block 0/1 real fitting migrates through the Task A adapter to
+  canonical `stride.tl.fit(...)`.
 - Standalone bridge-expert APIs remain deferred.
 - New public STRIDE core APIs require a separate contract update.
+- Block 3 reference/ablation migration remains deferred.
 
 ## Examples
 

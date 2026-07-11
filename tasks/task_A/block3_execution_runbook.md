@@ -49,7 +49,7 @@ Block3b internal implementation decisions:
   real train TC-IM endpoints, applies geometry-gated residual coupling with
   `tau=2.0`, mixes the medoid and sampled individual template with
   `lambda_individual=0.10`, and generates source/target FOVs with `eta=0.3`.
-- `stride_reference` must call the formal `fit_stride(...)` frozen reference
+- `stride_reference` must call the formal `stride.tl.fit(...)` frozen reference
   configuration and emit native fitted `A/d/e`. The Task A adapter may only
   convert Block 3 inputs, resolve source/target endpoint comparison evidence
   blocks, and instantiate the comparison plan, including valid domain strata,
@@ -62,7 +62,7 @@ Block3b internal implementation decisions:
   routes, or non-`ok` optimizer statuses are not successful `stride_reference`
   full-objective fits.
 - Internal Block 3 `stride_reference` should preserve compact successful-fit
-  provenance if it is emitted by `fit_stride(...)`. The runbook does not
+  provenance if it is emitted by `stride.tl.fit(...)`. The runbook does not
   require status/failure audit expansion or per-evidence-block provenance
   records.
 - `balanced_ot_baseline`, `uot_baseline`, `partial_ot_baseline`, and
@@ -132,6 +132,11 @@ Block3b internal implementation decisions:
 
 Block3c internal implementation decisions:
 
+- The `3C` design remains frozen, but the current public estimator has no
+  executable consistency, geometry, or recurrence ablation hook. Each `3C`
+  semantic command therefore writes a structured deferred/unsupported status
+  before Stage 0 loading or fitting. It must not emit fabricated raw/review
+  metrics, copy the reference fit, or perform post-hoc masking.
 - The core STRIDE internal ablation set is restricted to `consistency`,
   `geometry`, and `recurrence`.
 - Under the current frozen numbering, `3C-1` is `consistency_ablation`, `3C-2`
