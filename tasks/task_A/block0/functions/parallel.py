@@ -6,12 +6,16 @@ import time
 from collections.abc import Mapping
 from dataclasses import dataclass
 
-from .observations import (
-    Block0ObservationBundle,
-    build_null_tc_im_observations,
+from anndata import AnnData
+
+from stride._schema import STRIDE_FOV_OBSERVATIONS_KEY, STRIDE_UNS_KEY
+from stride.errors import ContractError
+
+from .ann_data import build_null_tc_im_adata
+from .permutation import (
+    build_domain_label_permutation_assignments_from_fov_metadata,
 )
-from .permutation import build_domain_label_permutation_assignments
-from .progress import fit_warning_summary
+from .progress import fit_runtime_summary, fit_warning_summary
 from .schemas import FIT_LABEL_NULL, Block0FitRecord
 from .stride_fit import extract_block0_fit_records, fit_block0_family
 
@@ -30,7 +34,8 @@ class Block0NullFitResult:
     permutation_index: int
     records: tuple[Block0FitRecord, ...]
     warning_summary: Mapping[str, object]
-    null_bundle_build_seconds: float
+    runtime_summary: Mapping[str, object]
+    null_adata_build_seconds: float
     null_fit_extract_seconds: float
 
 
@@ -63,38 +68,38 @@ def configure_worker_threads(worker_cpu_threads: int) -> None:
 def fit_block0_null_permutation(
     job: Block0NullFitJob,
     *,
-    real_bundle: Block0ObservationBundle,
+    real_adata: AnnData,
     run_config: object,
     config_bundle: object,
-    state_basis: object,
     device: object | None = None,
 ) -> Block0NullFitResult:
-    """Build one null bundle, run full STRIDE, and return extracted records."""
+    """Build one null AnnData, run full STRIDE, and return extracted records."""
     permutation_index = int(job.permutation_index)
     started = time.monotonic()
-    assignments = build_domain_label_permutation_assignments(
-        real_bundle.observations,
+    assignments = build_domain_label_permutation_assignments_from_fov_metadata(
+        _fov_metadata(real_adata),
         permutation_index=permutation_index,
         master_seed=run_config.master_seed,
     )
-    null_bundle = build_null_tc_im_observations(
-        real_bundle,
+    null_adata = build_null_tc_im_adata(
+        real_adata,
         assignments,
         permutation_index=permutation_index,
     )
-    null_bundle_build_seconds = max(0.0, time.monotonic() - started)
+    null_adata_build_seconds = max(0.0, time.monotonic() - started)
 
     started = time.monotonic()
     null_result = fit_block0_family(
-        null_bundle,
+        null_adata,
         config_bundle=config_bundle,
-        state_basis=state_basis,
+        state_basis=None,
         fit_label=FIT_LABEL_NULL,
         permutation_index=permutation_index,
         device=device,
     )
     records = extract_block0_fit_records(
         null_result,
+        source_adata=null_adata,
         fit_label=FIT_LABEL_NULL,
         permutation_index=permutation_index,
     )
@@ -103,9 +108,20 @@ def fit_block0_null_permutation(
         permutation_index=permutation_index,
         records=tuple(records),
         warning_summary=fit_warning_summary(null_result),
-        null_bundle_build_seconds=null_bundle_build_seconds,
+        runtime_summary=fit_runtime_summary(null_result),
+        null_adata_build_seconds=null_adata_build_seconds,
         null_fit_extract_seconds=null_fit_extract_seconds,
     )
+
+
+def _fov_metadata(adata: AnnData) -> object:
+    stride_uns = adata.uns.get(STRIDE_UNS_KEY)
+    if not isinstance(stride_uns, Mapping):
+        raise ContractError("Block 0 worker real AnnData is missing adata.uns['stride']")
+    fov_observations = stride_uns.get(STRIDE_FOV_OBSERVATIONS_KEY)
+    if not isinstance(fov_observations, Mapping):
+        raise ContractError("Block 0 worker real AnnData is missing FOV observations")
+    return fov_observations.get("metadata")
 
 
 __all__ = [

@@ -17,7 +17,6 @@ from pathlib import Path
 
 from stride.errors import ContractError
 
-
 BLOCK_NAME = "block0_calibration"
 EXECUTION_NAME = "block0_execution_cache"
 REAL_FAMILY = "TC-IM"
@@ -322,14 +321,13 @@ class Block0FitRecord:
             raise ContractError("Block0FitRecord currently requires fit_status='ok'")
         if self.fit_label == FIT_LABEL_REAL and self.permutation_index is not None:
             raise ContractError("Real Block0FitRecord must not carry permutation_index")
-        if self.fit_label == FIT_LABEL_NULL:
-            if (
-                self.permutation_index is None
-                or isinstance(self.permutation_index, bool)
-                or not isinstance(self.permutation_index, int)
-                or int(self.permutation_index) < 0
-            ):
-                raise ContractError("Null Block0FitRecord requires a non-negative permutation_index")
+        if self.fit_label == FIT_LABEL_NULL and (
+            self.permutation_index is None
+            or isinstance(self.permutation_index, bool)
+            or not isinstance(self.permutation_index, int)
+            or int(self.permutation_index) < 0
+        ):
+            raise ContractError("Null Block0FitRecord requires a non-negative permutation_index")
         for field_name in ("A", "d", "e", "source_burden", "d_weights", "e_weights"):
             if getattr(self, field_name) is None:
                 raise ContractError(f"Block0FitRecord.{field_name} must be present")

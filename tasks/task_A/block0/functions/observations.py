@@ -15,12 +15,12 @@ from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
 
-from stride import DatasetHandle
 from stride.errors import ContractError
-from stride.observation.contracts import FovObservation
 
 from ...config import TaskAConfigBundle
 from ...workflows.stride_adapter import (
+    TaskAFovRecord,
+    TaskAStage0Handle,
     build_task_a_family_observations,
     resolve_task_a_state_basis,
 )
@@ -44,7 +44,7 @@ class Block0ObservationBundle:
     """Observation bundle for one real or empirical-null Block 0 fit family."""
 
     label: str
-    observations: tuple[FovObservation, ...]
+    observations: tuple[TaskAFovRecord, ...]
     patient_ids: tuple[str, ...]
     permutation_index: int | None = None
     assignments: tuple[Block0DomainLabelPermutationAssignment, ...] = ()
@@ -64,9 +64,10 @@ class Block0ObservationBundle:
             raise ContractError(
                 f"Block 0 observation bundle has patients without observations: {missing_observations}"
             )
-        if self.label == FIT_LABEL_REAL:
-            if self.permutation_index is not None or self.assignments:
-                raise ContractError("Real Block 0 observations must not carry null assignment metadata")
+        if self.label == FIT_LABEL_REAL and (
+            self.permutation_index is not None or self.assignments
+        ):
+            raise ContractError("Real Block 0 observations must not carry null assignment metadata")
         if self.label == FIT_LABEL_NULL:
             if (
                 self.permutation_index is None
@@ -111,7 +112,7 @@ def resolve_block0_run_config(
 
 
 def build_real_tc_im_observations(
-    handle: DatasetHandle,
+    handle: TaskAStage0Handle,
     config_bundle: TaskAConfigBundle,
     *,
     patient_ids: Sequence[str] | None = None,
@@ -175,7 +176,7 @@ def _resolve_tc_im_family(config_bundle: TaskAConfigBundle):
 
 
 def _resolve_requested_patients(
-    handle: DatasetHandle,
+    handle: TaskAStage0Handle,
     patient_ids: Sequence[str] | None,
 ) -> tuple[str, ...] | None:
     if patient_ids is None:
@@ -222,7 +223,7 @@ def build_null_tc_im_observations(
             raise ContractError("Null Block 0 assignments must be unique per patient/FOV/original label")
         assignment_by_key[key] = assignment
 
-    null_observations: list[FovObservation] = []
+    null_observations: list[TaskAFovRecord] = []
     observed_keys: set[tuple[str, str, str]] = set()
     allowed_labels = {SOURCE_DOMAIN, TARGET_DOMAIN}
     for observation in real_observations.observations:

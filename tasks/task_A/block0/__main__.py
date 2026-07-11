@@ -11,6 +11,5 @@ from __future__ import annotations
 
 from .fit import main
 
-
 if __name__ == "__main__":
     main()
