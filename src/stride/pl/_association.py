@@ -12,6 +12,7 @@ from matplotlib.colors import Normalize
 from matplotlib.figure import Figure
 from matplotlib.lines import Line2D
 
+from stride._array_contracts import resolve_axis_labels, resolve_full_axis_order
 from stride.errors import ContractError
 
 from ._utils import (
@@ -298,12 +299,10 @@ def _resolve_state_order(
     state_order: Sequence[int] | None,
 ) -> tuple[int, ...]:
     """Resolve display state order as a full permutation."""
-    if state_order is None:
-        return tuple(range(n_states))
-    order = tuple(int(value) for value in state_order)
-    if sorted(order) != list(range(n_states)):
-        raise ContractError("state_order must be a complete permutation of 0..K-1")
-    return order
+    try:
+        return resolve_full_axis_order(n_states, state_order, name="state_order")
+    except ContractError as exc:
+        raise ContractError("state_order must be a complete permutation of 0..K-1") from exc
 
 
 def _resolve_state_labels(
@@ -311,12 +310,15 @@ def _resolve_state_labels(
     state_labels: Sequence[str] | None,
 ) -> tuple[str, ...]:
     """Resolve display labels for the shared state basis."""
-    if state_labels is None:
-        return tuple(f"C{index}" for index in range(n_states))
-    labels = tuple(str(label) for label in state_labels)
-    if len(labels) != n_states:
-        raise ContractError("state_labels length must match n_states")
-    return labels
+    try:
+        return resolve_axis_labels(
+            n_states,
+            state_labels,
+            name="state_labels",
+            prefix="C",
+        )
+    except ContractError as exc:
+        raise ContractError("state_labels length must match n_states") from exc
 
 
 def _q_value_size_level(q_value: float) -> int:

@@ -9,6 +9,11 @@ import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.figure import Figure
 
+from stride._array_contracts import (
+    as_finite_float_array,
+    resolve_axis_labels,
+    resolve_full_axis_order,
+)
 from stride.errors import ContractError
 from stride.tl import CohortResult, FitResult, RelationResult
 
@@ -290,13 +295,7 @@ def _default_augmented_figsize(n_relations: int, n_states: int) -> tuple[float, 
 
 def _as_array(value: Any, *, name: str) -> np.ndarray:
     """Convert a cohort field to a finite float numpy copy."""
-    try:
-        array = np.asarray(value, dtype=float)
-    except (TypeError, ValueError) as exc:
-        raise ContractError(f"CohortResult.{name} must be numeric") from exc
-    if not np.isfinite(array).all():
-        raise ContractError(f"CohortResult.{name} must contain only finite values")
-    return array.copy()
+    return as_finite_float_array(value, name=f"CohortResult.{name}").copy()
 
 
 def _resolve_state_order(
@@ -304,12 +303,10 @@ def _resolve_state_order(
     state_order: Sequence[int] | None = None,
 ) -> tuple[int, ...]:
     """Resolve the displayed state order without allowing state subsets."""
-    if state_order is None:
-        return tuple(range(n_states))
-    order = tuple(int(value) for value in state_order)
-    if sorted(order) != list(range(n_states)):
-        raise ContractError("state_order must be a complete permutation of 0..K-1")
-    return order
+    try:
+        return resolve_full_axis_order(n_states, state_order, name="state_order")
+    except ContractError as exc:
+        raise ContractError("state_order must be a complete permutation of 0..K-1") from exc
 
 
 def _resolve_state_labels(
@@ -317,9 +314,12 @@ def _resolve_state_labels(
     state_labels: Sequence[str] | None = None,
 ) -> tuple[str, ...]:
     """Resolve display labels for the shared K-state basis."""
-    if state_labels is None:
-        return tuple(f"C{index}" for index in range(n_states))
-    labels = tuple(str(label) for label in state_labels)
-    if len(labels) != n_states:
-        raise ContractError("state_labels length must match n_states")
-    return labels
+    try:
+        return resolve_axis_labels(
+            n_states,
+            state_labels,
+            name="state_labels",
+            prefix="C",
+        )
+    except ContractError as exc:
+        raise ContractError("state_labels length must match n_states") from exc
