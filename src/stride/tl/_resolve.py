@@ -106,21 +106,22 @@ def resolve_relation(
     )
     source_rows = tuple(int(i) for i in np.flatnonzero(source_mask.to_numpy()))
     target_rows = tuple(int(i) for i in np.flatnonzero(target_mask.to_numpy()))
+    patient_ids = metadata[OBS_PATIENT_KEY].astype(str).to_numpy(copy=False)
 
     source_rows_by_patient: dict[str, list[int]] = {}
     target_rows_by_patient: dict[str, list[int]] = {}
     for row in source_rows:
-        patient_id = str(metadata.iloc[row][OBS_PATIENT_KEY])
+        patient_id = patient_ids[row]
         source_rows_by_patient.setdefault(patient_id, []).append(row)
     for row in target_rows:
-        patient_id = str(metadata.iloc[row][OBS_PATIENT_KEY])
+        patient_id = patient_ids[row]
         target_rows_by_patient.setdefault(patient_id, []).append(row)
 
     patient_order: list[str] = []
     seen_patients: set[str] = set()
     selected_mask = source_mask | target_mask
     for row in np.flatnonzero(selected_mask.to_numpy()):
-        patient_id = str(metadata.iloc[int(row)][OBS_PATIENT_KEY])
+        patient_id = patient_ids[int(row)]
         if patient_id not in seen_patients:
             seen_patients.add(patient_id)
             patient_order.append(patient_id)
@@ -218,12 +219,14 @@ def _order_observations(
     row_tuple = tuple(int(row) for row in rows)
     if not row_tuple:
         return ()
+    fov_ids = metadata[OBS_FOV_KEY].astype(str).to_numpy(copy=False)
+    domain_labels = metadata[OBS_DOMAIN_KEY].astype(str).to_numpy(copy=False)
     return tuple(
         sorted(
             row_tuple,
             key=lambda row: (
-                str(metadata.iloc[row][OBS_FOV_KEY]),
-                str(metadata.iloc[row][OBS_DOMAIN_KEY]),
+                fov_ids[row],
+                domain_labels[row],
                 int(row),
             ),
         )
@@ -304,6 +307,8 @@ def _build_evidence_blocks(
     n_subbags = min(len(ordered_source_rows), len(ordered_target_rows))
     source_chunks = _partition_subbags(ordered_source_rows, n_subbags)
     target_chunks = _partition_subbags(ordered_target_rows, n_subbags)
+    fov_ids = metadata[OBS_FOV_KEY].astype(str).to_numpy(copy=False)
+    domain_labels = metadata[OBS_DOMAIN_KEY].astype(str).to_numpy(copy=False)
 
     blocks: list[EvidenceBlock] = []
     for subbag_index, (source_chunk, target_chunk) in enumerate(
@@ -320,18 +325,10 @@ def _build_evidence_blocks(
                     "block_construction_policy": BLOCK_CONSTRUCTION_POLICY,
                     "subbag_index": subbag_index,
                     "n_blocks_for_patient": n_subbags,
-                    "source_fov_ids": tuple(
-                        str(metadata.iloc[row][OBS_FOV_KEY]) for row in source_chunk
-                    ),
-                    "target_fov_ids": tuple(
-                        str(metadata.iloc[row][OBS_FOV_KEY]) for row in target_chunk
-                    ),
-                    "source_domain_labels": tuple(
-                        str(metadata.iloc[row][OBS_DOMAIN_KEY]) for row in source_chunk
-                    ),
-                    "target_domain_labels": tuple(
-                        str(metadata.iloc[row][OBS_DOMAIN_KEY]) for row in target_chunk
-                    ),
+                    "source_fov_ids": tuple(fov_ids[row] for row in source_chunk),
+                    "target_fov_ids": tuple(fov_ids[row] for row in target_chunk),
+                    "source_domain_labels": tuple(domain_labels[row] for row in source_chunk),
+                    "target_domain_labels": tuple(domain_labels[row] for row in target_chunk),
                     "source_row_indices": source_chunk,
                     "target_row_indices": target_chunk,
                 },

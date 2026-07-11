@@ -50,20 +50,28 @@ from typing import Any
 
 import numpy as np
 import pandas as pd
+from anndata import AnnData
 
+from stride._schema import (
+    STRIDE_CONFIG_KEY,
+    STRIDE_FOV_OBSERVATIONS_KEY,
+    STRIDE_RELATION_IDS_KEY,
+    STRIDE_RELATIONS_KEY,
+    STRIDE_UNS_KEY,
+    UNS_COST_MATRIX_KEY,
+    UNS_COST_SCALE_KEY,
+    UNS_STATE_CENTROIDS_KEY,
+)
 from stride.errors import ContractError
-from stride.geometry.state_geometry import build_state_geometry
-from stride.observation import FovObservation
-from stride.optimize import TrainConfig
-from stride.settings import RuntimeSettings
-from stride.workflows.config import TaskConfig
-from stride.workflows.fit_stride import run_stride_fit
+from stride.pp import validate_ready
+from stride.tl import fit as stride_tl_fit
 
 from ..config import load_task_a_config_bundle
 from ..contracts import SCAFFOLD_ACTIVE_STATE
+from ..workflows.fit_adapter import extract_task_a_relations, fit_task_a_pair
 from ..workflows.stride_adapter import (
-    build_task_a_family_observations,
     load_task_a_dataset_handle,
+    prepare_task_a_pair_adata,
     resolve_task_a_state_basis,
 )
 from .analysis import derive_A_d_e_from_plan
@@ -77,9 +85,6 @@ from .baselines import (
 from .calibration import UOTCalibrationResult, calibrate_uot_lambda
 from .contracts import (
     Block3ConditionSummaryRow,
-    Block3GeneratorObjectScoreRow,
-    Block3GeneratorReviewRow,
-    Block3GeneratorStabilityRow,
     Block3MetricName,
     Block3PatientMetricRow,
     Block3SectionReviewRow,
@@ -89,7 +94,6 @@ from .contracts import (
     MetricRole,
     MetricStatus,
     MetricValue,
-    ValidationObjectId,
     make_metric_value,
 )
 from .multifov_generator import (
@@ -109,6 +113,14 @@ from .registry import (
     get_subexperiment_spec,
     resolve_block3_experiment_name,
 )
+
+
+@dataclass(frozen=True)
+class RuntimeSettings:
+    """Task-local comparator runtime settings for retained UOT baselines."""
+
+    uot_backend: str = "numpy"
+    device: str | None = None
 
 # Frozen boundary flag mirrored into all internal Block 3 manifests.
 BLOCK3_PACKET_BRIDGE_POLICY = "deferred_non_authority_pending_clean_bridge_spec"
@@ -172,6 +184,19 @@ class Block3InternalExecutionResult:
 
 
 @dataclass(frozen=True)
+class Block3DeferredExecutionResult:
+    """Structured status for a recognized but currently unsupported ablation."""
+
+    subexperiment_id: str
+    experiment_name: str
+    requested_ablation: str
+    fit_surface: str
+    reason_code: str
+    frozen_contract_reference: str
+    status_path: Path
+
+
+@dataclass(frozen=True)
 class Block3RuntimeControls:
     """Optional runtime controls for internal Block 3 method execution."""
 
@@ -208,9 +233,9 @@ class Block3CohortInputs:
     master_seed: int
     state_ids: tuple[int, ...]
     state_basis: Any
-    geometry: Any
     identity_vectors: np.ndarray
     cost_matrix: np.ndarray
+    cost_scale: float
     source_domain: str
     target_domain: str
     patient_source_fovs: dict[str, np.ndarray]
@@ -831,17 +856,19 @@ def _build_block3_cohort_inputs_from_stage0(
     handle = load_task_a_dataset_handle(resolved_stage0_h5ad)
     state_basis = resolve_task_a_state_basis(handle)
     state_ids = tuple(int(state_id) for state_id in state_basis.resolved_state_ids)
-    observations = build_task_a_family_observations(
-        handle,
+    pair_adata = prepare_task_a_pair_adata(
+        resolved_stage0_h5ad,
         family_spec,
-        state_basis=state_basis,
-        mass_mode=config_bundle.data.mass_mode,
-        require_complete_patients=True,
+        backed=False,
+        copy_adata=True,
     )
     patient_vectors: dict[str, dict[str, list[np.ndarray]]] = {}
-    for observation in observations:
-        patient_vectors.setdefault(observation.patient_id, {}).setdefault(str(observation.timepoint), []).append(
-            np.asarray(observation.community_composition, dtype=float)
+    fov_payload = pair_adata.uns[STRIDE_UNS_KEY][STRIDE_FOV_OBSERVATIONS_KEY]
+    fov_metadata = fov_payload["metadata"]
+    fov_composition = np.asarray(fov_payload["community_composition"], dtype=float)
+    for row_index, row in fov_metadata.reset_index(drop=True).iterrows():
+        patient_vectors.setdefault(str(row["patient_id"]), {}).setdefault(str(row["timepoint"]), []).append(
+            np.asarray(fov_composition[int(row_index)], dtype=float)
         )
     patient_source_fovs: dict[str, np.ndarray] = {}
     patient_target_fovs: dict[str, np.ndarray] = {}
@@ -865,11 +892,6 @@ def _build_block3_cohort_inputs_from_stage0(
 
     identity_vectors = _derive_identity_vectors_from_stage0(handle, state_ids=state_ids)
     identity_cost = _build_identity_cost_components(identity_vectors)
-    geometry = build_state_geometry(
-        cost_matrix=identity_cost.C_raw,
-        cost_scale=identity_cost.s_C,
-        state_ids=state_ids,
-    )
     return Block3CohortInputs(
         stage0_h5ad=resolved_stage0_h5ad,
         config_path=resolved_config_path,
@@ -877,9 +899,9 @@ def _build_block3_cohort_inputs_from_stage0(
         master_seed=int(config_bundle.block3.master_seed),
         state_ids=state_ids,
         state_basis=state_basis,
-        geometry=geometry,
         identity_vectors=identity_vectors,
         cost_matrix=identity_cost.C_norm,
+        cost_scale=1.0,
         source_domain=family_spec.source_domain,
         target_domain=family_spec.target_domain,
         patient_source_fovs=patient_source_fovs,
@@ -999,60 +1021,99 @@ def _build_generator_reruns(
     return tuple(reruns)
 
 
-def _make_observations_for_truths(truths: list[Block3PatientTruth]) -> tuple[FovObservation, ...]:
-    """Expose one truth set to STRIDE as generated multi-FOV observations."""
+def _make_adata_for_truths(
+    truths: list[Block3PatientTruth],
+    *,
+    cohort_inputs: Block3CohortInputs,
+) -> AnnData:
+    """Expose one truth set to `stride.tl.fit` as pp-ready synthetic AnnData."""
 
-    observations: list[FovObservation] = []
+    metadata_rows: list[dict[str, str]] = []
+    composition_rows: list[np.ndarray] = []
+
+    def add_observation(
+        *,
+        patient_id: str,
+        timepoint: str,
+        fov_id: str,
+        domain_label: str,
+        composition: np.ndarray,
+    ) -> None:
+        vector = np.asarray(composition, dtype=float)
+        if vector.shape != (len(cohort_inputs.state_ids),):
+            raise ContractError("Block 3 synthetic observation vector does not match state axis")
+        metadata_rows.append(
+            {
+                "patient_id": str(patient_id),
+                "timepoint": str(timepoint),
+                "fov_id": str(fov_id),
+                "domain_label": str(domain_label),
+            }
+        )
+        composition_rows.append(vector.copy())
+
     for truth in truths:
         if truth.source_fovs is None or truth.target_fovs is None:
-            observations.append(
-                FovObservation(
-                    patient_id=truth.patient_id,
-                    timepoint="pre",
-                    fov_id=f"{truth.rerun_id}_{truth.patient_id}_pre",
-                    domain_label="TC",
-                    community_composition=np.asarray(truth.x, dtype=float),
-                    mass=1.0,
-                    mass_mode="uniform",
-                )
+            add_observation(
+                patient_id=truth.patient_id,
+                timepoint="pre",
+                fov_id=f"{truth.rerun_id}_{truth.patient_id}_pre",
+                domain_label="TC",
+                composition=np.asarray(truth.x, dtype=float),
             )
-            observations.append(
-                FovObservation(
-                    patient_id=truth.patient_id,
-                    timepoint="post",
-                    fov_id=f"{truth.rerun_id}_{truth.patient_id}_post",
-                    domain_label="IM",
-                    community_composition=np.asarray(truth.y, dtype=float),
-                    mass=1.0,
-                    mass_mode="uniform",
-                )
+            add_observation(
+                patient_id=truth.patient_id,
+                timepoint="post",
+                fov_id=f"{truth.rerun_id}_{truth.patient_id}_post",
+                domain_label="IM",
+                composition=np.asarray(truth.y, dtype=float),
             )
             continue
         for index, row in enumerate(np.asarray(truth.source_fovs, dtype=float)):
-            observations.append(
-                FovObservation(
-                    patient_id=truth.patient_id,
-                    timepoint="pre",
-                    fov_id=f"{truth.rerun_id}_{truth.patient_id}_pre_fov{index + 1:02d}",
-                    domain_label="TC",
-                    community_composition=row,
-                    mass=1.0,
-                    mass_mode="uniform",
-                )
+            add_observation(
+                patient_id=truth.patient_id,
+                timepoint="pre",
+                fov_id=f"{truth.rerun_id}_{truth.patient_id}_pre_fov{index + 1:02d}",
+                domain_label="TC",
+                composition=row,
             )
         for index, row in enumerate(np.asarray(truth.target_fovs, dtype=float)):
-            observations.append(
-                FovObservation(
-                    patient_id=truth.patient_id,
-                    timepoint="post",
-                    fov_id=f"{truth.rerun_id}_{truth.patient_id}_post_fov{index + 1:02d}",
-                    domain_label="IM",
-                    community_composition=row,
-                    mass=1.0,
-                    mass_mode="uniform",
-                )
+            add_observation(
+                patient_id=truth.patient_id,
+                timepoint="post",
+                fov_id=f"{truth.rerun_id}_{truth.patient_id}_post_fov{index + 1:02d}",
+                domain_label="IM",
+                composition=row,
             )
-    return tuple(observations)
+    if not metadata_rows:
+        raise ContractError("Block 3 synthetic STRIDE fit requires at least one truth")
+
+    metadata = pd.DataFrame(
+        metadata_rows,
+        columns=["patient_id", "timepoint", "fov_id", "domain_label"],
+    )
+    composition = np.vstack(composition_rows).astype(float, copy=False)
+    adata = AnnData(X=np.zeros((1, 1), dtype=float))
+    adata.uns[STRIDE_UNS_KEY] = {
+        STRIDE_CONFIG_KEY: {
+            "source": "pre",
+            "target": "post",
+            "time_order": ["pre", "post"],
+            "community_mode": "fraction",
+            "n_states": int(len(cohort_inputs.state_ids)),
+            STRIDE_RELATIONS_KEY: np.asarray([["TC", "IM"]], dtype=object),
+            STRIDE_RELATION_IDS_KEY: ["pre_TC_to_post_IM"],
+        },
+        STRIDE_FOV_OBSERVATIONS_KEY: {
+            "community_composition": composition,
+            "metadata": metadata,
+        },
+    }
+    adata.uns[UNS_COST_MATRIX_KEY] = np.asarray(cohort_inputs.cost_matrix, dtype=float)
+    adata.uns[UNS_COST_SCALE_KEY] = float(cohort_inputs.cost_scale)
+    adata.uns[UNS_STATE_CENTROIDS_KEY] = np.asarray(cohort_inputs.identity_vectors, dtype=float)
+    validate_ready(adata)
+    return adata
 
 
 def _fit_provenance_payload(provenance: object | None) -> dict[str, Any] | None:
@@ -1070,89 +1131,24 @@ def _fit_provenance_payload(provenance: object | None) -> dict[str, Any] | None:
 def _compact_stride_fit_metadata(
     *,
     fit_result: object,
-    patient_result: object,
+    patient_id: str,
     ablation_mode: str,
 ) -> dict[str, object]:
     """Build Task A's per-patient compact STRIDE fit status/provenance summary."""
 
-    metadata = dict(getattr(fit_result, "metadata", {}) or {})
-    diagnostics = dict(getattr(fit_result, "diagnostics", {}) or {})
-    summaries = dict(getattr(fit_result, "summaries", {}) or {})
-    patient_diagnostics = dict(getattr(patient_result, "diagnostics", {}) or {})
-    patient_audit = getattr(patient_result, "audit", None)
-    patient_audit_metadata = dict(getattr(patient_audit, "metadata", {}) or {})
     provenance = _fit_provenance_payload(getattr(fit_result, "provenance", None))
 
     summary: dict[str, object] = {
-        "implementation_tier": str(
-            getattr(
-                patient_result,
-                "implementation_tier",
-                getattr(fit_result, "implementation_tier", "unknown"),
-            )
-        ),
-        "fit_status": str(
-            getattr(patient_result, "fit_status", getattr(fit_result, "fit_status", "unknown"))
-        ),
+        "implementation_tier": "canonical_stride_tl",
+        "fit_status": "ok",
+        "fit_surface": "stride.tl.fit",
+        "patient_id": str(patient_id),
     }
-    optimizer_status = (
-        metadata.get("optimizer_status")
-        or diagnostics.get("optimizer_status")
-        or summaries.get("optimizer_status")
-        or patient_diagnostics.get("optimizer_status")
-        or patient_audit_metadata.get("optimizer_status")
-    )
-    if optimizer_status is not None:
-        summary["optimizer_status"] = str(optimizer_status)
-    completion_reason = diagnostics.get("completion_reason")
-    if completion_reason is not None:
-        summary["optimizer_completion_reason"] = str(completion_reason)
-
-    for reason_key in ("defer_reason", "failure_reason", "message"):
-        reason = (
-            patient_diagnostics.get(reason_key)
-            or patient_audit_metadata.get(reason_key)
-            or diagnostics.get(reason_key)
-        )
-        if reason is not None:
-            summary[reason_key] = str(reason)
-
     if provenance is not None:
-        observation_discrepancy = dict(provenance.get("observation_discrepancy", {}) or {})
-        state_geometry = dict(provenance.get("state_geometry", {}) or {})
-        comparison_plan = dict(provenance.get("observation_comparison_plan", {}) or {})
-        summary.update(
-            {
-                "provenance_schema_version": str(provenance["provenance_schema_version"]),
-                "observation_discrepancy_operator_version": str(
-                    observation_discrepancy["operator_version"]
-                ),
-                "state_geometry_s_C": float(state_geometry["s_C"]),
-                "n_evidence_blocks": int(comparison_plan["n_evidence_blocks"]),
-                "post_reconstruction_form": str(provenance["post_reconstruction_form"]),
-            }
-        )
-        if "ablation_mode" in provenance:
-            summary["ablation_mode"] = str(provenance["ablation_mode"])
-        if "ablation_term_handling" in provenance:
-            summary["ablation_term_handling"] = str(provenance["ablation_term_handling"])
-        if "ablation_denominator_policy" in provenance:
-            summary["ablation_denominator_policy"] = str(
-                provenance["ablation_denominator_policy"]
-            )
-    elif "n_evidence_blocks" in metadata:
-        summary["n_evidence_blocks"] = int(metadata["n_evidence_blocks"])
-
-    if ablation_mode != "none":
-        summary.setdefault("ablation_mode", ablation_mode)
-        summary.setdefault("ablation_term_handling", "zero_weight")
-        summary.setdefault(
-            "ablation_denominator_policy",
-            "fixed_denominator_no_reweighting",
-        )
-        ablation_status = metadata.get("ablation_status") or diagnostics.get("ablation_status")
-        if ablation_status is not None:
-            summary["ablation_status"] = str(ablation_status)
+        summary["provenance_schema_version"] = str(provenance.get("result_schema_version", "stride_tl_result_v1"))
+        summary["n_relations"] = int(provenance.get("n_relations", 1))
+        summary["post_reconstruction_form"] = "normalize(q_minus @ A + e)"
+    summary["ablation_mode"] = ablation_mode
     return summary
 
 
@@ -1166,45 +1162,40 @@ def _run_stride_method(
     """Run canonical STRIDE or one STRIDE ablation on generated FOV inputs."""
 
     resolved_runtime = runtime or Block3RuntimeControls()
-    fit_result = run_stride_fit(
-        _make_observations_for_truths(truths),
-        task_config=TaskConfig(
-            source="pre",
-            target="post",
-            K=len(cohort_inputs.state_ids),
-            timepoint_order=("pre", "post"),
-        ),
-        train_config=TrainConfig(
-            ablation_mode=ablation_mode,
-            device=resolved_runtime.device,
-        ),
-        state_basis=cohort_inputs.state_basis,
-        geometry=cohort_inputs.geometry,
+    if ablation_mode != "none":
+        raise ContractError(
+            "Block 3C ablation refit arms require a live stride.tl.fit ablation hook; "
+            f"current stride.tl.fit exposes no ablation parameter for {ablation_mode!r}."
+        )
+    fit_result = fit_task_a_pair(
+        _make_adata_for_truths(truths, cohort_inputs=cohort_inputs),
+        device=resolved_runtime.device,
+        estimator=stride_tl_fit,
     )
+    relations = extract_task_a_relations(fit_result)
+    if len(relations) != 1:
+        raise ContractError("Block 3 STRIDE reference fit expects exactly one realized relation")
+    relation = relations[0]
+    patient_ids = relation.patient_ids
+    A, d, e = relation.A, relation.d, relation.e
+    truth_by_patient = {truth.patient_id: truth for truth in truths}
     outputs: dict[str, Block3MethodOutput] = {}
-    for patient_result in fit_result.patient_results:
+    for patient_index, patient_id in enumerate(patient_ids):
+        truth = truth_by_patient[patient_id]
         metadata = _compact_stride_fit_metadata(
             fit_result=fit_result,
-            patient_result=patient_result,
+            patient_id=patient_id,
             ablation_mode=ablation_mode,
         )
         metadata["requested_device"] = resolved_runtime.requested_device_label()
-        outputs[patient_result.patient_id] = Block3MethodOutput(
-            patient_id=patient_result.patient_id,
-            fit_status=patient_result.fit_status,
-            A=(np.asarray(patient_result.A, dtype=float) if patient_result.A is not None else None),
-            d=(np.asarray(patient_result.d, dtype=float) if patient_result.d is not None else None),
-            e=(np.asarray(patient_result.e, dtype=float) if patient_result.e is not None else None),
-            mu_minus=(
-                np.asarray(patient_result.mu_minus, dtype=float)
-                if patient_result.mu_minus is not None
-                else None
-            ),
-            mu_plus=(
-                np.asarray(patient_result.mu_plus, dtype=float)
-                if patient_result.mu_plus is not None
-                else None
-            ),
+        outputs[patient_id] = Block3MethodOutput(
+            patient_id=patient_id,
+            fit_status="ok",
+            A=A[patient_index].copy(),
+            d=d[patient_index].copy(),
+            e=e[patient_index].copy(),
+            mu_minus=np.asarray(truth.x, dtype=float).copy(),
+            mu_plus=np.asarray(truth.y, dtype=float).copy(),
             metadata=metadata,
         )
     return outputs
@@ -1989,10 +1980,18 @@ def execute_internal_block3_experiment(
     device: object | None = None,
     max_reruns: int | None = None,
     n_test: int | None = None,
-) -> Block3InternalExecutionResult:
+) -> Block3InternalExecutionResult | Block3DeferredExecutionResult:
     """Execute one semantic Block 3 experiment from Stage0 h5ad plus config."""
 
     executable_spec = resolve_block3_experiment_name(experiment_name)
+    deferred_ablation = _deferred_ablation_name(executable_spec.subexperiment_id)
+    if deferred_ablation is not None:
+        return _write_block3_deferred_status(
+            output_dir=output_dir,
+            subexperiment_id=executable_spec.subexperiment_id,
+            experiment_name=experiment_name,
+            requested_ablation=deferred_ablation,
+        )
     runtime = Block3RuntimeControls(device=device)
     n_generator_reruns = _N_GENERATOR_RERUNS if max_reruns is None else int(max_reruns)
     n_test_patients = _N_TEST_PATIENTS if n_test is None else int(n_test)
@@ -2027,8 +2026,49 @@ def execute_internal_block3_experiment(
     )
 
 
+def _deferred_ablation_name(subexperiment_id: str) -> str | None:
+    return {
+        Block3SubexperimentId.CONSISTENCY_ABLATION.value: "subbag_consistency",
+        Block3SubexperimentId.GEOMETRY_ABLATION.value: "geometry",
+        Block3SubexperimentId.RECURRENCE_ABLATION.value: "recurrence",
+    }.get(subexperiment_id)
+
+
+def _write_block3_deferred_status(
+    *,
+    output_dir: str | Path,
+    subexperiment_id: str,
+    experiment_name: str,
+    requested_ablation: str,
+) -> Block3DeferredExecutionResult:
+    resolved_output_dir = Path(output_dir).expanduser().resolve()
+    resolved_output_dir.mkdir(parents=True, exist_ok=True)
+    status_path = resolved_output_dir / f"{experiment_name}.deferred.json"
+    payload = {
+        "status": "deferred",
+        "supported": False,
+        "experiment_name": experiment_name,
+        "subexperiment_id": subexperiment_id,
+        "requested_ablation": requested_ablation,
+        "fit_surface": "stride.tl.fit",
+        "reason_code": "public_estimator_ablation_hook_unavailable",
+        "frozen_contract_reference": "docs/task_A/block3/scientific_contract.md §4.4",
+    }
+    status_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
+    return Block3DeferredExecutionResult(
+        subexperiment_id=subexperiment_id,
+        experiment_name=experiment_name,
+        requested_ablation=requested_ablation,
+        fit_surface="stride.tl.fit",
+        reason_code="public_estimator_ablation_hook_unavailable",
+        frozen_contract_reference="docs/task_A/block3/scientific_contract.md §4.4",
+        status_path=status_path,
+    )
+
+
 __all__ = [
     "BLOCK3_PACKET_BRIDGE_POLICY",
+    "Block3DeferredExecutionResult",
     "Block3InternalExecutionResult",
     "Block3RuntimeControls",
     "Block3Stage0ExecutionPlan",

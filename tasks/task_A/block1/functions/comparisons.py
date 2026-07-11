@@ -8,11 +8,10 @@ import numpy as np
 import pandas as pd
 
 from stride.errors import ContractError
-from stride.outputs.fit_export import NativeRelationExport
 
+from .native_export import Block1RelationExport
 from .schemas import COHORT_RELATION_COMPARISON_COLUMNS
 from .summaries import FAMILY_SUMMARY_SCALES
-
 
 CONFIRMATORY_FAMILY_COMPARISON_FILENAME = "block1_confirmatory_family_comparison.csv"
 DESCRIPTIVE_SOURCE_COMMUNITY_COMPARISON_FILENAME = (
@@ -622,7 +621,7 @@ def build_block1_comparison_frames(
     return family_frame, source_frame, target_frame
 
 
-def _resolve_cohort_record(export: NativeRelationExport):
+def _resolve_cohort_record(export: Block1RelationExport):
     realized = [record for record in export.cohort_records if record.is_ok]
     if not realized:
         return None
@@ -639,7 +638,7 @@ def _cohort_value(array: np.ndarray | None, *indices: int) -> float:
 
 def build_block1_cohort_relation_comparison_frame(
     *,
-    native_exports: Mapping[str, NativeRelationExport],
+    native_exports: Mapping[str, Block1RelationExport],
 ) -> pd.DataFrame:
     """Build the cohort-level TC-IM versus TC-PT relation comparison frame."""
     left_export = native_exports.get(LEFT_PAIR_FAMILY)

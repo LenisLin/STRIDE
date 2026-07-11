@@ -109,7 +109,12 @@ def _build_expected_fov_observations(
     state_id: np.ndarray,
     n_states: int,
 ) -> dict[str, object]:
-    """Aggregate cell state assignments into FOV-level fractions."""
+    """Aggregate cells into the canonical equal-mass FOV observation points.
+
+    Each output row is a within-FOV state fraction on the shared K-state axis.
+    Cell count affects only that row's composition; it does not become an FOV
+    mass, so downstream bags continue to treat observed FOVs equally.
+    """
     missing = [column for column in _FOV_METADATA_COLUMNS if column not in adata.obs]
     if missing:
         raise ContractError(
@@ -119,38 +124,23 @@ def _build_expected_fov_observations(
     obs = _validate_metadata_frame(adata.obs.loc[:, _FOV_METADATA_COLUMNS].copy())
     obs[OBS_STATE_ID_KEY] = state_id
     grouped = obs.groupby(_FOV_GROUP_KEYS, sort=True, observed=True, dropna=False)
-
-    metadata_rows: list[dict[str, object]] = []
-    composition_rows: list[np.ndarray] = []
-    for group_key, group in grouped:
-        domain_values = pd.unique(group[OBS_DOMAIN_KEY])
-        if len(domain_values) != 1:
-            raise ContractError(
-                "each patient_id/timepoint/fov_id group must map to exactly one "
-                "domain_label"
-            )
-        counts = np.bincount(
-            group[OBS_STATE_ID_KEY].to_numpy(dtype=int, copy=False),
-            minlength=n_states,
+    domain_counts = grouped[OBS_DOMAIN_KEY].nunique(dropna=False)
+    if (domain_counts != 1).any():
+        raise ContractError(
+            "each patient_id/timepoint/fov_id group must map to exactly one domain_label"
         )
-        total = int(counts.sum())
-        if total <= 0:
-            raise ContractError("FOV observation groups must contain at least one cell")
-        patient_id, timepoint, fov_id = group_key
-        metadata_rows.append(
-            {
-                OBS_PATIENT_KEY: patient_id,
-                OBS_TIMEPOINT_KEY: timepoint,
-                OBS_FOV_KEY: fov_id,
-                OBS_DOMAIN_KEY: domain_values[0],
-            }
-        )
-        composition_rows.append(counts.astype(float, copy=False) / float(total))
 
-    metadata = _validate_metadata_frame(
-        pd.DataFrame(metadata_rows, columns=_FOV_METADATA_COLUMNS)
-    )
-    matrix = np.vstack(composition_rows) if composition_rows else np.zeros((0, n_states))
+    metadata = grouped[_FOV_METADATA_COLUMNS].first().reset_index(drop=True)
+    metadata = _validate_metadata_frame(metadata)
+    group_codes = grouped.ngroup().to_numpy(dtype=int, copy=False)
+    matrix = np.zeros((metadata.shape[0], n_states), dtype=float)
+    # Vectorized cell counting preserves the lexicographically sorted group
+    # order produced by `groupby(sort=True)` and the original state-id axis.
+    np.add.at(matrix, (group_codes, state_id), 1.0)
+    totals = matrix.sum(axis=1)
+    if (totals <= 0.0).any():
+        raise ContractError("FOV observation groups must contain at least one cell")
+    matrix /= totals[:, None]
     matrix = _validate_community_composition(
         matrix,
         n_fov=metadata.shape[0],

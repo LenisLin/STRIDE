@@ -158,9 +158,9 @@ def _surface_lineage_summary(
             "fit_surface": str(prepare_payload.get("fit_surface", "")),
         },
         "block0": {
-            "implementation_tier": "canonical_full",
+            "implementation_tier": "canonical_stride_tl",
             "evidence_lineage": BLOCK0_CALIBRATION_CONTEXT,
-            "fit_surface": "fit_stride",
+            "fit_surface": "stride.tl.fit",
             "analysis_spec_version": str(block0_payload["analysis_spec_version"]),
             "readiness_status": str(block0_payload["readiness_status"]),
             "real_family": str(block0_payload["real_family"]),

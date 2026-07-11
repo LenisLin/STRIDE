@@ -10,80 +10,62 @@ and `tasks/task_A/contracts/artifact_contracts.md`.
 """
 from __future__ import annotations
 
-from stride.api.fit import fit_stride
+import numpy as np
+from anndata import AnnData
+
 from stride.errors import ContractError
-from stride.outputs.fit_result import STRIDEFitResult
+from stride.tl import FitResult, fit
 
 from ...config import TaskAConfigBundle
+from ...workflows.fit_adapter import (
+    extract_task_a_relations,
+    fit_task_a_pair,
+    require_task_a_fit_support,
+)
+from .ann_data import derive_patient_side_burdens
 from .observations import Block0ObservationBundle
 from .schemas import (
     FIT_LABEL_NULL,
     FIT_LABEL_REAL,
-    SOURCE_DOMAIN,
-    TARGET_DOMAIN,
     Block0FitRecord,
 )
 
 
-def _state_basis_n_states(state_basis: object) -> int:
-    n_states = getattr(state_basis, "n_states", None)
-    if n_states is None:
-        raise ContractError("Block 0 fit requires state_basis.n_states for the public fit_stride API")
-    if isinstance(n_states, bool):
-        raise ContractError("Block 0 fit requires a positive state_basis.n_states")
-    try:
-        resolved = int(n_states)
-    except (TypeError, ValueError) as exc:
-        raise ContractError("Block 0 fit requires an integer state_basis.n_states") from exc
-    if resolved <= 0:
-        raise ContractError("Block 0 fit requires a positive state_basis.n_states")
-    return resolved
-
-
 def fit_block0_family(
-    observation_bundle: Block0ObservationBundle,
+    observation_bundle_or_adata: Block0ObservationBundle | AnnData,
     *,
     config_bundle: TaskAConfigBundle,
-    state_basis: object,
+    state_basis: object | None = None,
     fit_label: str,
     permutation_index: int | None = None,
     device: object | None = None,
-) -> STRIDEFitResult:
+) -> FitResult:
     """Run the canonical STRIDE fit surface for one real or null Block 0 bundle."""
-    if fit_label != observation_bundle.label:
-        raise ContractError("Block 0 fit_label must match the observation bundle label")
-    if fit_label == FIT_LABEL_REAL and permutation_index is not None:
-        raise ContractError("Real Block 0 fit must not carry permutation_index")
-    if fit_label == FIT_LABEL_NULL and permutation_index != observation_bundle.permutation_index:
-        raise ContractError("Null Block 0 fit permutation_index must match the observation bundle")
     if fit_label not in {FIT_LABEL_REAL, FIT_LABEL_NULL}:
         raise ContractError(f"Unsupported Block 0 fit_label: {fit_label!r}")
-    return fit_stride(
-        observation_bundle.observations,
-        source=SOURCE_DOMAIN,
-        target=TARGET_DOMAIN,
-        K=_state_basis_n_states(state_basis),
-        timepoint_order=(SOURCE_DOMAIN, TARGET_DOMAIN),
-        state_basis=state_basis,
-        device=device,
-    )
+    if fit_label == FIT_LABEL_REAL and permutation_index is not None:
+        raise ContractError("Real Block 0 fit must not carry permutation_index")
+    if fit_label == FIT_LABEL_NULL and permutation_index is None:
+        raise ContractError("Null Block 0 fit requires permutation_index")
+    if isinstance(observation_bundle_or_adata, AnnData):
+        return fit_task_a_pair(
+            observation_bundle_or_adata,
+            device=device,
+            estimator=fit,
+        )
+
+    raise ContractError("legacy Block0ObservationBundle fitting is retired in new adapter path")
 
 
-def require_all_patient_results_ok(result: STRIDEFitResult, *, family_label: str) -> STRIDEFitResult:
+def require_all_patient_results_ok(result: FitResult, *, family_label: str) -> FitResult:
     """Validate that a full-calibration fit is interpretable for every patient."""
-    if result.fit_status != "ok":
-        raise ContractError(f"Block 0 {family_label} fit_status must be 'ok'")
-    if result.implementation_tier != "canonical_full":
-        raise ContractError(f"Block 0 {family_label} fit must use canonical_full implementation")
-    non_ok = [patient.patient_id for patient in result.patient_results if patient.fit_status != "ok"]
-    if non_ok:
-        raise ContractError(f"Block 0 {family_label} has non-ok patient fits: {non_ok}")
-    return result
+    return require_task_a_fit_support(result, context=f"Block 0 {family_label}")
 
 
 def extract_block0_fit_records(
-    result: STRIDEFitResult,
+    result: FitResult,
     *,
+    source_adata: AnnData,
     fit_label: str,
     permutation_index: int | None = None,
 ) -> tuple[Block0FitRecord, ...]:
@@ -96,28 +78,44 @@ def extract_block0_fit_records(
     if fit_label not in {FIT_LABEL_REAL, FIT_LABEL_NULL}:
         raise ContractError(f"Unsupported Block 0 fit label: {fit_label!r}")
 
-    records: list[Block0FitRecord] = []
-    for patient_result in result.patient_results:
-        missing = tuple(
-            field_name
-            for field_name in ("A", "d", "e", "mu_minus", "mu_plus")
-            if getattr(patient_result, field_name) is None
+    relations = extract_task_a_relations(result)
+    if len(relations) != 1:
+        raise ContractError(
+            "Block 0 fit extraction requires exactly one realized relation; "
+            f"observed={tuple(relation.relation_id for relation in relations)}"
         )
-        if missing:
+    relation = relations[0]
+    patient_ids = relation.patient_ids
+    A, d, e = relation.A, relation.d, relation.e
+
+    burdens_by_patient = derive_patient_side_burdens(source_adata)
+    missing_burdens = tuple(patient_id for patient_id in patient_ids if patient_id not in burdens_by_patient)
+    if missing_burdens:
+        raise ContractError(
+            "Block 0 source AnnData lacks burden vectors for fitted patients: "
+            f"{missing_burdens}"
+        )
+
+    records: list[Block0FitRecord] = []
+    for patient_index, patient_id in enumerate(patient_ids):
+        source_burden, target_burden = burdens_by_patient[patient_id]
+        source_burden = np.asarray(source_burden, dtype=float)
+        target_burden = np.asarray(target_burden, dtype=float)
+        if source_burden.shape != (A.shape[1],) or target_burden.shape != (A.shape[1],):
             raise ContractError(
-                f"Block 0 patient {patient_result.patient_id!r} fit lacks required fields: {missing}"
+                f"Block 0 patient {patient_id!r} burden vectors must match the fitted K-state axis"
             )
         records.append(
             Block0FitRecord(
-                patient_id=str(patient_result.patient_id),
+                patient_id=patient_id,
                 fit_label=fit_label,
                 permutation_index=permutation_index,
-                A=patient_result.A,
-                d=patient_result.d,
-                e=patient_result.e,
-                source_burden=patient_result.mu_minus,
-                d_weights=patient_result.mu_minus,
-                e_weights=patient_result.mu_plus,
+                A=A[patient_index].copy(),
+                d=d[patient_index].copy(),
+                e=e[patient_index].copy(),
+                source_burden=source_burden.copy(),
+                d_weights=source_burden.copy(),
+                e_weights=target_burden.copy(),
             )
         )
     return tuple(records)

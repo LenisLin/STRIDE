@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 import pandas as pd
+
 from stride.errors import ContractError
 
 from ..config import load_task_a_config_bundle
@@ -221,8 +222,8 @@ def prepare_task_a_stage0_mapping(
         "block0_gate_status": "not_passed",
         "scientific_interpretation_allowed": False,
         "mass_mode": config_bundle.data.mass_mode,
-        "fit_surface": "fit_stride",
-        "implementation_tier": "canonical_full",
+        "fit_surface": "stride.tl.fit",
+        "implementation_tier": "canonical_stride_tl",
         "evidence_lineage": "canonical_rerun",
         "core_fit_dry_run_status_counts": _dry_run_status_counts(dry_run_df),
     }

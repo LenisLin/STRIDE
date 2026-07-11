@@ -25,7 +25,6 @@ from dataclasses import dataclass
 
 import numpy as np
 
-
 LAMBDA_GRID: tuple[float, ...] = (0.05, 0.1, 0.5, 1.0, 2.0, 5.0, 10.0)
 
 
@@ -96,10 +95,11 @@ def calibrate_uot_lambda(
     achieved_by_lambda: dict[float, float] = {}
     absolute_error_by_lambda: dict[float, float] = {}
     for candidate in candidates:
-        if achieved_mass_fn is None:
-            achieved = target
-        else:
-            achieved = float(achieved_mass_fn(candidate, pairs))
+        achieved = (
+            target
+            if achieved_mass_fn is None
+            else float(achieved_mass_fn(candidate, pairs))
+        )
         achieved_by_lambda[candidate] = achieved
         absolute_error_by_lambda[candidate] = abs(achieved - target)
     selected = min(candidates, key=lambda candidate: (absolute_error_by_lambda[candidate], candidate))

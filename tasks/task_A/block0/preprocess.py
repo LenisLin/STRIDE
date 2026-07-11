@@ -10,10 +10,8 @@ from __future__ import annotations
 from collections.abc import Sequence
 from pathlib import Path
 
-from stride import DatasetHandle
-from stride.observation.contracts import FovObservation
-
 from ..config import TaskAConfigBundle
+from ..workflows.stride_adapter import TaskAFovRecord, TaskAStage0Handle
 from .functions.observations import (
     Block0ObservationBundle,
     build_null_tc_im_observations,
@@ -47,7 +45,7 @@ def resolve_run_config(
 
 
 def build_real_observations(
-    handle: DatasetHandle,
+    handle: TaskAStage0Handle,
     config_bundle: TaskAConfigBundle,
     *,
     patient_ids: Sequence[str] | None = None,
@@ -80,7 +78,7 @@ def build_null_observations(
 
 
 def build_null_assignments(
-    observations: Sequence[FovObservation],
+    observations: Sequence[TaskAFovRecord],
     *,
     permutation_index: int,
     master_seed: int,

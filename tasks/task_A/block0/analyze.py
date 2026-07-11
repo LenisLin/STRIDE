@@ -1,7 +1,7 @@
 """Cache-derived analysis entrypoint for Task A Block 0 calibration.
 
 Block 0 analysis reads an existing real/null STRIDE fit cache and derives the
-fixed family-summary calibration tables. It does not rerun `fit_stride`, build
+fixed family-summary calibration tables. It does not rerun `stride.tl.fit`, build
 new null permutations, emit biological interpretation, or create downstream
 execution decisions.
 """

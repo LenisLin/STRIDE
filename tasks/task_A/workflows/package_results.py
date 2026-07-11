@@ -8,7 +8,8 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from ..result_packet import validate_task_a_result_packet, write_task_a_result_packet as _write_task_a_result_packet
+from ..result_packet import validate_task_a_result_packet
+from ..result_packet import write_task_a_result_packet as _write_task_a_result_packet
 
 
 def write_task_a_result_packet(

@@ -10,6 +10,7 @@ execution decisions. See
 """
 from __future__ import annotations
 
+from .analyze import run_block0_analyze
 from .fit import (
     BLOCK_NAME,
     CALIBRATION_MANIFEST_FILENAME,
@@ -23,8 +24,6 @@ from .fit import (
     parse_args,
     run_block0_execute,
 )
-from .analyze import run_block0_analyze
-
 
 __all__ = [
     "BLOCK_NAME",

@@ -6,17 +6,20 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 
 from stride.errors import ContractError
-from stride.observation import FovObservation
-from stride.outputs.fit_export import (
-    COHORT_ARRAYS_FILENAME,
-    COHORT_INDEX_FILENAME,
-    MANIFEST_FILENAME,
-    PATIENT_ARRAYS_FILENAME,
-    PATIENT_INDEX_FILENAME,
-    write_stride_native_relation_export,
-)
 
+from ..config import (
+    TaskAConfigBundle,
+    TaskAOrderedPairFamilySpec,
+    load_task_a_config_bundle,
+)
+from ..workflows.stride_adapter import load_task_a_adata, prepare_task_a_pair_adata
 from .analyze import run_block1_analyze
+from .functions.observations import resolve_block1_confirmatory_families
+from .functions.result_adapter import (
+    BLOCK1_NATIVE_RESULT_ARRAYS_FILENAME,
+    BLOCK1_NATIVE_RESULT_MANIFEST_FILENAME,
+    write_block1_native_fit_result,
+)
 from .functions.schemas import (
     BLOCK1_EXECUTE_MANIFEST_FILENAME,
     BLOCK1_LIVE_ID,
@@ -28,18 +31,16 @@ from .functions.schemas import (
     Block1FamilyExportRecord,
     Block1RunRequest,
 )
-from .functions.stride_fit import fit_block1_family, require_block1_fit_ok
+from .functions.stride_fit import (
+    fit_block1_family,
+    require_block1_fit_ok,
+    summarize_fit_status_for_manifest,
+)
 from .functions.writers import write_block1_json
-from .preprocess import Block1PreprocessBundle, prepare_block1_inputs
-from ..config import TaskAConfigBundle, TaskAOrderedPairFamilySpec
-
 
 NATIVE_RELATION_EXPORT_FILENAMES: tuple[str, ...] = (
-    MANIFEST_FILENAME,
-    PATIENT_INDEX_FILENAME,
-    PATIENT_ARRAYS_FILENAME,
-    COHORT_INDEX_FILENAME,
-    COHORT_ARRAYS_FILENAME,
+    BLOCK1_NATIVE_RESULT_MANIFEST_FILENAME,
+    BLOCK1_NATIVE_RESULT_ARRAYS_FILENAME,
 )
 
 
@@ -124,51 +125,41 @@ def _reject_existing_block1_execute_outputs(
         )
 
 
-def _build_family_observations(
+def _validate_requested_patients_available(
     request: Block1RunRequest,
-    preprocess_bundle: Block1PreprocessBundle,
-) -> tuple[dict[str, tuple[FovObservation, ...]], tuple[str, ...]]:
-    family_observations_by_name: dict[str, tuple[FovObservation, ...]] = {}
-    observed_patient_ids_from_observations: set[str] = set()
-    for family_spec in preprocess_bundle.family_specs:
-        observations = preprocess_bundle.observations_by_family.get(family_spec.name, ())
-        if not observations:
-            raise ContractError(f"Block 1 execute found no observations for family {family_spec.name!r}")
-        family_observations_by_name[family_spec.name] = observations
-        observed_patient_ids_from_observations.update(
-            str(observation.patient_id) for observation in observations
+) -> None:
+    if not request.patient_ids:
+        return
+    adata = load_task_a_adata(request.stage0_h5ad_path, backed=True)
+    available = set(adata.obs["patient_id"].astype(str).unique().tolist())
+    missing = tuple(patient_id for patient_id in request.patient_ids if patient_id not in available)
+    if missing:
+        raise ContractError(
+            "Block 1 execute has unmatched requested patient_ids: "
+            + ", ".join(missing)
         )
-    unmatched_requested_patient_ids = tuple(
-        sorted(set(request.patient_ids) - observed_patient_ids_from_observations)
-    )
-    return family_observations_by_name, unmatched_requested_patient_ids
 
 
 def run_block1_execute(request: Block1RunRequest) -> Path:
     """Run TC-IM and TC-PT fits, export native relation files, and write manifest."""
-    preprocess_bundle = prepare_block1_inputs(
-        task_config_path=request.task_config_path,
-        stage0_h5ad_path=request.stage0_h5ad_path,
-        patient_ids=request.patient_ids,
-    )
-    _reject_existing_block1_execute_outputs(request.output_dir, preprocess_bundle.family_specs)
-    family_observations_by_name, unmatched_requested_patient_ids = _build_family_observations(
-        request,
-        preprocess_bundle,
-    )
-    if unmatched_requested_patient_ids:
-        raise ContractError(
-            "Block 1 execute has unmatched requested patient_ids: "
-            + ", ".join(unmatched_requested_patient_ids)
-        )
+    task_config = load_task_a_config_bundle(request.task_config_path)
+    family_specs = resolve_block1_confirmatory_families(task_config)
+    _reject_existing_block1_execute_outputs(request.output_dir, family_specs)
+    _validate_requested_patients_available(request)
 
     family_exports: list[Block1FamilyExportRecord] = []
     observed_patient_ids: set[str] = set()
-    for family_spec in preprocess_bundle.family_specs:
+    for family_spec in family_specs:
+        pair_adata = prepare_task_a_pair_adata(
+            request.stage0_h5ad_path,
+            family_spec,
+            patient_ids=request.patient_ids or None,
+            backed=False,
+            copy_adata=True,
+        )
         fit_result = fit_block1_family(
-            family_observations_by_name[family_spec.name],
+            pair_adata,
             family_spec=family_spec,
-            state_basis=preprocess_bundle.state_basis,
             device=request.device,
         )
         require_block1_fit_ok(
@@ -176,25 +167,31 @@ def run_block1_execute(request: Block1RunRequest) -> Path:
             pair_family=family_spec.name,
             run_scope=request.run_scope,
         )
-        export_manifest = write_stride_native_relation_export(
+        summary = summarize_fit_status_for_manifest(
+            fit_result,
+            pair_family=family_spec.name,
+        )
+        export_manifest = write_block1_native_fit_result(
             fit_result,
             request.output_dir / family_spec.name,
         )
-        observed_patient_ids.update(fit_result.patient_ids)
+        for relation in fit_result.relations.values():
+            observed_patient_ids.update(str(patient_id) for patient_id in relation.patient_ids)
         family_exports.append(
             Block1FamilyExportRecord(
                 pair_family=family_spec.name,
                 source_domain=family_spec.source_domain,
                 target_domain=family_spec.target_domain,
                 claim_role=family_spec.claim_role,
-                native_export_manifest_path=export_manifest.manifest_path,
-                native_export_manifest_sha256=str(export_manifest.manifest_sha256),
-                fit_status=str(fit_result.fit_status),
-                cohort_fit_status=str(export_manifest.cohort_fit_status),
-                patient_count=int(len(fit_result.patient_ids)),
-                patient_record_count=int(export_manifest.patient_record_count),
-                cohort_record_count=int(export_manifest.cohort_record_count),
-                k_states=int(export_manifest.k_states),
+                native_export_manifest_path=export_manifest["manifest_path"],
+                native_export_manifest_sha256=str(export_manifest["manifest_sha256"]),
+                fit_status="ok",
+                cohort_fit_status="not_exported_by_stride_tl_fit_v1",
+                patient_count=int(export_manifest["patient_count"]),
+                patient_record_count=int(export_manifest["patient_record_count"]),
+                cohort_record_count=int(export_manifest["cohort_record_count"]),
+                k_states=int(export_manifest["k_states"]),
+                fit_surface=str(summary["fit_surface"]),
             )
         )
 
@@ -207,7 +204,7 @@ def run_block1_execute(request: Block1RunRequest) -> Path:
             run_scope=request.run_scope,
             device=request.device,
         ),
-        task_config=preprocess_bundle.task_config,
+        task_config=task_config,
         family_exports=tuple(family_exports),
     )
     return write_block1_execute_manifest(payload, request.output_dir)
@@ -220,7 +217,7 @@ def _add_execute_parser(subparsers: argparse._SubParsersAction) -> None:
     parser.add_argument("--output-dir", required=True)
     parser.add_argument("--patient-id", action="append", default=[])
     parser.add_argument("--confirm-full-cohort", action="store_true")
-    parser.add_argument("--device", default=None, help="Optional torch device forwarded to fit_stride.")
+    parser.add_argument("--device", default=None, help="Optional torch device forwarded to stride.tl.fit.")
     parser.set_defaults(command="execute")
 
 

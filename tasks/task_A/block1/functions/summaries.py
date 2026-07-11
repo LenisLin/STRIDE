@@ -9,10 +9,9 @@ import numpy as np
 import pandas as pd
 
 from stride.errors import ContractError
-from stride.outputs.fit_export import NativeRelationExport, PatientRelationRecord
 
 from ...config import TaskAOrderedPairFamilySpec
-
+from .native_export import Block1RelationExport, PatientRelationRecord
 
 FAMILY_SUMMARY_FILENAME = "block1_family_summary.csv"
 SOURCE_COMMUNITY_SUMMARY_FILENAME = "block1_source_community_summary.csv"
@@ -408,7 +407,7 @@ def _finalize_summary_frame(
 
 def build_block1_summary_frames(
     *,
-    native_exports: Mapping[str, NativeRelationExport],
+    native_exports: Mapping[str, Block1RelationExport],
     pair_families: Iterable[TaskAOrderedPairFamilySpec],
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     family_records: list[dict[str, Any]] = []

@@ -16,6 +16,41 @@ def fit_warning_summary(result: object, *, max_examples: int = 5) -> dict[str, o
     }
 
 
+def fit_runtime_summary(result: object) -> dict[str, object]:
+    """Summarize compact `.tl.fit` runtime/provenance facts for progress logs."""
+    relation_ids = tuple(str(item) for item in tuple(getattr(result, "relation_ids", ()) or ()))
+    relations = getattr(result, "relations", {}) or {}
+    relation_summaries: dict[str, object] = {}
+    total_blocks = 0
+    total_patients = 0
+    for relation_id in relation_ids:
+        relation = relations.get(relation_id) if isinstance(relations, Mapping) else None
+        if relation is None:
+            continue
+        support = getattr(relation, "support", {}) or {}
+        provenance = getattr(relation, "provenance", {}) or {}
+        optimizer = provenance.get("optimizer", {}) if isinstance(provenance, Mapping) else {}
+        n_blocks = _optional_int(support.get("n_evidence_blocks"))
+        patient_ids = tuple(str(item) for item in tuple(getattr(relation, "patient_ids", ()) or ()))
+        if n_blocks is not None:
+            total_blocks += n_blocks
+        total_patients += len(patient_ids)
+        relation_summaries[relation_id] = {
+            "n_patients": len(patient_ids),
+            "n_evidence_blocks": n_blocks,
+            "optimizer": _optimizer_progress_summary(optimizer),
+        }
+
+    return {
+        "fit_surface": "stride.tl.fit",
+        "n_relations": len(relation_ids),
+        "relation_ids": list(relation_ids),
+        "n_patients_total": total_patients,
+        "n_evidence_blocks_total": total_blocks,
+        "relations": relation_summaries,
+    }
+
+
 def _warning_category(warning: str) -> str:
     normalized = warning.lower()
     if "sinkhorn" in normalized:
@@ -51,6 +86,38 @@ def _collect_fit_warnings(result: object) -> tuple[str, ...]:
         seen.add(warning)
         unique_warnings.append(warning)
     return tuple(unique_warnings)
+
+
+def _optimizer_progress_summary(value: object) -> dict[str, object]:
+    if not isinstance(value, Mapping):
+        return {}
+    warmup = value.get("warmup", {})
+    main = value.get("main", {})
+    return {
+        "exit_flag": value.get("exit_flag"),
+        "reason": value.get("reason"),
+        "n_steps": value.get("n_steps"),
+        "initial_total": value.get("initial_total"),
+        "final_total": value.get("final_total"),
+        "absolute_improvement": value.get("absolute_improvement"),
+        "relative_improvement": value.get("relative_improvement"),
+        "warmup_steps_completed": (
+            warmup.get("steps_completed") if isinstance(warmup, Mapping) else None
+        ),
+        "main_steps_completed": (
+            main.get("steps_completed") if isinstance(main, Mapping) else None
+        ),
+        "main_max_steps": main.get("max_steps") if isinstance(main, Mapping) else None,
+    }
+
+
+def _optional_int(value: object) -> int | None:
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def _extend_warning_object(collected: list[str], value: object) -> None:
@@ -101,4 +168,4 @@ def _extend_warning_payload(collected: list[str], value: object) -> None:
         collected.append(warning)
 
 
-__all__ = ["fit_warning_summary"]
+__all__ = ["fit_runtime_summary", "fit_warning_summary"]

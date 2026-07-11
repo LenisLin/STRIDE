@@ -1,42 +1,31 @@
 """Canonical STRIDE fitting wrappers for Block 1."""
 from __future__ import annotations
 
-from collections.abc import Sequence
+from anndata import AnnData
 
-from stride.api.fit import fit_stride
-from stride.basis.contracts import StateBasis
-from stride.errors import ContractError
-from stride.geometry.state_geometry import StateGeometry
-from stride.observation import FovObservation
-from stride.outputs.fit_result import STRIDEFitResult
+from stride.tl import FitResult, fit
 
-from .schemas import RUN_SCOPE_FULL_COHORT
 from ...config import TaskAOrderedPairFamilySpec
+from ...workflows.fit_adapter import (
+    fit_task_a_pair,
+    require_task_a_fit_support,
+    summarize_task_a_fit,
+)
+from .schemas import RUN_SCOPE_FULL_COHORT
 
 
 def fit_block1_family(
-    observations: Sequence[FovObservation],
+    adata: AnnData,
     *,
     family_spec: TaskAOrderedPairFamilySpec,
-    state_basis: StateBasis,
-    geometry: StateGeometry | None = None,
     device: object | None = None,
-) -> STRIDEFitResult:
+) -> FitResult:
     """Run canonical STRIDE for one Block 1 family."""
-    return fit_stride(
-        tuple(observations),
-        source=family_spec.source_domain,
-        target=family_spec.target_domain,
-        K=int(state_basis.n_states),
-        timepoint_order=family_spec.ordered_group_labels,
-        state_basis=state_basis,
-        geometry=geometry,
-        device=device,
-    )
+    return fit_task_a_pair(adata, device=device, estimator=fit)
 
 
 def require_block1_fit_ok(
-    fit_result: STRIDEFitResult,
+    fit_result: FitResult,
     *,
     pair_family: str,
     run_scope: str,
@@ -44,31 +33,19 @@ def require_block1_fit_ok(
     """Fail fast when a formal expected Block 1 fit is not fully ok."""
     if run_scope != RUN_SCOPE_FULL_COHORT:
         return
-    if fit_result.fit_status != "ok":
-        raise ContractError(f"Block 1 full-cohort fit for {pair_family!r} returned fit_status={fit_result.fit_status!r}")
-    if any(patient_result.fit_status != "ok" for patient_result in fit_result.patient_results):
-        raise ContractError(f"Block 1 full-cohort fit for {pair_family!r} contains non-ok patient results")
-    if fit_result.cohort_relation.fit_status != "ok":
-        raise ContractError(f"Block 1 full-cohort fit for {pair_family!r} has non-ok cohort recurrence")
+    require_task_a_fit_support(
+        fit_result,
+        context=f"Block 1 full-cohort fit for {pair_family!r}",
+    )
 
 
 def summarize_fit_status_for_manifest(
-    fit_result: STRIDEFitResult,
+    fit_result: FitResult,
     *,
     pair_family: str,
 ) -> dict[str, object]:
     """Return thin fit metadata for the execute manifest."""
-    k_states = 0
-    for patient_result in fit_result.patient_results:
-        if patient_result.fit_status == "ok" and patient_result.state_ids is not None:
-            k_states = len(patient_result.state_ids)
-            break
-    return {
-        "pair_family": pair_family,
-        "fit_status": str(fit_result.fit_status),
-        "patient_count": int(len(fit_result.patient_results)),
-        "k_states": int(k_states),
-    }
+    return summarize_task_a_fit(fit_result, pair_family=pair_family)
 
 
 __all__ = [

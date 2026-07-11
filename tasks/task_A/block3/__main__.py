@@ -7,8 +7,8 @@ metadata only.
 from __future__ import annotations
 
 import argparse
-from collections.abc import Sequence
 import sys
+from collections.abc import Sequence
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -16,7 +16,7 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from .registry import BLOCK3_EXPERIMENT_NAME_TO_SUBEXPERIMENT_ID
+from .registry import BLOCK3_EXPERIMENT_NAME_TO_SUBEXPERIMENT_ID  # noqa: E402
 
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
@@ -71,7 +71,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         max_reruns=args.max_reruns,
         n_test=args.n_test,
     )
-    print(str(result.review_manifest_path))
+    output_path = getattr(result, "status_path", None)
+    if output_path is None:
+        output_path = result.review_manifest_path
+    print(str(output_path))
     return 0
 
 

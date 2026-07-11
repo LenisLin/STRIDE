@@ -5,17 +5,14 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
-from stride import DatasetHandle
-from stride.basis.contracts import StateBasis
-from stride.observation import FovObservation
-
+from ..config import TaskAConfigBundle, TaskAOrderedPairFamilySpec, load_task_a_config_bundle
+from ..workflows.stride_adapter import TaskAFovRecord, TaskAStage0Handle, TaskAStateAxis
 from .functions.observations import (
     build_block1_observation_bundles,
     load_block1_stage0_inputs,
     resolve_block1_confirmatory_families,
     resolve_task_a_state_basis,
 )
-from ..config import TaskAConfigBundle, TaskAOrderedPairFamilySpec, load_task_a_config_bundle
 
 
 @dataclass(frozen=True)
@@ -23,10 +20,10 @@ class Block1PreprocessBundle:
     """Resolved Block 1 inputs before fitting."""
 
     task_config: TaskAConfigBundle
-    dataset_handle: DatasetHandle
-    state_basis: StateBasis
+    dataset_handle: TaskAStage0Handle
+    state_basis: TaskAStateAxis
     family_specs: tuple[TaskAOrderedPairFamilySpec, TaskAOrderedPairFamilySpec]
-    observations_by_family: dict[str, tuple[FovObservation, ...]]
+    observations_by_family: dict[str, tuple[TaskAFovRecord, ...]]
 
 
 def prepare_block1_inputs(

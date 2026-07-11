@@ -11,48 +11,43 @@ and `tasks/task_A/contracts/design_freeze.py`.
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import multiprocessing as mp
 import os
 import tempfile
 import time
-from concurrent.futures import ProcessPoolExecutor, as_completed
 from collections.abc import Mapping
-from datetime import datetime, timezone
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import asdict
+from datetime import datetime, timezone
 from pathlib import Path
 
 import numpy as np
+from anndata import AnnData
 
+from stride._schema import STRIDE_FOV_OBSERVATIONS_KEY, STRIDE_UNS_KEY
 from stride.errors import ContractError
 
-from ..config import load_task_a_config_bundle
+from ..config import TaskAConfigBundle, load_task_a_config_bundle
 from ..real_data.demo_subset import resolve_demo_subset
 from ..workflows.stride_adapter import (
-    load_task_a_dataset_handle,
-    resolve_task_a_state_basis,
+    prepare_task_a_pair_adata,
 )
 from .analyze import run_block0_analyze
-from .functions.cache import sha256_file, write_block0_fit_cache
-from .functions.stride_fit import (
-    extract_block0_fit_records,
-    fit_block0_family,
+from .functions.ann_data import (
+    block0_fov_observation_signature,
+    build_null_tc_im_adata,
 )
-from .functions.observations import (
-    Block0ObservationBundle,
-    build_null_tc_im_observations,
-    build_real_tc_im_observations,
-    resolve_block0_run_config,
-)
+from .functions.cache import write_block0_fit_cache
+from .functions.observations import resolve_block0_run_config
 from .functions.parallel import (
     Block0NullFitJob,
     configure_worker_thread_environment,
     configure_worker_threads,
     fit_block0_null_permutation,
 )
-from .functions.permutation import build_domain_label_permutation_assignments
-from .functions.progress import fit_warning_summary
+from .functions.permutation import build_domain_label_permutation_assignments_from_fov_metadata
+from .functions.progress import fit_runtime_summary, fit_warning_summary
 from .functions.schemas import (
     BLOCK_NAME,
     CALIBRATION_MANIFEST_FILENAME,
@@ -62,18 +57,23 @@ from .functions.schemas import (
     FIT_CACHE_FILENAME,
     FIT_CACHE_INDEX_FILENAME,
     FIT_CACHE_SCHEMA_VERSION,
+    FIT_LABEL_NULL,
+    FIT_LABEL_REAL,
     FULL_CALIBRATION_N_PERMUTATIONS,
     METRIC_SUMMARY_FILENAME,
     MIN_N_PERMUTATIONS,
     NULL_FAMILY,
     PATIENT_CALIBRATION_FILENAME,
     REAL_FAMILY,
-    FIT_LABEL_NULL,
-    FIT_LABEL_REAL,
+    SOURCE_DOMAIN,
+    TARGET_DOMAIN,
     Block0FitRecord,
 )
+from .functions.stride_fit import (
+    extract_block0_fit_records,
+    fit_block0_family,
+)
 from .functions.writers import write_block0_execution_outputs
-
 
 DEFAULT_N_PERMUTATIONS = FULL_CALIBRATION_N_PERMUTATIONS
 BLOCK0_PROGRESS_FILENAME = EXECUTION_PROGRESS_FILENAME
@@ -136,6 +136,17 @@ def _guard_block0_cpu_budget(
         )
 
 
+def _resolve_tc_im_family_spec(config_bundle: TaskAConfigBundle):
+    for family_spec in config_bundle.ordered_proxy.pair_families:
+        if (
+            family_spec.name == REAL_FAMILY
+            and family_spec.source_domain == SOURCE_DOMAIN
+            and family_spec.target_domain == TARGET_DOMAIN
+        ):
+            return family_spec
+    raise ContractError("Task A config must define the Block 0 TC-IM ordered pair family")
+
+
 def run_block0_execute(
     *,
     config_path: str | Path,
@@ -182,8 +193,8 @@ def run_block0_execute(
     stage_started_at = _utc_timestamp()
     stage_started_monotonic = time.monotonic()
     config_bundle = load_task_a_config_bundle(run_config.config_path)
-    handle = load_task_a_dataset_handle(run_config.data_path, backed=True)
     selected_patient_ids = _selected_patient_ids(run_config)
+    tc_im_family_spec = _resolve_tc_im_family_spec(config_bundle)
     _append_stage_progress_event(
         progress_path,
         stage="input_config_data_loading",
@@ -194,19 +205,21 @@ def run_block0_execute(
 
     stage_started_at = _utc_timestamp()
     stage_started_monotonic = time.monotonic()
-    real_bundle = build_real_tc_im_observations(
-        handle,
-        config_bundle,
+    real_adata = prepare_task_a_pair_adata(
+        run_config.data_path,
+        tc_im_family_spec,
         patient_ids=selected_patient_ids,
+        backed=False,
+        copy_adata=True,
     )
     _append_stage_progress_event(
         progress_path,
-        stage="real_observation_construction",
+        stage="real_adata_construction",
         started_at=stage_started_at,
         duration_seconds=_elapsed_seconds(stage_started_monotonic),
         status="ok",
     )
-    real_observation_signature = _observation_bundle_signature(real_bundle)
+    real_observation_signature = block0_fov_observation_signature(real_adata)
     resume_state = _load_resume_checkpoint(
         output_root=output_root,
         run_config=run_config,
@@ -214,16 +227,6 @@ def run_block0_execute(
         real_observation_signature=real_observation_signature,
     ) if bool(resume) else _empty_resume_state()
 
-    stage_started_at = _utc_timestamp()
-    stage_started_monotonic = time.monotonic()
-    state_basis = resolve_task_a_state_basis(handle)
-    _append_stage_progress_event(
-        progress_path,
-        stage="state_basis_resolution",
-        started_at=stage_started_at,
-        duration_seconds=_elapsed_seconds(stage_started_monotonic),
-        status="ok",
-    )
     _append_stage_progress_event(
         progress_path,
         stage="parallel_resource_config",
@@ -267,13 +270,17 @@ def run_block0_execute(
         real_result = None
         try:
             real_result = fit_block0_family(
-                real_bundle,
+                real_adata,
                 config_bundle=config_bundle,
-                state_basis=state_basis,
+                state_basis=None,
                 fit_label=FIT_LABEL_REAL,
                 device=device,
             )
-            real_records = extract_block0_fit_records(real_result, fit_label=FIT_LABEL_REAL)
+            real_records = extract_block0_fit_records(
+                real_result,
+                source_adata=real_adata,
+                fit_label=FIT_LABEL_REAL,
+            )
         except Exception as exc:
             duration_seconds = _elapsed_seconds(real_started_monotonic)
             _append_progress_event(
@@ -318,6 +325,7 @@ def run_block0_execute(
                 status="ok",
                 duration_seconds=duration_seconds,
                 warning_summary=fit_warning_summary(real_result),
+                runtime_summary=fit_runtime_summary(real_result),
             )
             _append_stage_progress_event(
                 progress_path,
@@ -331,10 +339,9 @@ def run_block0_execute(
 
     if resolved_parallel_permutations == 1:
         null_records_list = _run_serial_null_permutation_fits(
-            real_bundle=real_bundle,
+            real_adata=real_adata,
             run_config=run_config,
             config_bundle=config_bundle,
-            state_basis=state_basis,
             output_root=output_root,
             progress_path=progress_path,
             config_fingerprint=str(config_bundle.config_fingerprint),
@@ -344,10 +351,9 @@ def run_block0_execute(
         )
     else:
         null_records_list = _run_parallel_null_permutation_fits(
-            real_bundle=real_bundle,
+            real_adata=real_adata,
             run_config=run_config,
             config_bundle=config_bundle,
-            state_basis=state_basis,
             output_root=output_root,
             progress_path=progress_path,
             config_fingerprint=str(config_bundle.config_fingerprint),
@@ -404,55 +410,6 @@ def _selected_patient_ids(run_config) -> tuple[str, ...] | None:
         return resolve_demo_subset(run_config.demo_subset_name).patient_ids
     except KeyError as exc:
         raise ContractError(str(exc)) from exc
-
-
-def _observation_bundle_signature(bundle: Block0ObservationBundle) -> dict[str, object]:
-    digest = hashlib.sha256()
-    patient_ids = tuple(str(patient_id) for patient_id in bundle.patient_ids)
-    digest.update(str(bundle.label).encode("utf-8"))
-    digest.update(json.dumps(patient_ids, separators=(",", ":")).encode("utf-8"))
-    observations = tuple(
-        sorted(
-            bundle.observations,
-            key=lambda observation: (
-                str(observation.patient_id),
-                str(observation.fov_id),
-                "" if observation.domain_label is None else str(observation.domain_label),
-                str(observation.timepoint),
-            ),
-        )
-    )
-    for observation in observations:
-        composition = np.ascontiguousarray(
-            np.asarray(observation.community_composition, dtype=float)
-        )
-        descriptor = {
-            "patient_id": str(observation.patient_id),
-            "fov_id": str(observation.fov_id),
-            "timepoint": str(observation.timepoint),
-            "domain_label": (
-                None
-                if observation.domain_label is None
-                else str(observation.domain_label)
-            ),
-            "mass": float(observation.mass),
-            "mass_mode": str(observation.mass_mode),
-            "composition_shape": [int(item) for item in composition.shape],
-        }
-        digest.update(
-            json.dumps(
-                descriptor,
-                sort_keys=True,
-                separators=(",", ":"),
-            ).encode("utf-8")
-        )
-        digest.update(composition.tobytes(order="C"))
-    return {
-        "label": str(bundle.label),
-        "patient_ids": list(patient_ids),
-        "n_observations": int(len(observations)),
-        "digest": digest.hexdigest(),
-    }
 
 
 def _guard_no_existing_execution_outputs(output_root: Path, *, resume: bool = False) -> None:
@@ -752,6 +709,7 @@ def _append_progress_event(
     duration_seconds: float | None,
     error: BaseException | None = None,
     warning_summary: Mapping[str, object] | None = None,
+    runtime_summary: Mapping[str, object] | None = None,
 ) -> None:
     payload: dict[str, object] = {
         "event": event,
@@ -769,6 +727,8 @@ def _append_progress_event(
         payload["warning_count"] = int(warning_summary.get("warning_count", 0))
         payload["warning_categories"] = dict(warning_summary.get("warning_categories", {}))
         payload["warning_examples"] = list(warning_summary.get("warning_examples", ()))
+    if runtime_summary is not None:
+        payload["runtime_summary"] = dict(runtime_summary)
     with progress_path.open("a", encoding="utf-8") as handle:
         json.dump(payload, handle, sort_keys=True)
         handle.write("\n")
@@ -777,10 +737,9 @@ def _append_progress_event(
 
 def _run_serial_null_permutation_fits(
     *,
-    real_bundle: Block0ObservationBundle,
+    real_adata: AnnData,
     run_config,
     config_bundle,
-    state_basis,
     output_root: Path,
     progress_path: Path,
     config_fingerprint: str,
@@ -818,19 +777,19 @@ def _run_serial_null_permutation_fits(
             status="running",
             duration_seconds=None,
         )
-        null_bundle = None
+        null_adata = None
         null_result = None
         try:
             stage_started_at = _utc_timestamp()
             stage_started_monotonic = time.monotonic()
-            null_bundle = _build_null_observation_bundle(
-                real_bundle,
+            null_adata = _build_null_adata(
+                real_adata,
                 run_config,
                 permutation_index,
             )
             _append_stage_progress_event(
                 progress_path,
-                stage="null_bundle_build",
+                stage="null_adata_build",
                 started_at=stage_started_at,
                 duration_seconds=_elapsed_seconds(stage_started_monotonic),
                 status="ok",
@@ -839,15 +798,16 @@ def _run_serial_null_permutation_fits(
             stage_started_at = _utc_timestamp()
             stage_started_monotonic = time.monotonic()
             null_result = fit_block0_family(
-                null_bundle,
+                null_adata,
                 config_bundle=config_bundle,
-                state_basis=state_basis,
+                state_basis=None,
                 fit_label=FIT_LABEL_NULL,
                 permutation_index=permutation_index,
                 device=device,
             )
             extracted_null_records = extract_block0_fit_records(
                 null_result,
+                source_adata=null_adata,
                 fit_label=FIT_LABEL_NULL,
                 permutation_index=permutation_index,
             )
@@ -899,19 +859,19 @@ def _run_serial_null_permutation_fits(
                 status="ok",
                 duration_seconds=duration_seconds,
                 warning_summary=fit_warning_summary(null_result),
+                runtime_summary=fit_runtime_summary(null_result),
             )
         finally:
-            del null_bundle
+            del null_adata
             del null_result
     return null_records_list
 
 
 def _run_parallel_null_permutation_fits(
     *,
-    real_bundle: Block0ObservationBundle,
+    real_adata: AnnData,
     run_config,
     config_bundle,
-    state_basis,
     output_root: Path,
     progress_path: Path,
     config_fingerprint: str,
@@ -968,10 +928,9 @@ def _run_parallel_null_permutation_fits(
             future = executor.submit(
                 fit_block0_null_permutation,
                 Block0NullFitJob(permutation_index),
-                real_bundle=real_bundle,
+                real_adata=real_adata,
                 run_config=run_config,
                 config_bundle=config_bundle,
-                state_basis=state_basis,
                 device=device,
             )
             future_to_index[future] = permutation_index
@@ -1015,9 +974,9 @@ def _run_parallel_null_permutation_fits(
             )
             _append_stage_progress_event(
                 progress_path,
-                stage="null_bundle_build",
+                stage="null_adata_build",
                 started_at=started_at,
-                duration_seconds=float(result.null_bundle_build_seconds),
+                duration_seconds=float(result.null_adata_build_seconds),
                 status="ok",
                 permutation_index=int(result.permutation_index),
             )
@@ -1039,6 +998,7 @@ def _run_parallel_null_permutation_fits(
                 status="ok",
                 duration_seconds=_elapsed_seconds(started_monotonic),
                 warning_summary=result.warning_summary,
+                runtime_summary=result.runtime_summary,
             )
 
     null_records_list: list[Block0FitRecord] = []
@@ -1058,21 +1018,31 @@ def _block0_parallel_context() -> mp.context.BaseContext:
     return mp.get_context("spawn")
 
 
-def _build_null_observation_bundle(
-    real_bundle: Block0ObservationBundle,
+def _build_null_adata(
+    real_adata: AnnData,
     run_config,
     permutation_index: int,
-) -> Block0ObservationBundle:
-    assignments = build_domain_label_permutation_assignments(
-        real_bundle.observations,
+) -> AnnData:
+    assignments = build_domain_label_permutation_assignments_from_fov_metadata(
+        _fov_metadata(real_adata),
         permutation_index=permutation_index,
         master_seed=run_config.master_seed,
     )
-    return build_null_tc_im_observations(
-        real_bundle,
+    return build_null_tc_im_adata(
+        real_adata,
         assignments,
         permutation_index=permutation_index,
     )
+
+
+def _fov_metadata(adata: AnnData) -> object:
+    stride_uns = adata.uns.get(STRIDE_UNS_KEY)
+    if not isinstance(stride_uns, Mapping):
+        raise ContractError("Block 0 real AnnData is missing adata.uns['stride']")
+    fov_observations = stride_uns.get(STRIDE_FOV_OBSERVATIONS_KEY)
+    if not isinstance(fov_observations, Mapping):
+        raise ContractError("Block 0 real AnnData is missing FOV observations")
+    return fov_observations.get("metadata")
 
 
 def _build_execution_manifest_payload(
@@ -1189,7 +1159,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     execute.add_argument(
         "--device",
         default=None,
-        help="Optional torch device forwarded to fit_stride, e.g. 'cuda' or 'cpu'.",
+        help="Optional torch device forwarded to stride.tl.fit, e.g. 'cuda' or 'cpu'.",
     )
 
     analyze = subparsers.add_parser(
