@@ -6,7 +6,6 @@ from pathlib import Path
 
 from stride.errors import ContractError
 
-
 BLOCK1_LIVE_ID = "block1_real_data_discovery"
 CONFIRMATORY_PAIR_FAMILIES: tuple[str, str] = ("TC-IM", "TC-PT")
 FROZEN_CONFIRMATORY_FAMILY_CONTRACT: dict[str, tuple[str, str, str]] = {
@@ -214,6 +213,7 @@ class Block1FamilyExportRecord:
     patient_record_count: int
     cohort_record_count: int
     k_states: int
+    fit_surface: str = "stride.tl.fit"
 
     def to_json_dict(self) -> dict[str, object]:
         return {
@@ -221,6 +221,7 @@ class Block1FamilyExportRecord:
             "source_domain": self.source_domain,
             "target_domain": self.target_domain,
             "claim_role": self.claim_role,
+            "fit_surface": self.fit_surface,
             "native_export_manifest_path": str(self.native_export_manifest_path),
             "native_export_manifest_sha256": self.native_export_manifest_sha256,
             "fit_status": self.fit_status,

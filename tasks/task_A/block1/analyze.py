@@ -4,22 +4,15 @@ from __future__ import annotations
 import json
 from collections.abc import Mapping, Sequence
 from pathlib import Path
-from typing import Any
 
 import pandas as pd
 
 from stride.errors import ContractError
-from stride.outputs.fit_export import (
-    NativeRelationExport,
-    read_stride_native_relation_export,
-    sha256_file,
-)
 
+from ..config import TaskAOrderedPairFamilySpec
+from ..workflows.stride_adapter import prepare_task_a_pair_adata
 from .functions.comparisons import (
     COHORT_RELATION_COMPARISON_COLUMNS,
-    CONFIRMATORY_FAMILY_COMPARISON_FILENAME,
-    DESCRIPTIVE_SOURCE_COMMUNITY_COMPARISON_FILENAME,
-    DESCRIPTIVE_TARGET_COMMUNITY_COMPARISON_FILENAME,
     FAMILY_COMPARISON_COLUMNS,
     PAIRED_COMPARISON_CONTRACT_VERSION,
     SOURCE_COMMUNITY_COMPARISON_COLUMNS,
@@ -27,12 +20,17 @@ from .functions.comparisons import (
     build_block1_cohort_relation_comparison_frame,
     build_block1_comparison_frames,
 )
+from .functions.native_export import (
+    Block1RelationExport,
+    read_stride_native_relation_export,
+    sha256_file,
+)
+from .functions.result_adapter import read_block1_stride_tl_native_export
 from .functions.schemas import (
     ANALYSIS_MANIFEST_REQUIRED_FIELDS,
     BLOCK1_ANALYSIS_MANIFEST_FILENAME,
     BLOCK1_COHORT_RELATION_COMPARISON_FILENAME,
     BLOCK1_CONFIRMATORY_FAMILY_COMPARISON_FILENAME,
-    BLOCK1_EXECUTE_MANIFEST_FILENAME,
     BLOCK1_FAMILY_STATISTICAL_SUPPLEMENT_FILENAME,
     BLOCK1_FAMILY_SUMMARY_FILENAME,
     BLOCK1_RELATION_ELEMENT_STATISTICAL_SUPPLEMENT_FILENAME,
@@ -43,9 +41,6 @@ from .functions.schemas import (
     BLOCK1_TARGET_COMMUNITY_COMPARISON_FILENAME,
     BLOCK1_TARGET_COMMUNITY_STATISTICAL_SUPPLEMENT_FILENAME,
     BLOCK1_TARGET_COMMUNITY_SUMMARY_FILENAME,
-    Block1ExecuteManifest,
-    Block1FamilyExportRecord,
-    COHORT_RELATION_COMPARISON_COLUMNS as SCHEMA_COHORT_RELATION_COMPARISON_COLUMNS,
     CONFIRMATORY_PAIR_FAMILIES,
     EXECUTE_MANIFEST_REQUIRED_FIELDS,
     FAMILY_STATISTICAL_SUPPLEMENT_COLUMNS,
@@ -55,6 +50,8 @@ from .functions.schemas import (
     STATISTICAL_SUPPLEMENT_EFFECT_FLOOR_ABS_MEDIAN_DELTA,
     STATISTICAL_SUPPLEMENT_Q_ALPHA,
     TARGET_COMMUNITY_STATISTICAL_SUPPLEMENT_COLUMNS,
+    Block1ExecuteManifest,
+    Block1FamilyExportRecord,
     validate_block1_family_contract,
 )
 from .functions.statistics import (
@@ -78,8 +75,6 @@ from .functions.writers import (
     write_block1_csv,
     write_block1_json,
 )
-from ..config import TaskAOrderedPairFamilySpec
-
 
 FIT_STATUS_COLUMNS: tuple[str, ...] = (
     "patient_id",
@@ -134,6 +129,7 @@ def load_block1_execute_manifest(path: Path) -> Block1ExecuteManifest:
                 patient_record_count=int(item["patient_record_count"]),
                 cohort_record_count=int(item["cohort_record_count"]),
                 k_states=int(item["k_states"]),
+                fit_surface=str(item.get("fit_surface", "legacy_native_export")),
             )
         )
     return Block1ExecuteManifest(
@@ -154,10 +150,32 @@ def load_block1_execute_manifest(path: Path) -> Block1ExecuteManifest:
 
 def load_block1_native_exports(
     execute_manifest: Block1ExecuteManifest,
-) -> dict[str, NativeRelationExport]:
+    *,
+    pair_families: Sequence[TaskAOrderedPairFamilySpec],
+) -> dict[str, Block1RelationExport]:
     """Read generic native exports keyed by pair_family and validate hashes."""
-    exports: dict[str, NativeRelationExport] = {}
+    family_spec_by_name = {family.name: family for family in pair_families}
+    exports: dict[str, Block1RelationExport] = {}
     for family_export in execute_manifest.family_exports:
+        if family_export.fit_surface == "stride.tl.fit":
+            family_spec = family_spec_by_name.get(family_export.pair_family)
+            if family_spec is None:
+                raise ContractError(
+                    f"Block 1 analyze lacks family spec for {family_export.pair_family!r}"
+                )
+            pair_adata = prepare_task_a_pair_adata(
+                execute_manifest.stage0_h5ad,
+                family_spec,
+                patient_ids=execute_manifest.patient_ids or None,
+                backed=False,
+                copy_adata=True,
+            )
+            exports[family_export.pair_family] = read_block1_stride_tl_native_export(
+                family_export.native_export_manifest_path,
+                source_adata=pair_adata,
+                manifest_sha256=family_export.native_export_manifest_sha256,
+            )
+            continue
         observed_hash = sha256_file(family_export.native_export_manifest_path)
         if observed_hash != family_export.native_export_manifest_sha256:
             raise ContractError(
@@ -171,7 +189,7 @@ def load_block1_native_exports(
 
 def require_block1_execute_status_for_analysis(
     execute_manifest: Block1ExecuteManifest,
-    native_exports: Mapping[str, NativeRelationExport],
+    native_exports: Mapping[str, Block1RelationExport],
 ) -> None:
     """Reject formal analysis from non-ok execute/native status context."""
     if execute_manifest.run_scope != RUN_SCOPE_FULL_COHORT:
@@ -217,7 +235,7 @@ def require_block1_execute_status_for_analysis(
 
 def build_block1_fit_status_frame(
     execute_manifest: Block1ExecuteManifest,
-    native_exports: Mapping[str, NativeRelationExport],
+    native_exports: Mapping[str, Block1RelationExport],
 ) -> pd.DataFrame:
     """Build internal patient/family fit status context for comparisons."""
     records: list[dict[str, object]] = []
@@ -254,7 +272,7 @@ def build_block1_analysis_manifest_payload(
     execute_manifest_sha256: str,
     output_paths: Mapping[str, Path],
     run_scope: str,
-    native_exports: Mapping[str, NativeRelationExport],
+    native_exports: Mapping[str, Block1RelationExport],
 ) -> dict[str, object]:
     """Build the Block 1 analysis manifest."""
     return {
@@ -356,7 +374,10 @@ def run_block1_analyze(
     _reject_existing_block1_analysis_outputs(resolved_output_dir)
     execute_manifest = load_block1_execute_manifest(execute_manifest_path)
     pair_families = _resolve_confirmatory_pair_families(execute_manifest)
-    native_exports = load_block1_native_exports(execute_manifest)
+    native_exports = load_block1_native_exports(
+        execute_manifest,
+        pair_families=pair_families,
+    )
     require_block1_execute_status_for_analysis(execute_manifest, native_exports)
     fit_status_df = build_block1_fit_status_frame(execute_manifest, native_exports)
 

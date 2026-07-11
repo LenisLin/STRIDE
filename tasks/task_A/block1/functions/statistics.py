@@ -2,15 +2,14 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from typing import Any
 
 import numpy as np
 import pandas as pd
 from scipy.stats import binomtest, wilcoxon
 
 from stride.errors import ContractError
-from stride.outputs.fit_export import NativeRelationExport, PatientRelationRecord
 
+from .native_export import Block1RelationExport, PatientRelationRecord
 from .schemas import (
     BLOCK1_STATISTICAL_SUPPLEMENT_CONTRACT_VERSION,
     FAMILY_STATISTICAL_SUPPLEMENT_COLUMNS,
@@ -20,7 +19,6 @@ from .schemas import (
     STATISTICAL_SUPPLEMENT_Q_ALPHA,
     TARGET_COMMUNITY_STATISTICAL_SUPPLEMENT_COLUMNS,
 )
-
 
 LEFT_PAIR_FAMILY = "TC-IM"
 RIGHT_PAIR_FAMILY = "TC-PT"
@@ -154,7 +152,7 @@ def _summary_group_rows(
     estimable = _estimable_rows(frame)
     for key, group in estimable.groupby(list(group_columns), sort=True, dropna=False):
         key_tuple = key if isinstance(key, tuple) else (key,)
-        key_payload = dict(zip(group_columns, key_tuple))
+        key_payload = dict(zip(group_columns, key_tuple, strict=True))
         payload = _paired_test_payload(
             tc_im_values=group["tc_im_value"].astype(float).tolist(),
             tc_pt_values=group["tc_pt_value"].astype(float).tolist(),
@@ -224,14 +222,14 @@ def build_target_community_statistical_supplement(target_comparison_df: pd.DataF
     )
 
 
-def _ok_patient_records(export: NativeRelationExport, *, label: str) -> dict[str, PatientRelationRecord]:
+def _ok_patient_records(export: Block1RelationExport, *, label: str) -> dict[str, PatientRelationRecord]:
     records = {str(record.patient_id): record for record in export.patient_records if record.is_ok}
     if len(records) != len(export.patient_records):
         raise ContractError(f"Block 1 statistical supplement requires all {label} patient records to be ok")
     return records
 
 
-def _require_pair_exports(native_exports: Mapping[str, NativeRelationExport]) -> tuple[NativeRelationExport, NativeRelationExport]:
+def _require_pair_exports(native_exports: Mapping[str, Block1RelationExport]) -> tuple[Block1RelationExport, Block1RelationExport]:
     left_export = native_exports.get(LEFT_PAIR_FAMILY)
     right_export = native_exports.get(RIGHT_PAIR_FAMILY)
     if left_export is None or right_export is None:
@@ -324,7 +322,10 @@ def _relation_record(
         source_index=source_index,
         target_index=target_index,
     )
-    deltas = [left - right for left, right in zip(tc_im_values, tc_pt_values)]
+    deltas = [
+        left - right
+        for left, right in zip(tc_im_values, tc_pt_values, strict=True)
+    ]
     payload = _paired_test_payload(
         tc_im_values=tc_im_values,
         tc_pt_values=tc_pt_values,
@@ -359,7 +360,7 @@ def _relation_record(
 
 def build_relation_element_statistical_supplement(
     *,
-    native_exports: Mapping[str, NativeRelationExport],
+    native_exports: Mapping[str, Block1RelationExport],
     cohort_relation_comparison_df: pd.DataFrame,
 ) -> pd.DataFrame:
     """Build patient-supported paired statistics for native A/d/e elements."""
