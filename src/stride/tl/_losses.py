@@ -19,8 +19,8 @@ from ._sinkhorn import (
     SinkhornConfig,
     _apply_small_negative_rule,
     _as_float64_matrix,
-    _batched_sinkhorn_transport_value,
     _batched_sinkhorn_divergence_value,
+    _batched_sinkhorn_transport_value,
     _normalized_cost_matrix,
     _resolve_sinkhorn_config,
     _validate_fov_cost_scale,
@@ -32,6 +32,7 @@ EPSILON_NORM = 1e-2
 RHO_SUBBAG = 1.0
 GEOMETRY_EFFECTIVE_WEIGHT = 1e-2
 S_COHORT = 1e-2
+
 
 @dataclass(frozen=True)
 class LossContext:
@@ -52,6 +53,10 @@ class LossContext:
     sinkhorn_config: SinkhornConfig | None = None
     observed_self_ground_costs: Mapping[str, torch.Tensor] = field(default_factory=dict)
     observed_self_clipped_negative: Mapping[str, bool] = field(default_factory=dict)
+    # Execution-only lookup cache. Patient-balanced aggregation still follows
+    # `RelationParameters.patient_ids` and is not weighted by block count.
+    patient_index_by_id: Mapping[str, int] = field(default_factory=dict)
+    normalized_cost_matrix: torch.Tensor | None = None
 
 
 @dataclass(frozen=True)
@@ -244,7 +249,7 @@ def _compute_observation_loss_single_block_path(
 
     for block in blocks:
         patient_id = str(block.patient_id)
-        pidx = parameters.patient_ids.index(patient_id)
+        pidx = _patient_index(parameters, patient_id, ctx)
         predicted = predict_target_composition(
             block.source_bag,
             parameters.A[pidx],
@@ -317,13 +322,21 @@ def _compute_observation_loss_batched_path(
     if not block_sequence:
         raise _ObservationBatchFallback
 
-    cost = _normalized_cost_matrix(
-        cost_matrix,
-        cost_scale,
-        n_states=int(parameters.A.shape[1]),
-        device=parameters.A.device,
-        validate=False,
-    )
+    cost = context.normalized_cost_matrix
+    if cost is None:
+        cost = _normalized_cost_matrix(
+            cost_matrix,
+            cost_scale,
+            n_states=int(parameters.A.shape[1]),
+            device=parameters.A.device,
+            validate=False,
+        )
+    elif (
+        cost.shape != cost_matrix.shape
+        or cost.device != parameters.A.device
+        or cost.dtype != torch.float64
+    ):
+        raise _ObservationBatchFallback
 
     block_values_by_index: dict[int, torch.Tensor] = {}
     warnings: list[Mapping[str, Any]] = []
@@ -391,7 +404,7 @@ def _compute_observation_block_group(
 
     for block in group.blocks:
         patient_id = str(block.patient_id)
-        pidx = parameters.patient_ids.index(patient_id)
+        pidx = _patient_index(parameters, patient_id, context)
         predicted_bags.append(
             predict_target_composition(
                 block.source_bag,
@@ -719,4 +732,18 @@ def _coerce_loss_context(context: Mapping[str, Any] | LossContext | None) -> Los
         sinkhorn_config=context.get("sinkhorn_config"),
         observed_self_ground_costs=context.get("observed_self_ground_costs", {}),
         observed_self_clipped_negative=context.get("observed_self_clipped_negative", {}),
+        patient_index_by_id=context.get("patient_index_by_id", {}),
+        normalized_cost_matrix=context.get("normalized_cost_matrix"),
     )
+
+
+def _patient_index(
+    parameters: RelationParameters,
+    patient_id: str,
+    context: LossContext,
+) -> int:
+    """Resolve one patient-axis index, preferring the fixed fit-time cache."""
+    cached = context.patient_index_by_id.get(patient_id)
+    if cached is not None:
+        return int(cached)
+    return parameters.patient_ids.index(patient_id)

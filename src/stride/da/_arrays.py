@@ -6,6 +6,7 @@ from collections.abc import Mapping, Sequence
 import numpy as np
 import pandas as pd
 
+from stride._array_contracts import as_finite_float_array
 from stride.errors import ContractError
 from stride.tl import FitResult, RelationResult
 
@@ -114,11 +115,9 @@ def _relation_arrays(
 def _as_finite_array(value: object, *, name: str) -> np.ndarray:
     """Convert a public result array to a finite float copy."""
     try:
-        array = np.asarray(value, dtype=float)
-    except (TypeError, ValueError) as exc:
-        raise ContractError(f"RelationResult.{name} must be numeric") from exc
-    if not np.isfinite(array).all():
-        raise ContractError(f"RelationResult.{name} must contain only finite values")
+        array = as_finite_float_array(value, name=f"RelationResult.{name}")
+    except ContractError:
+        raise
     return array.copy()
 
 

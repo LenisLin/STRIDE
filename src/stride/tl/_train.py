@@ -17,14 +17,23 @@ import torch
 
 from stride.errors import ContractError
 
+from ._fit_setup import (
+    materialize_relation_inputs as _materialize_relation_inputs_once,
+)
+from ._fit_setup import (
+    resolve_runtime_device as _resolve_runtime_device,
+)
+from ._fit_setup import (
+    scale_initial_parameters as _scale_initial_parameters,
+)
 from ._losses import (
     EPSILON_NORM,
     LossContext,
     LossLedger,
-    _ObservationBatchFallback,
     _batched_pairwise_composition_ground_cost_result,
     _compute_geometry_loss,
     _group_blocks_by_fov_shape,
+    _ObservationBatchFallback,
     compute_total_loss,
 )
 from ._optimizer import (
@@ -201,13 +210,11 @@ def train_relation(
     latest_total: float | None = None
     total_steps = 0
 
-    for warmup_step in range(1, int(WARMUP_STEPS) + 1):
+    for _warmup_step in range(1, int(WARMUP_STEPS) + 1):
         ledger, total = _training_step(
             model,
             optimizer,
             prepared,
-            stage="warmup",
-            step_index=warmup_step,
         )
         if initial_total is None:
             initial_total = total
@@ -294,130 +301,6 @@ def train_relation(
     )
 
 
-def _resolve_runtime_device(device: Any) -> torch.device:
-    """Resolve the requested runtime device once before relation materialization."""
-    try:
-        resolved = torch.device(device)
-    except (TypeError, RuntimeError) as exc:
-        raise ContractError(f"invalid runtime device: {device!r}") from exc
-
-    if resolved.type == "cuda":
-        if not torch.cuda.is_available():
-            raise ContractError(f"requested runtime device is unavailable: {resolved}")
-        if resolved.index is not None and resolved.index >= torch.cuda.device_count():
-            raise ContractError(f"requested runtime device is unavailable: {resolved}")
-        return resolved
-
-    if resolved.type == "mps":
-        if not (hasattr(torch.backends, "mps") and torch.backends.mps.is_available()):
-            raise ContractError(f"requested runtime device is unavailable: {resolved}")
-        try:
-            torch.empty((), dtype=torch.float64, device=resolved)
-        except (TypeError, RuntimeError) as exc:
-            raise ContractError(
-                f"requested runtime device does not support float64 tensors: {resolved}"
-            ) from exc
-        return resolved
-
-    return resolved
-
-
-def _materialize_relation_inputs_once(
-    relation: RelationInput,
-    cost_matrix: torch.Tensor,
-    cost_scale: float,
-    *,
-    device: Any | None,
-) -> tuple[RelationInput, tuple[EvidenceBlock, ...], torch.Tensor, float]:
-    """Materialize one relation's evidence and cost once for training setup.
-
-    This is a boundary check and device placement helper, not an audit module.
-    It returns new evidence blocks so repeated objective calls no longer move
-    relation evidence across devices.
-    """
-    if not isinstance(relation, RelationInput):
-        raise ContractError("relation must be a RelationInput object")
-    if len(relation.patient_ids) == 0:
-        raise ContractError("relation.patient_ids must be non-empty")
-    if len(relation.blocks) == 0:
-        raise ContractError("relation.blocks must be non-empty")
-
-    scale = _positive_finite_float(cost_scale, name="cost_scale")
-    try:
-        cost = torch.as_tensor(cost_matrix, dtype=torch.float64, device=device)
-    except (TypeError, ValueError) as exc:
-        raise ContractError("cost_matrix must be coercible to a float64 tensor") from exc
-    if cost.ndim != 2 or cost.shape[0] <= 0 or cost.shape[0] != cost.shape[1]:
-        raise ContractError("cost_matrix must be a non-empty square [K, K] tensor")
-
-    materialized_blocks: list[EvidenceBlock] = []
-    K = int(cost.shape[0])
-    for block in relation.blocks:
-        if not isinstance(block, EvidenceBlock):
-            raise ContractError("relation.blocks must contain EvidenceBlock objects")
-        source = _as_float64_matrix_on_device(
-            block.source_bag,
-            name="source_bag",
-            device=cost.device,
-        )
-        target = _as_float64_matrix_on_device(
-            block.target_bag,
-            name="target_bag",
-            device=cost.device,
-        )
-        if source.shape[1] != target.shape[1]:
-            raise ContractError("source_bag and target_bag must share the K-state axis")
-        if source.shape[1] != K:
-            raise ContractError("evidence bags must align with cost_matrix K-state axis")
-        materialized_blocks.append(
-            EvidenceBlock(
-                patient_id=str(block.patient_id),
-                source_bag=source,
-                target_bag=target,
-                block_id=str(block.block_id),
-                metadata=block.metadata,
-            )
-        )
-
-    materialized_relation = RelationInput(
-        relation_id=relation.relation_id,
-        source_timepoint=relation.source_timepoint,
-        target_timepoint=relation.target_timepoint,
-        source_domain=relation.source_domain,
-        target_domain=relation.target_domain,
-        patient_ids=tuple(str(item) for item in relation.patient_ids),
-        support_counts=relation.support_counts,
-        skipped_patient_ids=relation.skipped_patient_ids,
-        blocks=tuple(materialized_blocks),
-        metadata=relation.metadata,
-    )
-    return materialized_relation, tuple(materialized_blocks), cost, scale
-
-
-def _scale_initial_parameters(
-    patient_ids: Sequence[str],
-    n_states: int,
-    *,
-    device: Any,
-) -> RelationParameters:
-    """Return objective-scale initialization, not optimizer-start logits.
-
-    This deterministic identity-plus-small-open object has no off-diagonal
-    seed. It is used only for objective scale computation and fixed setup
-    quantities such as `s_G_init`.
-    """
-    normalized_patient_ids = _normalize_patient_ids(patient_ids)
-    K = _positive_int(n_states, name="n_states")
-    P = len(normalized_patient_ids)
-    delta_init = min(0.05, 1.0 / float(K + 1))
-
-    A = (1.0 - delta_init) * torch.eye(K, dtype=torch.float64, device=device)
-    A = A.unsqueeze(0).repeat(P, 1, 1)
-    d = torch.full((P, K), delta_init, dtype=torch.float64, device=device)
-    e = torch.full((P, K), delta_init / float(K), dtype=torch.float64, device=device)
-    return RelationParameters(patient_ids=normalized_patient_ids, A=A, d=d, e=e)
-
-
 def _compute_block_fov_cost_scale(
     block: EvidenceBlock,
     *,
@@ -426,17 +309,22 @@ def _compute_block_fov_cost_scale(
     cost_scale: float,
     sinkhorn_config: SinkhornConfig,
 ) -> tuple[float, bool, torch.Tensor, bool]:
-    """Compute fixed per-block `s_G_init` and observed-self cache."""
+    """Compute fixed per-block scale without changing observation weighting.
+
+    This compatibility entry remains in `_train.py` because task-local tests
+    patch its Sinkhorn helpers directly. The calculation is setup-only and is
+    not part of the optimizer hot path.
+    """
     patient_id = str(block.patient_id)
     try:
-        pidx = parameters.patient_ids.index(patient_id)
+        patient_index = parameters.patient_ids.index(patient_id)
     except ValueError as exc:
         raise ContractError("block patient_id must align with relation patient_ids") from exc
 
     predicted_init = predict_target_composition(
         block.source_bag,
-        parameters.A[pidx],
-        parameters.e[pidx],
+        parameters.A[patient_index],
+        parameters.e[patient_index],
     )
     ground = compute_fov_ground_cost_matrix(
         predicted_init,
@@ -452,7 +340,6 @@ def _compute_block_fov_cost_scale(
         fov_cost_scale = 1.0
         floor_used = True
     else:
-        # Setup-only scalar synchronization for fixed `s_G_init`.
         fov_cost_scale = float(torch.quantile(positive.detach(), 0.5).cpu())
         floor_used = False
         if not math.isfinite(fov_cost_scale) or fov_cost_scale <= 0.0:
@@ -495,6 +382,9 @@ def _build_loss_context_once(
     fov_cost_scale_floor_used: dict[str, bool] = {}
     observed_self_ground_costs: dict[str, torch.Tensor] = {}
     observed_self_clipped_negative: dict[str, bool] = {}
+    patient_index_by_id = {
+        str(patient_id): index for index, patient_id in enumerate(relation.patient_ids)
+    }
     try:
         _populate_batched_block_context(
             blocks=blocks,
@@ -535,6 +425,7 @@ def _build_loss_context_once(
         sinkhorn_config=resolved_sinkhorn,
         observed_self_ground_costs=observed_self_ground_costs,
         observed_self_clipped_negative=observed_self_clipped_negative,
+        patient_index_by_id=patient_index_by_id,
     )
     baseline = compute_total_loss(
         scale_params,
@@ -564,6 +455,14 @@ def _build_loss_context_once(
         sinkhorn_config=resolved_sinkhorn,
         observed_self_ground_costs=observed_self_ground_costs,
         observed_self_clipped_negative=observed_self_clipped_negative,
+        patient_index_by_id=patient_index_by_id,
+        normalized_cost_matrix=_normalized_cost_matrix(
+            cost_matrix,
+            cost_scale,
+            n_states=K,
+            device=cost_matrix.device,
+            validate=False,
+        ).detach(),
     )
 
 
@@ -657,9 +556,6 @@ def _training_step(
     model: RelationModel,
     optimizer: torch.optim.Optimizer,
     prepared: _PreparedRelationFit,
-    *,
-    stage: str,
-    step_index: int,
 ) -> tuple[LossLedger, float]:
     """Run one full-batch objective/backward/optimizer step."""
     optimizer.zero_grad(set_to_none=True)
@@ -745,52 +641,6 @@ def _run_improvements(initial_total: float, final_total: float) -> tuple[float, 
     absolute = float(initial_total) - float(final_total)
     denominator = max(abs(float(initial_total)), EPSILON_NORM)
     return absolute, absolute / denominator
-
-
-def _as_float64_matrix_on_device(
-    value: Any,
-    *,
-    name: str,
-    device: Any,
-) -> torch.Tensor:
-    try:
-        tensor = torch.as_tensor(value, dtype=torch.float64, device=device)
-    except (TypeError, ValueError) as exc:
-        raise ContractError(f"{name} must be coercible to a float64 tensor") from exc
-    if tensor.ndim != 2:
-        raise ContractError(f"{name} must be a 2D tensor")
-    if tensor.shape[0] <= 0 or tensor.shape[1] <= 0:
-        raise ContractError(f"{name} must be non-empty")
-    return tensor
-
-
-def _positive_finite_float(value: Any, *, name: str) -> float:
-    try:
-        resolved = float(value)
-    except (TypeError, ValueError) as exc:
-        raise ContractError(f"{name} must be finite and strictly positive") from exc
-    if not math.isfinite(resolved) or resolved <= 0.0:
-        raise ContractError(f"{name} must be finite and strictly positive")
-    return resolved
-
-
-def _positive_int(value: Any, *, name: str) -> int:
-    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
-        raise ContractError(f"{name} must be a positive integer")
-    return int(value)
-
-
-def _normalize_patient_ids(patient_ids: Sequence[str]) -> tuple[str, ...]:
-    if isinstance(patient_ids, (str, bytes)):
-        raise ContractError("patient_ids must be a sequence, not a string")
-    normalized = tuple(str(item).strip() for item in patient_ids)
-    if len(normalized) == 0:
-        raise ContractError("patient_ids must be non-empty")
-    if any(item == "" for item in normalized):
-        raise ContractError("patient_ids must contain non-empty identifiers")
-    if len(set(normalized)) != len(normalized):
-        raise ContractError("patient_ids must not contain duplicates")
-    return normalized
 
 
 def _ensure_finite_tensor_scalar(value: torch.Tensor, *, name: str) -> None:
