@@ -21,6 +21,10 @@ Current engineering boundary:
 - [`tasks/task_A/block3/execution.py`](/home/lenislin/Experiment/projects/STRIDE/tasks/task_A/block3/execution.py)
   may host internal single-subexperiment Phase 3 execution. This is an
   internal package helper only, not a public workflow entrypoint.
+- `python -m tasks.task_A.block3.run` is the internal formal coordinator. A new
+  run stops after generator/3A export; `--resume --approve-generator-review`
+  plus a non-empty `--generator-review-note` continues 3B/3C after the manual
+  checkpoint and preserves the decision in the review directory.
 - `python -m tasks.task_A.block3 <experiment_name> --task-config ... --stage0-h5ad ... --output-dir ...`
   is the internal package-local CLI surface.
 - `--max-reruns <n>` is an internal smoke-test limiter only. Formal Block 3
@@ -83,8 +87,14 @@ Block3b internal implementation decisions:
   source as an adapter/benchmark cost source into the full-estimator
   shared-state cost contract. The runbook does not define a task-local
   geometry prior.
-- `uot_baseline` must reuse the existing STRIDE Sinkhorn/UOT adapter,
-  `src/stride/adapters/ot_sinkhorn.py::batched_uot_solve(..., return_plan=True)`.
+- `uot_baseline` is a Task A Block 3 comparator and is implemented locally in
+  `tasks/task_A/block3/task_uot.py`. It is not part of the public STRIDE package
+  and must not be imported into `src/stride`.
+- The task-local solver uses float64 batched torch log-domain soft-UOT on
+  `cuda:0` for formal runs, with NumPy retained only for unit-level numerical
+  cross-validation. It uses the
+  frozen epsilon schedule `(1.0, 0.2)`, maximum `2000` iterations per epsilon,
+  and tolerance `1e-7`. Its native output is the dense matched plan `P`.
   `lambda_match` uses rerun-shared train calibration over the fixed internal
   `lambda_grid = [0.05, 0.1, 0.5, 1.0, 2.0, 5.0, 10.0]`. The calibration
   target is train-side mean endpoint overlap, `mean(sum(min(x, y)))`. If
@@ -92,10 +102,9 @@ Block3b internal implementation decisions:
   Boundary selection is recorded through native `boundary_hit` metadata as a
   diagnostic and does not trigger automatic grid expansion before the formal
   Block 3 run.
-- The internal Block 3 CLI optional `--device` flag is a runtime control only.
-  `--device cuda` requests CUDA for STRIDE reference/refit methods and the UOT
-  torch runtime used by both UOT train calibration and test solves. Exact
-  transport comparators remain on their CPU solver routes.
+- Formal coordinator runs require `--device cuda:0` and fail if CUDA or the RTX
+  4090 is unavailable. STRIDE reference/refits and task-local UOT use that GPU.
+  Balanced OT, partial OT, and diagonal transport remain exact CPU routes.
 - `partial_ot_baseline` uses rerun-shared
   `matched_mass_budget = mean(sum(min(x_train, y_train)))`.
   `partial_ot_baseline` must use `ot.partial.partial_wasserstein` as the exact
@@ -126,17 +135,15 @@ Block3b internal implementation decisions:
 - Split raw/review artifacts use semantic roots such as `a_benchmark_*` and
   `de_benchmark_*`. Shared truth/native stores may remain shared during
   implementation if `subexperiment_id` is explicit.
-- Reference reuse for `stride_reference` across the same generated realization
-  and device is deferred as a full-data runtime optimization. It is not a
-  subset smoke acceptance gate.
+- Each rerun's `stride_reference` result is checksum-cached once and reused by
+  3B-1, 3B-2, and all 3C reference rows. Ablation caches are separate.
 
 Block3c internal implementation decisions:
 
-- The `3C` design remains frozen, but the current public estimator has no
-  executable consistency, geometry, or recurrence ablation hook. Each `3C`
-  semantic command therefore writes a structured deferred/unsupported status
-  before Stage 0 loading or fitting. It must not emit fabricated raw/review
-  metrics, copy the reference fit, or perform post-hoc masking.
+- The public estimator remains unchanged and has no ablation parameter. Block
+  3C calls a private, non-exported objective policy that shares the same
+  relation resolution, optimizer, training loop, and output assembly as the
+  reference estimator.
 - The core STRIDE internal ablation set is restricted to `consistency`,
   `geometry`, and `recurrence`.
 - Under the current frozen numbering, `3C-1` is `consistency_ablation`, `3C-2`
@@ -169,6 +176,18 @@ Operational rule:
 - Public Block 3 runner, review workflow, and packet bridge behavior require an
   explicit follow-up specification.
 - Block 3 implementation work remains anchored to the docs hierarchy.
+
+Visualization boundary:
+
+- Task A figure generation remains task-local in
+  `tasks/task_A/visualization/figure2_taskA_panels.R`.
+- The script consumes formal descriptive, Block 0, Block 1, and Block 3 raw
+  outputs and writes derived PDFs under the Task A figures directory.
+- Block 3 panels are regenerated only after the full formal `3A/3B/3C` run
+  manifest is complete. The script writes a clean staging directory, requires
+  20 non-empty PDFs that pass `pdfinfo`, and only then replaces final figures.
+- After figure promotion, `python -m tasks.task_A.block3.run --finalize-audit`
+  adds the verified PDF inventory to `block3_execution_audit.json`.
 
 Audit surfaces:
 

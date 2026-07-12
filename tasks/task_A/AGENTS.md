@@ -31,18 +31,23 @@ promoted to scientific authority.
 - `python -m tasks.task_A.block3 <experiment_name>`: internal Block 3 CLI.
   The experiment name is semantic; numbered ids remain `subexperiment_id`
   metadata.
+- `python -m tasks.task_A.block3.run`: internal resumable full-run coordinator.
+  It is not a public STRIDE workflow and does not add a result-packet bridge.
 - `package_results`: packet-local packager for atlas/Block 0/1 outputs
   only; it has no Block 3 manifest bridge parameter.
 
 ## Resume And Rerun Rules
 
-- Block 3 has no checkpoint/resume path. The public Block 3 runner remains
-  absent; internal single-subexperiment execution is package-local.
-- Block 3 live execution is Stage0-only and cost-only. Use Stage 0 h5ad plus
-  Task A config through `python -m tasks.task_A.block3 <semantic_name>`.
-- Run `generator_validation` first for manual sanity review, then run
-  `a_benchmark`, `de_benchmark`, `subbag_consistency_ablation`,
-  `geometry_ablation`, and `recurrence_ablation` if review permits.
+- Block 3 live execution is Stage0-only and cost-only. Formal full runs use
+  Stage 0 h5ad plus Task A config through `python -m tasks.task_A.block3.run`.
+- A new coordinator run writes generator/3A artifacts and exits with
+  `status=awaiting_generator_review`. Continue only with `--resume
+  --approve-generator-review --generator-review-note <note>` after manual
+  review.
+- Resume validates Stage0, config, generator bundle, and completed method-cache
+  checksums. Completed units are skipped; damaged caches fail explicitly.
+- The public Block 3 runner remains absent. The semantic single-experiment CLI
+  remains package-local for focused engineering checks.
 - Do not route live Block 3 through Block 1 manifests, motif-probe support,
   or a diagnostic matrix.
 
@@ -64,7 +69,8 @@ the nearest affected surfaces:
 - `tasks/task_A/README.md` when routing, boundaries, or launch guidance change
 - `tasks/task_A/block3_execution_runbook.md` when launch/verification steps
   change
-- `tests/test_task_a_block3_deferred_surfaces.py`
+- `tests/test_task_a_block3_objective_refits.py`
+- `tests/test_task_a_block3_run_coordinator.py`
 - `tests/test_task_a_result_packet.py`
 - `tests/test_task_a_design_freeze.py`
 - `tests/test_agent_protocol.py` when protocol wording or routing changes

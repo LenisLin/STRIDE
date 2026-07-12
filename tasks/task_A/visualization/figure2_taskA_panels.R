@@ -31,14 +31,53 @@ suppressPackageStartupMessages({
 ###--GLOBAL PATHS, LABELS, AND COLORS--###
 
 # Result roots.
-DESC <- "/mnt/NAS_21T/ProjectResult/STRIDE/task_A/descriptive"
-B0 <- "/mnt/NAS_21T/ProjectResult/STRIDE/task_A/block0"
-B1 <- "/mnt/NAS_21T/ProjectResult/STRIDE/task_A/block1"
-B3 <- "/mnt/NAS_21T/ProjectResult/STRIDE/task_A/block3"
+TASK_A_RESULT_ROOT <- Sys.getenv(
+  "TASK_A_RESULT_ROOT",
+  unset = "/mnt/NAS_21T/ProjectResult/STRIDE/task_A"
+)
+DESC <- file.path(TASK_A_RESULT_ROOT, "descriptive")
+B0 <- file.path(TASK_A_RESULT_ROOT, "block0")
+B1 <- file.path(TASK_A_RESULT_ROOT, "block1")
+B3 <- file.path(TASK_A_RESULT_ROOT, "block3")
 B3_RAW <- file.path(B3, "raw")
-FIG_DIR <- "/mnt/NAS_21T/ProjectResult/STRIDE/task_A/figures"
+FIG_DIR <- Sys.getenv(
+  "TASK_A_FIGURE_DIR",
+  unset = file.path(TASK_A_RESULT_ROOT, "figures_staging")
+)
+FINAL_FIG_DIR <- Sys.getenv(
+  "TASK_A_FINAL_FIGURE_DIR",
+  unset = file.path(TASK_A_RESULT_ROOT, "figures")
+)
 STAGE0_H5AD <- "/mnt/NAS_21T/ProjectData/STRIDE/task_A_stage0_k10/task_A_stage0_k10.h5ad"
 
+block3_manifest_path <- file.path(B3, "block3_run_manifest.json")
+if (!file.exists(block3_manifest_path)) {
+  stop("Block3 run manifest is required before Figure 2 rendering")
+}
+block3_manifest <- jsonlite::read_json(block3_manifest_path, simplifyVector = TRUE)
+if (!identical(block3_manifest$status, "complete")) {
+  stop("Block3 run manifest must have status='complete'")
+}
+if (!identical(block3_manifest$execution_scope, "formal_full_data")) {
+  stop("Figure 2 rendering requires execution_scope='formal_full_data'")
+}
+required_block3_sections <- c(
+  "generator_validation",
+  "a_benchmark",
+  "de_benchmark",
+  "subbag_consistency_ablation",
+  "geometry_ablation",
+  "recurrence_ablation"
+)
+if (!all(block3_manifest$sections[required_block3_sections] == "complete")) {
+  stop("All Block3 sections must be complete before Figure 2 rendering")
+}
+if (normalizePath(FIG_DIR, mustWork = FALSE) == normalizePath(FINAL_FIG_DIR, mustWork = FALSE)) {
+  stop("TASK_A_FIGURE_DIR must be a staging directory distinct from final figures")
+}
+if (dir.exists(FIG_DIR)) {
+  unlink(FIG_DIR, recursive = TRUE, force = TRUE)
+}
 dir.create(FIG_DIR, recursive = TRUE, showWarnings = FALSE)
 
 # Formal field names stay in code; human-readable names are used in figures.
@@ -401,7 +440,6 @@ draw(
   )
 )
 dev.off()
-
 
 ###--Main Figure 2 Panel C: Overall Raw Relation Summaries--###
 
@@ -3818,3 +3856,41 @@ pushViewport(viewport(layout.pos.row = 2, layout.pos.col = 1))
 grid.draw(ggplotGrob(sf2D_amount_plot))
 upViewport(2)
 dev.off()
+
+###--STAGING VALIDATION AND ATOMIC PROMOTION--###
+
+rendered_pdfs <- sort(list.files(FIG_DIR, pattern = "\\.pdf$", full.names = TRUE))
+if (length(rendered_pdfs) != 20L) {
+  stop(sprintf("Expected 20 rendered PDFs, found %d", length(rendered_pdfs)))
+}
+pdf_sizes <- file.info(rendered_pdfs)$size
+if (any(is.na(pdf_sizes)) || any(pdf_sizes <= 0)) {
+  stop("Rendered PDF set contains missing or empty files")
+}
+pdfinfo_status <- vapply(
+  rendered_pdfs,
+  function(path) {
+    suppressWarnings(system2("pdfinfo", path, stdout = FALSE, stderr = FALSE))
+  },
+  integer(1)
+)
+if (any(pdfinfo_status != 0L)) {
+  stop("At least one rendered PDF failed pdfinfo validation")
+}
+
+figure_backup <- paste0(FINAL_FIG_DIR, ".previous.tmp")
+if (dir.exists(figure_backup)) {
+  unlink(figure_backup, recursive = TRUE, force = TRUE)
+}
+if (dir.exists(FINAL_FIG_DIR) && !file.rename(FINAL_FIG_DIR, figure_backup)) {
+  stop("Could not move existing final figure directory to temporary backup")
+}
+if (!file.rename(FIG_DIR, FINAL_FIG_DIR)) {
+  if (dir.exists(figure_backup)) {
+    file.rename(figure_backup, FINAL_FIG_DIR)
+  }
+  stop("Could not promote validated staging figures")
+}
+if (dir.exists(figure_backup)) {
+  unlink(figure_backup, recursive = TRUE, force = TRUE)
+}

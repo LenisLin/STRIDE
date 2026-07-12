@@ -95,6 +95,22 @@ Default safe commands in this repo are:
 Prefer targeted checks over full reruns. Do not trigger large scientific reruns
 unless the user explicitly asks for them.
 
+## Task A Block 3 Execution Environment
+
+- Use `/home/lenislin/miniconda3/envs/slotar/bin/python` for all Task A Block 3
+  Python execution and `/home/lenislin/miniconda3/envs/slotar/bin/Rscript` for
+  Task A figure generation.
+- Set `PYTHONPATH=src:.` for repository-local Task A imports.
+- Prepend
+  `/home/lenislin/miniconda3/envs/slotar/lib/python3.10/site-packages/nvidia/nvjitlink/lib`
+  to `LD_LIBRARY_PATH` before importing Torch so the slotar CUDA 12.4 wheel does
+  not resolve the host CUDA 12.3 `libnvJitLink` first.
+- Formal Block 3 execution requires `torch.cuda.is_available() == True` and an
+  available `cuda:0` device. STRIDE reference/refit and the task-local UOT
+  comparator must fail before execution rather than silently fall back to CPU.
+- Exact balanced OT, partial OT, and diagonal transport comparators remain on
+  their contract-defined CPU routes.
+
 ## Default verification commands
 
 Pick the narrowest proof command that matches the change. Common defaults:

@@ -1,7 +1,7 @@
 # Task A Operations
 
 This is the live Task A engineering runbook for the current
-canonical Task A Block 0/1 first-pass path and the deferred/internal Block 3
+canonical Task A Block 0/1 first-pass path and the internal Block 3
 boundary. The canonical full STRIDE definition now lives in
 [`docs/stride_design_freeze.md`](/home/lenislin/Experiment/projects/STRIDE/docs/stride_design_freeze.md),
 and the frozen Task A migration target lives in
@@ -170,26 +170,33 @@ retained only as a supportive target-open rollup.
   `10` reruns and `8` held-out test patients. `--max-reruns <n>` and
   `--n-test <n>` are internal engineering-smoke controls only; manifests from
   such runs must record `execution_scope=subset_engineering_test`.
-- First export `generator_validation` for manual sanity review. After manual
-  confirmation, `a_benchmark` and `de_benchmark` may run through the formal
-  `stride.tl.fit` reference surface. The three `3C` semantic names are
-  recognized but currently return structured `deferred` status because the
-  public estimator exposes no corresponding ablation hook.
+- Formal execution uses `python -m tasks.task_A.block3.run`. The first call
+  exports the shared generator bundle and `generator_validation`, then stops at
+  `awaiting_generator_review`. Resume requires both `--resume` and
+  `--approve-generator-review`, plus a non-empty `--generator-review-note`.
+  The decision is written to `review/generator_review_decision.json`.
 - Block 3 uses the train-derived multi-FOV generator described in
   `docs/task_A/block3/scientific_contract.md`: train TC-IM templates,
   geometry-gated residual coupling with `tau=2.0`, medoid plus individual
   template mixture with `lambda_individual=0.10`, and FOV generation with
   `eta=0.3`. The live execution route does not use Block1/2 manifests or
   packet-local proxy diagnostics.
-- `3C` remains the frozen refit-ablation design. Current execution does not
-  implement those arms: it writes a structured unsupported/deferred record
-  with the experiment name, requested ablation, `fit_surface="stride.tl.fit"`,
-  reason code, and frozen-contract reference. It never copies a reference fit
-  or emits a post-hoc surrogate as an ablation result.
+- `3C` uses a private, non-exported STRIDE objective policy. Each arm performs
+  an independent estimator refit, zeros only its requested effective term, and
+  retains the fixed full-estimator denominators. Public `stride.tl.fit` has no
+  ablation parameter and remains the reference surface.
 - `3C` uses fixed full-estimator group denominators. Retained objective terms
   keep the reference-fit objective coefficients.
 - `de_benchmark` is open-focused but keeps the complete shared metric
   vocabulary used by the method-bearing Block 3 routes.
+- `uot_baseline` is owned by Task A Block 3 and uses the task-local
+  `tasks/task_A/block3/task_uot.py` solver. It is not a public `src/stride`
+  component. Formal UOT uses float64 batched log-domain execution on `cuda:0`.
+  Balanced OT, partial OT, and diagonal transport remain exact CPU routes.
+- Task A figure generation is maintained in
+  `tasks/task_A/visualization/figure2_taskA_panels.R`. Block 3 panels consume
+  formal raw artifacts only. Rendering requires a complete Block3 run manifest,
+  validates 20 staging PDFs with `pdfinfo`, then promotes the complete set.
 - The live method-bearing patient-level readout surface includes
   `F_L1_total`, `g_L1_total`, `e_L1_total`, mass absolute-error metrics,
   `offdiag_ratio`, `depletion_capture`, `emergence_capture`,
@@ -200,9 +207,9 @@ retained only as a supportive target-open rollup.
   `docs/task_A/spec.md`.
 - The active public Block 3 runner/review/packet bridge remains removed from
   the execution path. The on-disk `tasks/task_A/block3/` package hosts internal
-  single-subexperiment Phase 3 execution with real generator/method/scoring
-  logic plus raw/review artifact writing, but it is still not a public workflow
-  surface and is not proof-carrying authority.
+  coordinator and focused single-subexperiment execution with real
+  generator/method/scoring logic plus raw/review artifact writing, but it is
+  still not a public workflow surface or scientific authority.
 - `package_results` remains atlas/Block 0/1 only and has no Block 3 manifest
   bridge parameter.
 - The Block 3 runbook and contract mirrors in `tasks/task_A/contracts/` now
@@ -217,9 +224,8 @@ retained only as a supportive target-open rollup.
 - `tasks/task_A/block3/` is the internal Block 3 rebuild package. It carries
   generator validation, baseline comparison, ablation execution, and raw/review
   writers for internal Phase 3 runs.
-- Reference-fit reuse across method-bearing routes is a deferred full-data
-  runtime optimization. It is not a subset engineering-smoke acceptance
-  condition.
+- Each rerun's reference fit is checksum-cached once and reused across 3B and
+  3C outputs. The three ablation caches remain independent refits.
 - A public Block 3 workflow or packet bridge requires an explicit follow-up
   specification.
 
@@ -269,7 +275,7 @@ Before the next Block 1 coding round, two review notes must be completed:
 | `block0 execute` | `--task-config`, `--stage0-h5ad`, `--output-dir`, `--n-permutations`, `--master-seed`, optional subset selectors, optional parallel controls | `block0_execution_manifest.json`, `block0_fit_cache.npz`, `block0_fit_cache_index.csv`, `block0_execution_progress.jsonl` | calibration/readiness fields only | Writes reusable fit cache only; does not derive metrics or p-values |
 | `block0 analyze` | `--fit-cache`, `--fit-cache-index`, `--output-dir`, optional `--execution-manifest` | `block0_calibration_manifest.json`, `block0_patient_calibration.csv`, `block0_metric_summary.csv` | calibration/readiness fields only | Reads an existing cache; derives fixed family-summary calibration tables without rerunning STRIDE or permutations |
 | `block1 execute` / `block1 analyze` | `execute: --task-config, --stage0-h5ad, --output-dir, optional --patient-id, optional --device`; `analyze: --execute-manifest, --output-dir` | family-level `stride.tl.fit` native result exports, `block1_execute_manifest.json`, `block1_analysis_manifest.json`, family/source/target summaries, direct `TC-IM` versus `TC-PT` comparison CSVs, and `block1_cohort_relation_comparison.csv` | `diagnostic` for subset routing, `evidence_ready` for full-cohort ready analysis routing | Reads Stage 0 plus config directly through the Task A pair AnnData adapter during execute, then execute/native exports only during analyze; does not read Block 0, descriptive atlas, result packets, or proxy history |
-| `python -m tasks.task_A.block3` | semantic experiment name, `--task-config`, `--stage0-h5ad`, `--output-dir`, optional `--device`, optional engineering-smoke `--max-reruns` and `--n-test` | internal Block 3 raw/review artifacts for one subexperiment | `scaffold_active`; subset runs mark `execution_scope=subset_engineering_test` | Does not expose a public workflow or packet bridge |
+| `python -m tasks.task_A.block3.run` | `--task-config`, `--stage0-h5ad`, `--output-dir`, `--device cuda:0`; resume adds `--resume --approve-generator-review --generator-review-note <note>` | shared generator bundle, checksum caches, all Block 3 raw/review artifacts, run/section manifests, execution audit | factual run status plus `execution_scope`; subset runs mark `subset_engineering_test` | Stops after 3A until review; does not expose a public STRIDE API or packet bridge |
 | `package_results` | canonical atlas manifest, prepare manifest, Block 0 calibration manifest, output root; optional Block 1 packet input | `task_a_result_packet_manifest.json`, `task_a_result_packet_index.csv`, `RESULTS_INDEX.md`, layer manifests/review indexes, and mirrored atlas/Block 0 calibration files | packet-local only | Does not interpret biology, re-run large experiments, fabricate missing result surfaces, copy raw Block 0 fit cache by default, or package Block 3 into the Step 3 canonical packet |
 | `write_semisynthetic_artifacts` | output root, manifest filename, patient count, seed | semisynthetic manifest CSV, `task_a_semisynthetic_contract.json` | `contract_passed` | Does not run the real-data graph |
 | `stride_adapter` helpers | Stage 0 h5ad/AnnData, config bundle | mapping summaries, family-sliced observations, pp-ready pair AnnData, dry-run rows | helper only | Does not touch `src/stride/` semantics |
@@ -295,7 +301,7 @@ Before the next Block 1 coding round, two review notes must be completed:
   canonical `stride.tl.fit(...)`.
 - Standalone bridge-expert APIs remain deferred.
 - New public STRIDE core APIs require a separate contract update.
-- Block 3 reference/ablation migration remains deferred.
+- Block 3 result-packet integration remains deferred.
 
 ## Examples
 
