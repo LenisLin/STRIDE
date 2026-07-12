@@ -32,7 +32,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--device",
         default=None,
-        help="Optional torch device forwarded to STRIDE refits and UOT runtime, e.g. 'cuda' or 'cpu'.",
+        help="Optional torch device forwarded to STRIDE reference/refits, e.g. 'cuda' or 'cpu'.",
     )
     parser.add_argument(
         "--dry-run",

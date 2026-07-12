@@ -553,7 +553,9 @@ def _write_json(path: Path, payload: dict[str, Any]) -> None:
         3. Write the encoded text to the requested path.
     """
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    temporary.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+    temporary.replace(path)
 
 
 def _write_csv(path: Path, frame: pd.DataFrame) -> None:
@@ -573,7 +575,9 @@ def _write_csv(path: Path, frame: pd.DataFrame) -> None:
         2. Serialize the frame without an implicit index column.
     """
     path.parent.mkdir(parents=True, exist_ok=True)
-    frame.to_csv(path, index=False)
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    frame.to_csv(temporary, index=False)
+    temporary.replace(path)
 
 
 def _coerce_frame(

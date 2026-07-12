@@ -59,6 +59,7 @@ def build_3b2_rows(
                 cohort_inputs=cohort_inputs,
                 truths=truths,
                 runtime=resolved_runtime,
+                rerun_id=rerun.rerun_id,
             ),
             "uot_baseline": shared._run_uot_baseline(
                 truths=truths,

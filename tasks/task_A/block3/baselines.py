@@ -25,11 +25,12 @@ from dataclasses import dataclass, field
 import numpy as np
 
 from .calibration import UOTCalibrationResult, calibrate_uot_lambda
+from .task_uot import STATUS_OK, UOTSolverConfig, solve_uot_batch
 
 
 @dataclass(frozen=True)
 class RuntimeSettings:
-    """Task-local runtime settings retained for UOT comparator calls."""
+    """Task-local runtime request metadata retained for UOT comparator calls."""
 
     uot_backend: str = "numpy"
     device: str | None = None
@@ -47,18 +48,6 @@ LIVE_3B2_BASELINES: tuple[str, ...] = (
     "diagonal_transport_baseline",
 )
 PARTIAL_OT_NUMERICAL_ATOL = 1e-5
-
-
-def _load_uot_solver():
-    try:
-        from stride.adapters.ot_sinkhorn import (  # type: ignore[import-not-found]
-            ObservationMatchConfig,
-            batched_uot_solve,
-            build_observation_kernels,
-        )
-    except ModuleNotFoundError:
-        return None
-    return ObservationMatchConfig, batched_uot_solve, build_observation_kernels
 
 
 @dataclass(frozen=True)
@@ -133,9 +122,19 @@ def diagonal_transport_plan(x: np.ndarray, y: np.ndarray) -> np.ndarray:
 
 
 def balanced_ot_plan(x: np.ndarray, y: np.ndarray) -> np.ndarray:
-    """Return a deterministic balanced-route fallback plan for unit tests."""
+    """Return the exact balanced OT plan from POT on the shared state axis."""
 
-    return diagonal_transport_plan(x, y)
+    import ot
+
+    source = _validate_vector("x", x)
+    target = _validate_vector("y", y)
+    if not np.isclose(source.sum(), target.sum(), atol=1e-10, rtol=0.0):
+        raise ValueError("balanced OT requires equal source and target mass")
+    cost = _validate_cost_matrix_or_default(None, (source.size, target.size))
+    plan = np.asarray(ot.emd(source, target, cost), dtype=float)
+    if plan.shape != cost.shape or not np.isfinite(plan).all():
+        raise ValueError("balanced OT solver returned an invalid plan")
+    return plan
 
 
 def partial_ot_plan(
@@ -231,46 +230,84 @@ def solve_uot_plan(
     lambda_value = float(match_penalty)
     if not np.isfinite(lambda_value) or lambda_value <= 0.0:
         raise ValueError("match_penalty must be finite and positive")
-    solver = _load_uot_solver()
-    if solver is None:
-        return PlanBaselineResult(
-            P=None,
-            status="solver_unavailable",
-            metadata={
-                "solver": "stride.adapters.ot_sinkhorn",
-                "availability": "missing_from_current_core_package",
-            },
-        )
-    ObservationMatchConfig, batched_uot_solve, build_observation_kernels = solver
-    cfg = ObservationMatchConfig(
-        eps_schedule=(1.0, 0.2),
-        max_iter=2000,
-        tol=1e-7,
-        runtime_settings=runtime_settings or RuntimeSettings(),
+    resolved_runtime = runtime_settings or RuntimeSettings()
+    result = solve_uot_batch(
+        source=source[None, :],
+        target=target[None, :],
+        cost_matrix=cost,
+        match_penalties=np.array([lambda_value], dtype=float),
+        config=UOTSolverConfig(),
+        backend=resolved_runtime.uot_backend,
+        device=resolved_runtime.device or "cuda:0",
     )
-    kernels = build_observation_kernels(cost, cfg.eps_schedule, cost_scale=1.0)
-    metrics, details, status = batched_uot_solve(
-        A=source[None, :],
-        B=target[None, :],
-        lambda_pl=np.array([lambda_value], dtype=float),
-        kernels=kernels,
-        cfg=cfg,
-        tau_external=None,
-        return_plan=True,
-    )
-    status_value = str(status[0])
+    status_value = str(result.status[0])
+    plan = np.asarray(result.plans[0], dtype=float)
     metadata = {
         "lambda": lambda_value,
+        "solver": "tasks.task_A.block3.task_uot.solve_uot_batch",
+        "solver_backend": f"{resolved_runtime.uot_backend}_log_domain",
+        "requested_backend": resolved_runtime.uot_backend,
+        "requested_device": resolved_runtime.device,
         "solver_status": status_value,
-        "matched_mass": float(metrics["T"][0]) if np.isfinite(metrics["T"][0]) else None,
+        "iterations": int(result.iterations[0]),
+        "matched_mass": float(np.sum(plan, dtype=float)) if status_value == STATUS_OK else None,
     }
-    if status_value != "ok":
+    if status_value != STATUS_OK:
         return PlanBaselineResult(P=None, status=status_value, metadata=metadata)
-    if "matching_plan" not in details:
-        raise ValueError("UOT solver did not return details['matching_plan']")
-    # P is the native matched transport plan emitted by plan-based comparators.
-    plan = np.asarray(details["matching_plan"][0], dtype=float)
-    return PlanBaselineResult(P=plan, status="ok", metadata=metadata)
+    return PlanBaselineResult(P=plan, status=STATUS_OK, metadata=metadata)
+
+
+def solve_uot_plans_batch(
+    *,
+    source: np.ndarray,
+    target: np.ndarray,
+    cost_matrix: np.ndarray,
+    match_penalty: float,
+    runtime_settings: RuntimeSettings,
+) -> tuple[PlanBaselineResult, ...]:
+    """Solve all test-side UOT rows in one task-local batch."""
+    source_rows = np.asarray(source, dtype=float)
+    target_rows = np.asarray(target, dtype=float)
+    if source_rows.ndim != 2 or target_rows.shape != source_rows.shape:
+        raise ValueError("source and target batches must share one 2D shape")
+    cost = _validate_cost_matrix(
+        cost_matrix,
+        (source_rows.shape[1], target_rows.shape[1]),
+    )
+    lambda_value = float(match_penalty)
+    result = solve_uot_batch(
+        source=source_rows,
+        target=target_rows,
+        cost_matrix=cost,
+        match_penalties=np.full(source_rows.shape[0], lambda_value, dtype=float),
+        config=UOTSolverConfig(),
+        backend=runtime_settings.uot_backend,
+        device=runtime_settings.device or "cuda:0",
+    )
+    outputs: list[PlanBaselineResult] = []
+    for row_index, row_status in enumerate(result.status):
+        status_value = str(row_status)
+        plan = np.asarray(result.plans[row_index], dtype=float)
+        metadata = {
+            "lambda": lambda_value,
+            "solver": "tasks.task_A.block3.task_uot.solve_uot_batch",
+            "solver_backend": f"{runtime_settings.uot_backend}_log_domain",
+            "requested_backend": runtime_settings.uot_backend,
+            "requested_device": runtime_settings.device,
+            "solver_status": status_value,
+            "iterations": int(result.iterations[row_index]),
+            "matched_mass": (
+                float(np.sum(plan, dtype=float)) if status_value == STATUS_OK else None
+            ),
+        }
+        outputs.append(
+            PlanBaselineResult(
+                P=plan if status_value == STATUS_OK else None,
+                status=status_value,
+                metadata=metadata,
+            )
+        )
+    return tuple(outputs)
 
 
 def estimate_uot_matched_mass(
@@ -297,31 +334,20 @@ def estimate_uot_matched_mass(
     lambda_value = float(match_penalty)
     if not np.isfinite(lambda_value) or lambda_value <= 0.0:
         raise ValueError("match_penalty must be finite and positive")
-    solver = _load_uot_solver()
-    if solver is None:
-        return float("inf")
-    ObservationMatchConfig, batched_uot_solve, build_observation_kernels = solver
-    cfg = ObservationMatchConfig(
-        eps_schedule=(1.0, 0.2),
-        max_iter=2000,
-        tol=1e-7,
-        runtime_settings=runtime_settings or RuntimeSettings(),
+    resolved_runtime = runtime_settings or RuntimeSettings()
+    result = solve_uot_batch(
+        source=source_rows,
+        target=target_rows,
+        cost_matrix=cost,
+        match_penalties=np.full(source_rows.shape[0], lambda_value, dtype=float),
+        config=UOTSolverConfig(),
+        backend=resolved_runtime.uot_backend,
+        device=resolved_runtime.device or "cuda:0",
     )
-    kernels = build_observation_kernels(cost, cfg.eps_schedule, cost_scale=1.0)
-    _metrics, details, status = batched_uot_solve(
-        A=source_rows,
-        B=target_rows,
-        lambda_pl=np.full(source_rows.shape[0], lambda_value, dtype=float),
-        kernels=kernels,
-        cfg=cfg,
-        tau_external=None,
-        return_plan=True,
-    )
-    ok_mask = np.asarray(status == "ok", dtype=bool)
+    ok_mask = np.asarray(result.status == STATUS_OK, dtype=bool)
     if not np.any(ok_mask):
         return float("inf")
-    plans = np.asarray(details["matching_plan"], dtype=float)
-    return float(np.mean(np.sum(plans[ok_mask], axis=(1, 2), dtype=float)))
+    return float(np.mean(np.sum(result.plans[ok_mask], axis=(1, 2), dtype=float)))
 
 
 __all__ = [
@@ -335,4 +361,5 @@ __all__ = [
     "partial_ot_plan",
     "estimate_uot_matched_mass",
     "solve_uot_plan",
+    "solve_uot_plans_batch",
 ]

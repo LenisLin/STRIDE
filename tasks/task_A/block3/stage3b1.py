@@ -59,6 +59,7 @@ def build_3b1_rows(
                 cohort_inputs=cohort_inputs,
                 truths=truths,
                 runtime=resolved_runtime,
+                rerun_id=rerun.rerun_id,
             ),
             "balanced_ot_baseline": shared._run_balanced_ot_baseline(
                 cohort_inputs=cohort_inputs,

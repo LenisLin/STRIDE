@@ -43,8 +43,12 @@ Why this module exists:
 """
 from __future__ import annotations
 
+import hashlib
 import json
-from dataclasses import dataclass
+import os
+from collections.abc import Callable
+from dataclasses import dataclass, field
+from multiprocessing import get_context
 from pathlib import Path
 from typing import Any
 
@@ -80,7 +84,7 @@ from .baselines import (
     diagonal_transport_plan,
     estimate_uot_matched_mass,
     partial_ot_plan,
-    solve_uot_plan,
+    solve_uot_plans_batch,
 )
 from .calibration import UOTCalibrationResult, calibrate_uot_lambda
 from .contracts import (
@@ -184,32 +188,35 @@ class Block3InternalExecutionResult:
 
 
 @dataclass(frozen=True)
-class Block3DeferredExecutionResult:
-    """Structured status for a recognized but currently unsupported ablation."""
-
-    subexperiment_id: str
-    experiment_name: str
-    requested_ablation: str
-    fit_surface: str
-    reason_code: str
-    frozen_contract_reference: str
-    status_path: Path
-
-
-@dataclass(frozen=True)
 class Block3RuntimeControls:
     """Optional runtime controls for internal Block 3 method execution."""
 
     device: object | None = None
+    cache_dir: Path | None = None
+    stride_cache: dict[tuple[str, str], dict[str, Block3MethodOutput]] = field(
+        default_factory=dict,
+        compare=False,
+    )
+    uot_calibration_cache: dict[tuple[str, ...], UOTCalibrationResult] = field(
+        default_factory=dict,
+        compare=False,
+    )
+    uot_output_cache: dict[tuple[str, ...], dict[str, Block3MethodOutput]] = field(
+        default_factory=dict,
+        compare=False,
+    )
+    progress_callback: Callable[[dict[str, object]], None] | None = field(
+        default=None,
+        compare=False,
+    )
 
     def requested_device_label(self) -> str | None:
         return None if self.device is None else str(self.device)
 
     def uot_runtime_settings(self) -> RuntimeSettings:
         label = self.requested_device_label()
-        if label is not None and label.startswith(("cuda", "mps")):
-            return RuntimeSettings(uot_backend="torch", device=label)
-        return RuntimeSettings()
+        backend = "torch" if label is not None else "numpy"
+        return RuntimeSettings(uot_backend=backend, device=label)
 
 
 @dataclass(frozen=True)
@@ -1158,19 +1165,57 @@ def _run_stride_method(
     truths: list[Block3PatientTruth],
     runtime: Block3RuntimeControls | None = None,
     ablation_mode: str = "none",
+    rerun_id: str | None = None,
 ) -> dict[str, Block3MethodOutput]:
     """Run canonical STRIDE or one STRIDE ablation on generated FOV inputs."""
 
     resolved_runtime = runtime or Block3RuntimeControls()
+    cache_rerun_id = rerun_id or "patients_" + "_".join(
+        truth.patient_id for truth in truths
+    )
+    cache_key = (ablation_mode, cache_rerun_id)
+    cached = resolved_runtime.stride_cache.get(cache_key)
+    if cached is not None:
+        return cached
+    disk_cached = _load_stride_method_cache(
+        runtime=resolved_runtime,
+        rerun_id=cache_rerun_id,
+        ablation_mode=ablation_mode,
+        truths=truths,
+    )
+    if disk_cached is not None:
+        resolved_runtime.stride_cache[cache_key] = disk_cached
+        return disk_cached
+    estimator = stride_tl_fit
     if ablation_mode != "none":
-        raise ContractError(
-            "Block 3C ablation refit arms require a live stride.tl.fit ablation hook; "
-            f"current stride.tl.fit exposes no ablation parameter for {ablation_mode!r}."
+        from stride.tl._objective import (
+            NO_CONSISTENCY_OBJECTIVE_POLICY,
+            NO_GEOMETRY_OBJECTIVE_POLICY,
+            NO_RECURRENCE_OBJECTIVE_POLICY,
         )
+        from stride.tl._run import _fit_with_objective_policy
+
+        policy_by_mode = {
+            "consistency": NO_CONSISTENCY_OBJECTIVE_POLICY,
+            "geometry": NO_GEOMETRY_OBJECTIVE_POLICY,
+            "recurrence": NO_RECURRENCE_OBJECTIVE_POLICY,
+        }
+        try:
+            policy = policy_by_mode[ablation_mode]
+        except KeyError as exc:
+            raise ContractError(f"Unsupported Block 3 ablation mode: {ablation_mode!r}") from exc
+
+        def estimator(adata: Any, *, device: Any) -> Any:
+            return _fit_with_objective_policy(
+                adata,
+                device=device,
+                objective_policy=policy,
+            )
+
     fit_result = fit_task_a_pair(
         _make_adata_for_truths(truths, cohort_inputs=cohort_inputs),
         device=resolved_runtime.device,
-        estimator=stride_tl_fit,
+        estimator=estimator,
     )
     relations = extract_task_a_relations(fit_result)
     if len(relations) != 1:
@@ -1188,6 +1233,9 @@ def _run_stride_method(
             ablation_mode=ablation_mode,
         )
         metadata["requested_device"] = resolved_runtime.requested_device_label()
+        if ablation_mode != "none":
+            metadata["zeroed_objective_term"] = ablation_mode
+            metadata["fixed_denominator_policy"] = True
         outputs[patient_id] = Block3MethodOutput(
             patient_id=patient_id,
             fit_status="ok",
@@ -1198,6 +1246,135 @@ def _run_stride_method(
             mu_plus=np.asarray(truth.y, dtype=float).copy(),
             metadata=metadata,
         )
+    resolved_runtime.stride_cache[cache_key] = outputs
+    _write_stride_method_cache(
+        runtime=resolved_runtime,
+        rerun_id=cache_rerun_id,
+        ablation_mode=ablation_mode,
+        outputs=outputs,
+    )
+    if resolved_runtime.progress_callback is not None:
+        resolved_runtime.progress_callback(
+            {
+                "unit": "stride_fit",
+                "rerun_id": cache_rerun_id,
+                "ablation_mode": ablation_mode,
+                "status": "complete",
+            }
+        )
+    return outputs
+
+
+def _stride_cache_path(
+    runtime: Block3RuntimeControls,
+    *,
+    rerun_id: str,
+    ablation_mode: str,
+) -> Path | None:
+    if runtime.cache_dir is None:
+        return None
+    method_dir = "reference" if ablation_mode == "none" else f"{ablation_mode}_ablation"
+    return Path(runtime.cache_dir) / method_dir / f"{rerun_id}.npz"
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _write_stride_method_cache(
+    *,
+    runtime: Block3RuntimeControls,
+    rerun_id: str,
+    ablation_mode: str,
+    outputs: dict[str, Block3MethodOutput],
+) -> None:
+    path = _stride_cache_path(
+        runtime,
+        rerun_id=rerun_id,
+        ablation_mode=ablation_mode,
+    )
+    if path is None:
+        return
+    if path.exists():
+        raise ContractError(f"completed STRIDE cache must not be overwritten: {path}")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    patient_ids = tuple(outputs)
+    tmp_path = path.with_suffix(".npz.tmp")
+    with tmp_path.open("wb") as handle:
+        np.savez_compressed(
+            handle,
+            patient_ids=np.asarray(patient_ids, dtype=str),
+            A=np.stack([np.asarray(outputs[item].A, dtype=float) for item in patient_ids]),
+            d=np.stack([np.asarray(outputs[item].d, dtype=float) for item in patient_ids]),
+            e=np.stack([np.asarray(outputs[item].e, dtype=float) for item in patient_ids]),
+            mu_minus=np.stack(
+                [np.asarray(outputs[item].mu_minus, dtype=float) for item in patient_ids]
+            ),
+            mu_plus=np.stack(
+                [np.asarray(outputs[item].mu_plus, dtype=float) for item in patient_ids]
+            ),
+            metadata_json=np.asarray(
+                [json.dumps(outputs[item].metadata or {}, sort_keys=True) for item in patient_ids],
+                dtype=str,
+            ),
+            ablation_mode=np.asarray([ablation_mode], dtype=str),
+        )
+    tmp_path.replace(path)
+    checksum_path = path.with_suffix(path.suffix + ".sha256")
+    checksum_tmp = checksum_path.with_suffix(checksum_path.suffix + ".tmp")
+    checksum_tmp.write_text(_sha256_file(path) + "\n", encoding="ascii")
+    checksum_tmp.replace(checksum_path)
+
+
+def _load_stride_method_cache(
+    *,
+    runtime: Block3RuntimeControls,
+    rerun_id: str,
+    ablation_mode: str,
+    truths: list[Block3PatientTruth],
+) -> dict[str, Block3MethodOutput] | None:
+    path = _stride_cache_path(
+        runtime,
+        rerun_id=rerun_id,
+        ablation_mode=ablation_mode,
+    )
+    if path is None or not path.exists():
+        return None
+    checksum_path = path.with_suffix(path.suffix + ".sha256")
+    if not checksum_path.exists() or checksum_path.read_text(encoding="ascii").strip() != _sha256_file(path):
+        raise ContractError(f"STRIDE cache checksum mismatch: {path}")
+    with np.load(path, allow_pickle=False) as payload:
+        patient_ids = tuple(str(item) for item in payload["patient_ids"].tolist())
+        expected_ids = tuple(truth.patient_id for truth in truths)
+        if patient_ids != expected_ids:
+            raise ContractError(f"STRIDE cache patient axis mismatch: {path}")
+        if str(payload["ablation_mode"][0]) != ablation_mode:
+            raise ContractError(f"STRIDE cache ablation mode mismatch: {path}")
+        A = np.asarray(payload["A"], dtype=float)
+        d = np.asarray(payload["d"], dtype=float)
+        e = np.asarray(payload["e"], dtype=float)
+        mu_minus = np.asarray(payload["mu_minus"], dtype=float)
+        mu_plus = np.asarray(payload["mu_plus"], dtype=float)
+        metadata_json = tuple(str(item) for item in payload["metadata_json"].tolist())
+    truth_by_patient = {truth.patient_id: truth for truth in truths}
+    outputs = {}
+    for index, patient_id in enumerate(patient_ids):
+        if patient_id not in truth_by_patient:
+            raise ContractError(f"STRIDE cache contains unknown patient: {patient_id}")
+        outputs[patient_id] = Block3MethodOutput(
+            patient_id=patient_id,
+            fit_status="ok",
+            A=A[index],
+            d=d[index],
+            e=e[index],
+            mu_minus=mu_minus[index],
+            mu_plus=mu_plus[index],
+            metadata=json.loads(metadata_json[index]),
+        )
     return outputs
 
 
@@ -1206,51 +1383,33 @@ def _run_balanced_ot_baseline(
     cohort_inputs: Block3CohortInputs,
     truths: list[Block3PatientTruth],
 ) -> dict[str, Block3MethodOutput]:
-    """Run the exact balanced-OT closed baseline over the fixed cost matrix.
-
-    The transport equalities are encoded with one redundant marginal
-    constraint removed. On simplex marginals the final column sum is implied by
-    the row sums plus the preceding column sums, and keeping that dependent
-    equality can trigger false HiGHS infeasibility on numerically delicate
-    real-data marginals.
-    """
-
-    from scipy.optimize import linprog
+    """Run exact POT balanced OT over the fixed cost matrix."""
 
     outputs: dict[str, Block3MethodOutput] = {}
     cost_matrix = np.asarray(cohort_inputs.cost_matrix, dtype=float)
     n_states = cost_matrix.shape[0]
-    c = cost_matrix.reshape(-1)
-    row_constraints = []
-    col_constraints = []
-    for row_index in range(n_states):
-        row = np.zeros(n_states * n_states, dtype=float)
-        row[row_index * n_states : (row_index + 1) * n_states] = 1.0
-        row_constraints.append(row)
-    for col_index in range(n_states):
-        col = np.zeros(n_states * n_states, dtype=float)
-        col[col_index::n_states] = 1.0
-        col_constraints.append(col)
-    A_eq = np.vstack(row_constraints + col_constraints[:-1])
-    for truth in truths:
-        x = np.asarray(truth.x, dtype=float)
-        y = np.asarray(truth.y, dtype=float)
-        b_eq = np.concatenate([x, y[:-1]]).astype(float, copy=False)
-        result = linprog(
-            c=c,
-            A_eq=A_eq,
-            b_eq=b_eq,
-            bounds=[(0.0, None)] * (n_states * n_states),
-            method="highs",
+    payloads = [
+        (
+            truth.patient_id,
+            np.asarray(truth.x, dtype=float),
+            np.asarray(truth.y, dtype=float),
+            cost_matrix,
         )
-        if not result.success:
-            raise ContractError(f"Balanced OT baseline failed for patient {truth.patient_id}: {result.message}")
-        transport = np.asarray(result.x, dtype=float).reshape(n_states, n_states)
+        for truth in truths
+    ]
+    truth_by_patient = {truth.patient_id: truth for truth in truths}
+    for patient_id, transport in _run_exact_spawn_pool(_balanced_ot_worker, payloads):
+        truth = truth_by_patient[patient_id]
+        x = np.asarray(truth.x, dtype=float)
+        if transport.shape != (n_states, n_states) or not np.isfinite(transport).all():
+            raise ContractError(
+                f"Balanced OT baseline failed for patient {patient_id}"
+            )
         operator = np.zeros_like(transport)
         positive_mask = x > _TOL
         operator[positive_mask] = transport[positive_mask] / x[positive_mask, None]
-        outputs[truth.patient_id] = Block3MethodOutput(
-            patient_id=truth.patient_id,
+        outputs[patient_id] = Block3MethodOutput(
+            patient_id=patient_id,
             fit_status="ok",
             A=operator,
             d=np.zeros(n_states, dtype=float),
@@ -1260,6 +1419,49 @@ def _run_balanced_ot_baseline(
             P=transport,
         )
     return outputs
+
+
+def _balanced_ot_worker(
+    payload: tuple[str, np.ndarray, np.ndarray, np.ndarray],
+) -> tuple[str, np.ndarray]:
+    """Solve one exact balanced plan in a spawned CPU worker."""
+    import ot
+
+    patient_id, source, target, cost_matrix = payload
+    transport = np.asarray(ot.emd(source, target, cost_matrix), dtype=float)
+    return patient_id, transport
+
+
+def _partial_ot_worker(
+    payload: tuple[str, np.ndarray, np.ndarray, np.ndarray, float | None],
+) -> tuple[str, PlanBaselineResult]:
+    """Solve one exact partial plan in a spawned CPU worker."""
+    patient_id, source, target, cost_matrix, matched_mass_budget = payload
+    return patient_id, partial_ot_plan(
+        source,
+        target,
+        cost_matrix=cost_matrix,
+        matched_mass_budget=matched_mass_budget,
+    )
+
+
+def _run_exact_spawn_pool(function: Any, payloads: list[Any]) -> list[Any]:
+    """Run exact CPU comparators with spawn and one BLAS thread per worker."""
+    if not payloads:
+        return []
+    thread_variables = ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS")
+    previous = {name: os.environ.get(name) for name in thread_variables}
+    try:
+        for name in thread_variables:
+            os.environ[name] = "1"
+        with get_context("spawn").Pool(processes=min(16, len(payloads))) as pool:
+            return pool.map(function, payloads)
+    finally:
+        for name, value in previous.items():
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value
 
 
 def _run_plan_baseline(
@@ -1316,6 +1518,41 @@ def _run_plan_baseline(
     return outputs
 
 
+def _method_output_from_plan_result(
+    *,
+    truth: Block3PatientTruth,
+    result: PlanBaselineResult,
+) -> Block3MethodOutput:
+    """Convert one native plan result through the shared Task A analysis layer."""
+    x = np.asarray(truth.x, dtype=float)
+    y = np.asarray(truth.y, dtype=float)
+    plan = None if result.P is None else np.asarray(result.P, dtype=float)
+    if result.status != "ok" or plan is None:
+        return Block3MethodOutput(
+            patient_id=truth.patient_id,
+            fit_status=result.status,
+            A=None,
+            d=None,
+            e=None,
+            mu_minus=x,
+            mu_plus=None,
+            P=None,
+            metadata=result.metadata,
+        )
+    A, d, e = derive_A_d_e_from_plan(x=x, y=y, P=plan, tol=_TOL)
+    return Block3MethodOutput(
+        patient_id=truth.patient_id,
+        fit_status="ok",
+        A=A,
+        d=d,
+        e=e,
+        mu_minus=x,
+        mu_plus=np.sum(plan, axis=0, dtype=float),
+        P=plan,
+        metadata=result.metadata,
+    )
+
+
 def _run_uot_baseline(
     *,
     truths: list[Block3PatientTruth],
@@ -1332,21 +1569,37 @@ def _run_uot_baseline(
     """
 
     resolved_runtime = runtime or Block3RuntimeControls()
-    uot_runtime = resolved_runtime.uot_runtime_settings()
-    outputs = _run_plan_baseline(
-        truths=truths,
-        plan_builder=lambda x, y: solve_uot_plan(
-            x=x,
-            y=y,
-            cost_matrix=cost_matrix,
-            match_penalty=match_penalty,
-            runtime_settings=uot_runtime,
-        ),
+    uot_payload = np.concatenate(
+        [
+            np.vstack([np.asarray(truth.x, dtype=float) for truth in truths]).ravel(),
+            np.vstack([np.asarray(truth.y, dtype=float) for truth in truths]).ravel(),
+        ]
     )
+    cache_key = tuple(truth.patient_id for truth in truths) + (
+        f"lambda={match_penalty:.17g}",
+        hashlib.sha256(uot_payload.tobytes()).hexdigest(),
+    )
+    cached_outputs = resolved_runtime.uot_output_cache.get(cache_key)
+    if cached_outputs is not None:
+        return cached_outputs
+    uot_runtime = resolved_runtime.uot_runtime_settings()
+    plan_results = solve_uot_plans_batch(
+        source=np.vstack([np.asarray(truth.x, dtype=float) for truth in truths]),
+        target=np.vstack([np.asarray(truth.y, dtype=float) for truth in truths]),
+        cost_matrix=cost_matrix,
+        match_penalty=match_penalty,
+        runtime_settings=uot_runtime,
+    )
+    outputs: dict[str, Block3MethodOutput] = {}
+    for truth, plan_result in zip(truths, plan_results, strict=True):
+        outputs[truth.patient_id] = _method_output_from_plan_result(
+            truth=truth,
+            result=plan_result,
+        )
     runtime_metadata = {"requested_device": resolved_runtime.requested_device_label()}
     if calibration_metadata is None:
         calibration_metadata = {}
-    return {
+    finalized = {
         patient_id: Block3MethodOutput(
             patient_id=output.patient_id,
             fit_status=output.fit_status,
@@ -1360,6 +1613,8 @@ def _run_uot_baseline(
         )
         for patient_id, output in outputs.items()
     }
+    resolved_runtime.uot_output_cache[cache_key] = finalized
+    return finalized
 
 
 def _run_partial_ot_baseline(
@@ -1376,15 +1631,30 @@ def _run_partial_ot_baseline(
     clipping status for each patient.
     """
 
-    outputs = _run_plan_baseline(
-        truths=truths,
-        plan_builder=lambda x, y: partial_ot_plan(
-            x,
-            y,
-            cost_matrix=cost_matrix,
-            matched_mass_budget=matched_mass_budget,
-        ),
-    )
+    if cost_matrix is None:
+        n_states = len(np.asarray(truths[0].x, dtype=float))
+        resolved_cost = np.ones((n_states, n_states), dtype=float)
+        np.fill_diagonal(resolved_cost, 0.0)
+    else:
+        resolved_cost = np.asarray(cost_matrix, dtype=float)
+    payloads = [
+        (
+            truth.patient_id,
+            np.asarray(truth.x, dtype=float),
+            np.asarray(truth.y, dtype=float),
+            resolved_cost,
+            matched_mass_budget,
+        )
+        for truth in truths
+    ]
+    result_by_patient = dict(_run_exact_spawn_pool(_partial_ot_worker, payloads))
+    outputs = {
+        truth.patient_id: _method_output_from_plan_result(
+            truth=truth,
+            result=result_by_patient[truth.patient_id],
+        )
+        for truth in truths
+    }
     if calibration_metadata is None:
         return outputs
     return {
@@ -1482,6 +1752,10 @@ def _calibrated_uot_lambda_for_train(
         train_patient_ids=train_patient_ids,
     )
     resolved_runtime = runtime or Block3RuntimeControls()
+    cache_key = tuple(train_patient_ids)
+    cached = resolved_runtime.uot_calibration_cache.get(cache_key)
+    if cached is not None:
+        return cached
     uot_runtime = resolved_runtime.uot_runtime_settings()
     calibration = calibrate_uot_lambda(
         train_pairs=train_pairs,
@@ -1492,6 +1766,7 @@ def _calibrated_uot_lambda_for_train(
             runtime_settings=uot_runtime,
         ),
     )
+    resolved_runtime.uot_calibration_cache[cache_key] = calibration
     return calibration
 
 
@@ -1980,18 +2255,10 @@ def execute_internal_block3_experiment(
     device: object | None = None,
     max_reruns: int | None = None,
     n_test: int | None = None,
-) -> Block3InternalExecutionResult | Block3DeferredExecutionResult:
+) -> Block3InternalExecutionResult:
     """Execute one semantic Block 3 experiment from Stage0 h5ad plus config."""
 
     executable_spec = resolve_block3_experiment_name(experiment_name)
-    deferred_ablation = _deferred_ablation_name(executable_spec.subexperiment_id)
-    if deferred_ablation is not None:
-        return _write_block3_deferred_status(
-            output_dir=output_dir,
-            subexperiment_id=executable_spec.subexperiment_id,
-            experiment_name=experiment_name,
-            requested_ablation=deferred_ablation,
-        )
     runtime = Block3RuntimeControls(device=device)
     n_generator_reruns = _N_GENERATOR_RERUNS if max_reruns is None else int(max_reruns)
     n_test_patients = _N_TEST_PATIENTS if n_test is None else int(n_test)
@@ -2026,49 +2293,8 @@ def execute_internal_block3_experiment(
     )
 
 
-def _deferred_ablation_name(subexperiment_id: str) -> str | None:
-    return {
-        Block3SubexperimentId.CONSISTENCY_ABLATION.value: "subbag_consistency",
-        Block3SubexperimentId.GEOMETRY_ABLATION.value: "geometry",
-        Block3SubexperimentId.RECURRENCE_ABLATION.value: "recurrence",
-    }.get(subexperiment_id)
-
-
-def _write_block3_deferred_status(
-    *,
-    output_dir: str | Path,
-    subexperiment_id: str,
-    experiment_name: str,
-    requested_ablation: str,
-) -> Block3DeferredExecutionResult:
-    resolved_output_dir = Path(output_dir).expanduser().resolve()
-    resolved_output_dir.mkdir(parents=True, exist_ok=True)
-    status_path = resolved_output_dir / f"{experiment_name}.deferred.json"
-    payload = {
-        "status": "deferred",
-        "supported": False,
-        "experiment_name": experiment_name,
-        "subexperiment_id": subexperiment_id,
-        "requested_ablation": requested_ablation,
-        "fit_surface": "stride.tl.fit",
-        "reason_code": "public_estimator_ablation_hook_unavailable",
-        "frozen_contract_reference": "docs/task_A/block3/scientific_contract.md §4.4",
-    }
-    status_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
-    return Block3DeferredExecutionResult(
-        subexperiment_id=subexperiment_id,
-        experiment_name=experiment_name,
-        requested_ablation=requested_ablation,
-        fit_surface="stride.tl.fit",
-        reason_code="public_estimator_ablation_hook_unavailable",
-        frozen_contract_reference="docs/task_A/block3/scientific_contract.md §4.4",
-        status_path=status_path,
-    )
-
-
 __all__ = [
     "BLOCK3_PACKET_BRIDGE_POLICY",
-    "Block3DeferredExecutionResult",
     "Block3InternalExecutionResult",
     "Block3RuntimeControls",
     "Block3Stage0ExecutionPlan",

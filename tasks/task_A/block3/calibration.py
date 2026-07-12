@@ -1,22 +1,22 @@
 """Calibration constants for Task A Block 3b internal Phase 3.
 
 Task and purpose:
-    Centralize calibration constants and interface placeholders used by the
-    `3B-1` and `3B-2` baseline scaffold.
+    Centralize calibration constants and interfaces used by the task-local
+    `3B-1` and `3B-2` UOT baseline.
 
 Relevant document anchors:
     - docs/task_A/spec.md §4.5.5-§4.5.6 and UOT calibration pseudocode
     - docs/task_A/block3/scientific_contract.md §4.3 and calibration closure notes
 
 Expected inputs and outputs:
-    Step 3 calibration will consume train-side patient profiles and return one
-    selected lambda. The target is train-side `mean(sum(min(x, y)))`; ties
-    select the smaller lambda; boundary hits are diagnostics, not automatic
-    failure.
+    Calibration consumes train-side patient profiles and returns one selected
+    lambda. The target is train-side `mean(sum(min(x, y)))`; ties select the
+    smaller lambda; boundary hits are diagnostics, not automatic failure.
 
 Internal Phase 3 boundary:
-    This module provides internal constants and scaffold interfaces only. It is
-    not a public runner, review workflow, or result-packet bridge authority.
+    This module provides Task A Block 3 comparator calibration only. It is not
+    part of the public STRIDE package and does not define a public runner,
+    review workflow, or result-packet bridge.
 """
 from __future__ import annotations
 

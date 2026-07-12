@@ -39,12 +39,14 @@ def build_core_ablation_rows(
                 cohort_inputs=cohort_inputs,
                 truths=truths,
                 runtime=resolved_runtime,
+                rerun_id=rerun.rerun_id,
             ),
             ablation_method_name: shared._run_stride_method(
                 cohort_inputs=cohort_inputs,
                 truths=truths,
                 runtime=resolved_runtime,
                 ablation_mode=ablation_mode,
+                rerun_id=rerun.rerun_id,
             ),
         }
         for method_name, outputs in outputs_by_method.items():
