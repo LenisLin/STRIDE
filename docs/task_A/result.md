@@ -155,13 +155,15 @@ mechanism, or method superiority.
 ## 6. Block 3 Boundary
 
 Historical Block 3 outputs were removed from the active Task A result root on
-2026-07-12. There is currently no formal Block 3 result available for analysis
-or plotting. A future full rerun must start from generator construction and
-`generator_validation`, then execute `a_benchmark`, `de_benchmark`, and the
-three true refit ablations under the frozen Block 3 contract. Objective-level
-private refit implementations now exist, but no Block 3 result becomes
-available until the new formal run completes. A generator-only or partially
-resumed run is not ablation evidence.
+2026-07-12. The replacement formal run is now complete under
+`/mnt/NAS_21T/ProjectResult/STRIDE/task_A/block3`: 10 reruns, 24/8 train/test
+splits, 10 reference fits, and 10 independent fits for each of the three
+objective ablations. The run manifest, cache checksums, fixed artifact row
+counts, method statuses, and 20 Figure 2 PDFs passed the execution audit.
+Reference arrays are shared consistently across 3B/3C outputs; recurrence
+ablation cohort output remains an unregularized diagnostic. These facts close
+the execution boundary only and do not by themselves establish method
+superiority or validate Block 1 biological findings.
 
 This memo does not claim literal time ordering, direct temporal transition,
 lineage tracing, direct proof that a state disappears or emerges in vivo,

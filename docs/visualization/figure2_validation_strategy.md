@@ -21,12 +21,11 @@ Use these root aliases in plotting scripts:
 | `B1` | `/mnt/NAS_21T/ProjectResult/STRIDE/task_A/block1` |
 | `B3` | `/mnt/NAS_21T/ProjectResult/STRIDE/task_A/block3` |
 
-The `B3` root is intentionally absent after the 2026-07-12 historical-output
-cleanup. Do not run Block 3-dependent figure sections until a complete formal
-rerun has recreated the required raw artifacts. Plotting code must fail on
-missing or incomplete Block 3 inputs rather than substitute historical rows.
-The rendering script requires `block3_run_manifest.json` with all sections
-complete before reading Block 3 tables.
+The `B3` root was recreated by the formal 2026-07-12 Block 3 run. Plotting code
+must fail on missing or incomplete Block 3 inputs rather than substitute
+historical rows. The rendering script requires `block3_run_manifest.json` with
+`execution_scope=formal_full_data` and all sections complete before reading
+Block 3 tables.
 
 ## Cross-Language Data Interface
 
