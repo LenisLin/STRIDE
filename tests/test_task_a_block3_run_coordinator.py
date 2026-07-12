@@ -116,6 +116,17 @@ def test_generator_bundle_checksum_corruption_fails(tmp_path: Path) -> None:
         _load_generator_bundle(path, cohort=cohort)
 
 
+def test_synthetic_truth_adata_is_pp_ready(tmp_path: Path) -> None:
+    cohort = _cohort(tmp_path)
+    rerun = _reruns()[0]
+    truths = [rerun.generator_truths[patient_id] for patient_id in rerun.test_patient_ids]
+
+    adata = execution._make_adata_for_truths(truths, cohort_inputs=cohort)
+
+    assert adata.obs["state_id"].tolist() == list(cohort.state_ids)
+    assert adata.n_obs == len(cohort.state_ids)
+
+
 def test_stride_cache_checksum_corruption_fails(tmp_path: Path) -> None:
     runtime = execution.Block3RuntimeControls(cache_dir=tmp_path / "cache")
     output = execution.Block3MethodOutput(

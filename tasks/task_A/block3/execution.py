@@ -57,6 +57,7 @@ import pandas as pd
 from anndata import AnnData
 
 from stride._schema import (
+    OBS_STATE_ID_KEY,
     STRIDE_CONFIG_KEY,
     STRIDE_FOV_OBSERVATIONS_KEY,
     STRIDE_RELATION_IDS_KEY,
@@ -1100,7 +1101,13 @@ def _make_adata_for_truths(
         columns=["patient_id", "timepoint", "fov_id", "domain_label"],
     )
     composition = np.vstack(composition_rows).astype(float, copy=False)
-    adata = AnnData(X=np.zeros((1, 1), dtype=float))
+    adata = AnnData(
+        X=np.zeros((len(cohort_inputs.state_ids), 1), dtype=float),
+        obs=pd.DataFrame(
+            {OBS_STATE_ID_KEY: np.asarray(cohort_inputs.state_ids)},
+            index=[f"state_scaffold_{state_id}" for state_id in cohort_inputs.state_ids],
+        ),
+    )
     adata.uns[STRIDE_UNS_KEY] = {
         STRIDE_CONFIG_KEY: {
             "source": "pre",
