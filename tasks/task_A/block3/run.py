@@ -581,16 +581,44 @@ def _write_execution_audit(
             )
     row_counts = {}
     method_sets = {}
+    native_frames = {}
     for subexperiment_id in ("3B-1", "3B-2", "3C-1", "3C-2", "3C-3"):
         name = _SECTION_NAMES[subexperiment_id]
         patient_frame = pd.read_csv(output_dir / "raw" / name / "patient_metrics.csv")
         summary_frame = pd.read_csv(output_dir / "raw" / name / "condition_summary.csv")
+        native_frames[name] = pd.read_csv(
+            output_dir / "raw" / name / "method_native_output_store.csv"
+        )
         row_counts[name] = {
             "patient_metrics": int(len(patient_frame)),
             "condition_summary": int(len(summary_frame)),
         }
         method_sets[name] = sorted(str(item) for item in patient_frame["method_name"].unique())
     native = pd.read_csv(output_dir / "raw" / "method_native_output_store.csv")
+    reference_columns = ("rerun_id", "patient_id", "A_json", "d_json", "e_json")
+    reference_frames = []
+    for frame in native_frames.values():
+        reference_frames.append(
+            frame.loc[frame["method_name"] == "stride_reference", reference_columns]
+            .sort_values(["rerun_id", "patient_id"])
+            .reset_index(drop=True)
+        )
+    reference_arrays_identical = all(
+        reference_frames[0].equals(frame) for frame in reference_frames[1:]
+    )
+    recurrence_native = native_frames["recurrence_ablation"]
+    recurrence_metadata = [
+        json.loads(value)
+        for value in recurrence_native.loc[
+            recurrence_native["method_name"] == "recurrence_ablation",
+            "metadata_json",
+        ]
+    ]
+    recurrence_provenance_valid = bool(recurrence_metadata) and all(
+        item.get("zeroed_objective_term") == "recurrence"
+        and item.get("fixed_denominator_policy") is True
+        for item in recurrence_metadata
+    )
     pdf_records = []
     if figure_dir is not None:
         pdf_paths = sorted(figure_dir.glob("*.pdf"))
@@ -627,6 +655,13 @@ def _write_execution_audit(
         "row_counts": row_counts,
         "method_sets": method_sets,
         "all_method_status_ok": bool(native["fit_status"].eq("ok").all()),
+        "reference_arrays_identical_across_sections": reference_arrays_identical,
+        "recurrence_ablation_provenance": {
+            "valid": recurrence_provenance_valid,
+            "zeroed_objective_term": "recurrence",
+            "fixed_denominator_policy": True,
+            "cohort_semantics": "unregularized_cohort_diagnostic",
+        },
         "pdfs": pdf_records,
     }
     destination = output_dir / "block3_execution_audit.json"
