@@ -259,6 +259,39 @@ def test_assemble_relation_result_builds_cohort_template_from_patient_mean() -> 
     assert result.cohort.metadata["template_source"] == "mean_of_fitted_patient_relations"
 
 
+def test_recurrence_ablation_marks_cohort_as_unregularized_diagnostic() -> None:
+    fit = _training_result()
+    metadata = dict(fit.loss_ledger.metadata)
+    metadata["objective_policy"] = {
+        "name": "recurrence_ablation",
+        "consistency_weight": 1.0,
+        "geometry_weight": 1.0,
+        "recurrence_weight": 0.0,
+        "fixed_block_denominators": True,
+    }
+    fit = TrainingResult(
+        parameters=fit.parameters,
+        loss_ledger=LossLedger(
+            total=fit.loss_ledger.total,
+            fit=fit.loss_ledger.fit,
+            prior=fit.loss_ledger.prior,
+            cohort=torch.tensor(0.0, dtype=torch.float64),
+            components=fit.loss_ledger.components,
+            metadata=metadata,
+        ),
+        run_info=fit.run_info,
+    )
+
+    result = assemble_relation_result(_relation(), fit)
+
+    assert result.cohort.metadata == {
+        "summary": "unregularized_cohort_diagnostic",
+        "template_source": "mean_of_fitted_patient_relations",
+        "dispersion_source": "loss.components.recurrence_raw",
+        "recurrence_regularized": False,
+    }
+
+
 def test_assemble_relation_result_rejects_patient_axis_mismatch() -> None:
     fit = _training_result()
     bad_parameters = RelationParameters(

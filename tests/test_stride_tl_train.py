@@ -17,8 +17,8 @@ from stride.tl._train import (
     TrainingResult,
     _compute_block_fov_cost_scale,
     _materialize_relation_inputs_once,
-    _populate_batched_block_context,
     _plateau_condition_met,
+    _populate_batched_block_context,
     _resolve_runtime_device,
     _scale_initial_parameters,
     train_relation,
@@ -484,6 +484,50 @@ def test_train_relation_runs_status_free_smoke_path(monkeypatch: pytest.MonkeyPa
     assert result.run_info.relative_improvement is not None
     assert result.run_info.random_seed is None
     assert result.trace is None
+
+
+def test_train_relation_passes_policy_through_warmup_main_and_final(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from stride.tl._objective import NO_GEOMETRY_OBJECTIVE_POLICY
+
+    relation, cost, scale = _relation_fixture()
+    context = LossContext(
+        obs_scale=torch.tensor(1.0, dtype=torch.float64),
+        geometry_scale=torch.tensor(1.0, dtype=torch.float64),
+        fov_cost_scales={"p1:subbag_0": 1.0},
+    )
+    policies: list[object] = []
+
+    monkeypatch.setattr(train_module, "_build_loss_context_once", lambda **kwargs: context)
+
+    def fake_compute_total_loss(*args: object, **kwargs: object) -> LossLedger:
+        policies.append(kwargs["objective_policy"])
+        parameters = args[0]
+        total = parameters.e.sum() * 0.01
+        return LossLedger(
+            total=total,
+            fit=total,
+            prior=total,
+            cohort=total,
+            components={"obs_raw": total, "geometry_raw": total},
+        )
+
+    monkeypatch.setattr(train_module, "compute_total_loss", fake_compute_total_loss)
+    monkeypatch.setattr(train_module, "WARMUP_STEPS", 1)
+    monkeypatch.setattr(train_module, "MAIN_MIN_STEPS", 1)
+    monkeypatch.setattr(train_module, "MAIN_MAX_STEPS", 1)
+    monkeypatch.setattr(train_module, "PLATEAU_PATIENCE", 1)
+
+    train_relation(
+        relation,
+        cost,
+        scale,
+        device="cpu",
+        objective_policy=NO_GEOMETRY_OBJECTIVE_POLICY,
+    )
+
+    assert policies == [NO_GEOMETRY_OBJECTIVE_POLICY] * 3
 
 
 def test_plateau_condition_uses_absolute_magnitude_and_disabled_relative_gate() -> None:

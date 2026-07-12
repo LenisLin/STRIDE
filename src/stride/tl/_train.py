@@ -36,6 +36,7 @@ from ._losses import (
     _ObservationBatchFallback,
     compute_total_loss,
 )
+from ._objective import REFERENCE_OBJECTIVE_POLICY, ObjectivePolicy
 from ._optimizer import (
     MAIN_LR,
     MAIN_MAX_STEPS,
@@ -156,6 +157,7 @@ def train_relation(
     cost_scale: float,
     *,
     device: Any = "cuda:0",
+    objective_policy: ObjectivePolicy = REFERENCE_OBJECTIVE_POLICY,
 ) -> TrainingResult:
     """Train one resolved relation and return an output handoff.
 
@@ -215,6 +217,7 @@ def train_relation(
             model,
             optimizer,
             prepared,
+            objective_policy=objective_policy,
         )
         if initial_total is None:
             initial_total = total
@@ -238,6 +241,7 @@ def train_relation(
             prepared.cost_matrix,
             prepared.cost_scale,
             context=prepared.context,
+            objective_policy=objective_policy,
         )
         total = _scalar_total(ledger.total, name="training total objective")
         if initial_total is None:
@@ -271,7 +275,11 @@ def train_relation(
     if latest_total is None or initial_total is None:
         raise ContractError("training produced no objective evaluation")
 
-    final_params, final_ledger, final_total = _final_state(model, prepared)
+    final_params, final_ledger, final_total = _final_state(
+        model,
+        prepared,
+        objective_policy=objective_policy,
+    )
     absolute_improvement, relative_improvement = _run_improvements(
         initial_total,
         final_total,
@@ -556,6 +564,8 @@ def _training_step(
     model: RelationModel,
     optimizer: torch.optim.Optimizer,
     prepared: _PreparedRelationFit,
+    *,
+    objective_policy: ObjectivePolicy,
 ) -> tuple[LossLedger, float]:
     """Run one full-batch objective/backward/optimizer step."""
     optimizer.zero_grad(set_to_none=True)
@@ -566,6 +576,7 @@ def _training_step(
         prepared.cost_matrix,
         prepared.cost_scale,
         context=prepared.context,
+        objective_policy=objective_policy,
     )
     total = _scalar_total(ledger.total, name="training total objective")
     ledger.total.backward()
@@ -598,6 +609,8 @@ def _plateau_condition_met(
 def _final_state(
     model: RelationModel,
     prepared: _PreparedRelationFit,
+    *,
+    objective_policy: ObjectivePolicy,
 ) -> tuple[RelationParameters, LossLedger, float]:
     with torch.no_grad():
         params = _detach_parameters(model.state())
@@ -607,6 +620,7 @@ def _final_state(
             prepared.cost_matrix,
             prepared.cost_scale,
             context=prepared.context,
+            objective_policy=objective_policy,
         )
         total = _scalar_total(ledger.total, name="final training total objective")
     return params, ledger, total

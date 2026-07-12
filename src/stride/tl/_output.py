@@ -128,7 +128,7 @@ def assemble_relation_result(
 
     support = _assemble_support(relation)
     loss = _assemble_loss_summary(fit.loss_ledger)
-    cohort = _assemble_cohort_result(relation, A, d, e, loss)
+    cohort = _assemble_cohort_result(relation, A, d, e, loss, fit.loss_ledger)
     provenance = _assemble_provenance(relation, fit)
     warnings = _assemble_relation_warnings(relation, fit)
 
@@ -370,6 +370,7 @@ def _assemble_cohort_result(
     d: np.ndarray,
     e: np.ndarray,
     loss: Mapping[str, Any],
+    loss_ledger: Any,
 ) -> CohortResult:
     # Cohort template is the recurrence objective consensus summary.
     recurrence_raw = None
@@ -378,6 +379,20 @@ def _assemble_cohort_result(
         recurrence_raw = components.get("recurrence_raw")
     if recurrence_raw is None:
         raise ContractError("loss components must include recurrence_raw for cohort output")
+    policy = loss_ledger.metadata.get("objective_policy", {})
+    recurrence_regularized = bool(policy.get("recurrence_weight", 1.0))
+    summary = (
+        "recurrence_regularized_mean_consensus"
+        if recurrence_regularized
+        else "unregularized_cohort_diagnostic"
+    )
+    cohort_metadata = {
+        "summary": summary,
+        "template_source": "mean_of_fitted_patient_relations",
+        "dispersion_source": "loss.components.recurrence_raw",
+    }
+    if not recurrence_regularized:
+        cohort_metadata["recurrence_regularized"] = False
     return CohortResult(
         relation_id=str(relation.relation_id),
         patient_ids=tuple(str(item) for item in relation.patient_ids),
@@ -386,11 +401,7 @@ def _assemble_cohort_result(
         template_e=e.mean(axis=0),
         support_n_patients=len(relation.patient_ids),
         dispersion=float(recurrence_raw),
-        metadata={
-            "summary": "recurrence_regularized_mean_consensus",
-            "template_source": "mean_of_fitted_patient_relations",
-            "dispersion_source": "loss.components.recurrence_raw",
-        },
+        metadata=cohort_metadata,
     )
 
 
@@ -488,7 +499,18 @@ def _assemble_provenance_loss(loss_ledger: Any, relation: RelationInput) -> Mapp
     geometry_effective = _required_float_component(components, "geometry_effective")
     consistency_raw = _required_float_component(components, "consistency_raw")
     recurrence_raw = _required_float_component(components, "recurrence_raw")
-    return {
+    policy = loss_ledger.metadata.get("objective_policy", {})
+    objective_constants = loss_ledger.metadata.get("objective_constants", {})
+    consistency_weight = float(policy.get("consistency_weight", 1.0))
+    recurrence_weight = float(policy.get("recurrence_weight", 1.0))
+    consistency_nominal_weight = float(objective_constants.get("rho_subbag", 1.0))
+    recurrence_payload = {
+        "raw": recurrence_raw,
+        "cohort_scaled": _scalarize_value(loss_ledger.cohort),
+    }
+    if not recurrence_weight:
+        recurrence_payload["regularized"] = False
+    payload = {
         "total": _scalarize_value(loss_ledger.total),
         "fit": _scalarize_value(loss_ledger.fit),
         "prior": _scalarize_value(loss_ledger.prior),
@@ -513,15 +535,19 @@ def _assemble_provenance_loss(loss_ledger: Any, relation: RelationInput) -> Mapp
             },
             "subbag_consistency": {
                 "raw": consistency_raw,
-                "effective": consistency_raw,
+                "effective": (
+                    consistency_weight * consistency_nominal_weight * consistency_raw
+                ),
                 "status": _subbag_consistency_status(relation),
             },
             "recurrence": {
-                "raw": recurrence_raw,
-                "cohort_scaled": _scalarize_value(loss_ledger.cohort),
+                **recurrence_payload,
             },
         },
     }
+    if policy.get("name") not in (None, "reference"):
+        payload["objective_policy"] = _scalarize_value(policy)
+    return payload
 
 
 def _assemble_optimizer_payload(run_info: Any) -> Mapping[str, Any]:

@@ -20,6 +20,11 @@ from stride.tl._losses import (
     _ObservationLoss,
     compute_total_loss,
 )
+from stride.tl._objective import (
+    NO_CONSISTENCY_OBJECTIVE_POLICY,
+    NO_GEOMETRY_OBJECTIVE_POLICY,
+    NO_RECURRENCE_OBJECTIVE_POLICY,
+)
 from stride.tl._parameters import RelationParameters
 from stride.tl._resolve import EvidenceBlock
 
@@ -194,6 +199,74 @@ def test_compute_total_loss_assembles_three_blocks(
         "normalization": "C_norm = C_raw / s_C",
         "s_C": 1.0,
     }
+
+
+@pytest.mark.parametrize(
+    ("policy", "expected_fit", "expected_prior", "expected_cohort"),
+    [
+        (NO_CONSISTENCY_OBJECTIVE_POLICY, 5.0, 3.5275, 1300.0),
+        (NO_GEOMETRY_OBJECTIVE_POLICY, 5.5, 3.5, 1300.0),
+        (NO_RECURRENCE_OBJECTIVE_POLICY, 5.5, 3.5275, 0.0),
+    ],
+)
+def test_objective_policy_zeros_only_requested_effective_term(
+    monkeypatch: pytest.MonkeyPatch,
+    policy: object,
+    expected_fit: float,
+    expected_prior: float,
+    expected_cohort: float,
+) -> None:
+    context = LossContext(
+        obs_scale=torch.tensor(1.0, dtype=torch.float64),
+        geometry_scale=torch.tensor(2.0, dtype=torch.float64),
+        fov_cost_scales={"b0": 1.0, "b1": 1.0, "b2": 1.0},
+    )
+    obs = _ObservationLoss(
+        raw=torch.tensor(2.0, dtype=torch.float64),
+        normalized=torch.tensor(5.0, dtype=torch.float64),
+        block_values=torch.tensor([2.0, 4.0, 8.0], dtype=torch.float64),
+        normalized_block_values=torch.tensor([2.0, 4.0, 8.0], dtype=torch.float64),
+        block_patient_ids=("p1", "p1", "p2"),
+    )
+    monkeypatch.setattr(losses_module, "_compute_observation_loss", lambda *a, **k: obs)
+    monkeypatch.setattr(
+        losses_module,
+        "_compute_open_loss",
+        lambda parameters: torch.tensor(7.0, dtype=torch.float64),
+    )
+    monkeypatch.setattr(
+        losses_module,
+        "_compute_geometry_loss",
+        lambda parameters, cost_matrix, cost_scale: torch.tensor(11.0, dtype=torch.float64),
+    )
+    monkeypatch.setattr(
+        losses_module,
+        "_compute_recurrence_loss",
+        lambda parameters: torch.tensor(13.0, dtype=torch.float64),
+    )
+
+    ledger = compute_total_loss(
+        _parameters(),
+        _blocks(),
+        torch.eye(2, dtype=torch.float64),
+        1.0,
+        context=context,
+        objective_policy=policy,
+    )
+
+    torch.testing.assert_close(ledger.fit, torch.tensor(expected_fit, dtype=torch.float64))
+    torch.testing.assert_close(ledger.prior, torch.tensor(expected_prior, dtype=torch.float64))
+    torch.testing.assert_close(
+        ledger.cohort,
+        torch.tensor(expected_cohort, dtype=torch.float64),
+    )
+    torch.testing.assert_close(
+        ledger.total,
+        (ledger.fit + ledger.prior + ledger.cohort) / 3.0,
+    )
+    assert float(ledger.components["geometry_raw"]) == 11.0
+    assert float(ledger.components["consistency_raw"]) == 0.5
+    assert float(ledger.components["recurrence_raw"]) == 13.0
 
 
 def test_compute_total_loss_real_sinkhorn_smoke() -> None:

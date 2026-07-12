@@ -20,6 +20,7 @@ from stride.pp import (
 )
 from stride.tl import CohortResult, FitResult, RelationResult, fit
 from stride.tl._losses import LossLedger
+from stride.tl._objective import NO_RECURRENCE_OBJECTIVE_POLICY
 from stride.tl._parameters import RelationParameters
 from stride.tl._train import TrainingResult, TrainingRunInfo
 
@@ -210,6 +211,39 @@ def test_tl_fit_public_entry_is_exported() -> None:
     assert CohortResult is not None
     assert RelationResult is not None
     assert tl.__all__ == ("fit", "FitResult", "RelationResult", "CohortResult")
+
+
+def test_public_fit_signature_has_no_objective_policy() -> None:
+    import inspect
+
+    assert tuple(inspect.signature(fit).parameters) == ("adata", "device")
+
+
+def test_private_fit_passes_nonreference_policy_to_training(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    policies: list[object] = []
+
+    def fake_train_relation(
+        relation,
+        _cost_matrix,
+        _cost_scale,
+        *,
+        device,
+        objective_policy,
+    ):
+        policies.append(objective_policy)
+        return _fake_training_result(relation.patient_ids)
+
+    monkeypatch.setattr(run_module, "train_relation", fake_train_relation)
+    with pytest.warns(UserWarning):
+        run_module._fit_with_objective_policy(
+            _ready_adata(),
+            device="cpu",
+            objective_policy=NO_RECURRENCE_OBJECTIVE_POLICY,
+        )
+
+    assert policies == [NO_RECURRENCE_OBJECTIVE_POLICY]
 
 
 def test_read_fit_slots_returns_fixed_pp_ready_payload() -> None:

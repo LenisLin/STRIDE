@@ -28,6 +28,7 @@ from stride._schema import (
 )
 from stride.errors import ContractError
 
+from ._objective import REFERENCE_OBJECTIVE_POLICY, ObjectivePolicy
 from ._output import FitResult, assemble_fit_result, assemble_relation_result
 from ._resolve import RelationInput, resolve_relation
 from ._train import train_relation
@@ -50,6 +51,23 @@ def fit(adata: AnnData, *, device: Any = "cuda:0") -> FitResult:
         relation_results: realized public relation outputs.
         warnings: compact skipped-support or runtime warning records.
     """
+    return _fit_with_objective_policy(
+        adata,
+        device=device,
+        objective_policy=REFERENCE_OBJECTIVE_POLICY,
+    )
+
+
+def _fit_with_objective_policy(
+    adata: AnnData,
+    *,
+    device: Any,
+    objective_policy: ObjectivePolicy,
+) -> FitResult:
+    """Run the formal estimator with a private controlled objective policy."""
+    if not isinstance(objective_policy, ObjectivePolicy):
+        raise TypeError("objective_policy must be an ObjectivePolicy")
+
     # slots: `.pp-ready` payload; correctness is delegated to `.pp.validate_ready`.
     # relation_results: realized relation outputs in declared relation order.
     runtime_device = _resolve_fit_device(device)
@@ -75,12 +93,21 @@ def fit(adata: AnnData, *, device: Any = "cuda:0") -> FitResult:
             fit_warnings.append(_relation_skip_warning(relation_input))
             continue
 
-        training_result = train_relation(
-            relation_input,
-            slots["cost_matrix"],
-            slots["cost_scale"],
-            device=runtime_device,
-        )
+        if objective_policy == REFERENCE_OBJECTIVE_POLICY:
+            training_result = train_relation(
+                relation_input,
+                slots["cost_matrix"],
+                slots["cost_scale"],
+                device=runtime_device,
+            )
+        else:
+            training_result = train_relation(
+                relation_input,
+                slots["cost_matrix"],
+                slots["cost_scale"],
+                device=runtime_device,
+                objective_policy=objective_policy,
+            )
         relation_results.append(
             assemble_relation_result(relation_input, training_result)
         )

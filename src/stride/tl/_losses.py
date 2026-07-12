@@ -13,6 +13,7 @@ from typing import Any
 
 import torch
 
+from ._objective import REFERENCE_OBJECTIVE_POLICY, ObjectivePolicy
 from ._parameters import RelationParameters, predict_target_composition
 from ._resolve import EvidenceBlock
 from ._sinkhorn import (
@@ -109,6 +110,7 @@ def compute_total_loss(
     cost_scale: float,
     *,
     context: Mapping[str, Any] | LossContext | None = None,
+    objective_policy: ObjectivePolicy = REFERENCE_OBJECTIVE_POLICY,
 ) -> LossLedger:
     """Compute the canonical three-block STRIDE objective.
 
@@ -136,17 +138,27 @@ def compute_total_loss(
     geometry_raw = _compute_geometry_loss(parameters, cost_matrix, cost_scale)
     recurrence_raw = _compute_recurrence_loss(parameters)
 
+    if not isinstance(objective_policy, ObjectivePolicy):
+        raise TypeError("objective_policy must be an ObjectivePolicy")
+
     geometry_normalized = geometry_raw / ctx.geometry_scale
-    geometry_effective = GEOMETRY_EFFECTIVE_WEIGHT * geometry_normalized
+    geometry_nominal = GEOMETRY_EFFECTIVE_WEIGHT * geometry_normalized
+    geometry_effective = objective_policy.geometry_weight * geometry_nominal
     consistency_raw = _compute_subbag_consistency(
         patient_ids=parameters.patient_ids,
         block_patient_ids=obs.block_patient_ids,
         normalized_block_losses=obs.normalized_block_values,
     )
 
-    fit = obs.normalized + RHO_SUBBAG * consistency_raw
+    consistency_effective = (
+        objective_policy.consistency_weight * RHO_SUBBAG * consistency_raw
+    )
+    recurrence_scaled = recurrence_raw / S_COHORT
+    recurrence_effective = objective_policy.recurrence_weight * recurrence_scaled
+
+    fit = obs.normalized + consistency_effective
     prior = (open_raw + geometry_effective) / 2.0
-    cohort = recurrence_raw / S_COHORT
+    cohort = recurrence_effective
     total = (fit + prior + cohort) / 3.0
 
     return LossLedger(
@@ -160,12 +172,23 @@ def compute_total_loss(
             "open_raw": open_raw,
             "geometry_raw": geometry_raw,
             "geometry_normalized": geometry_normalized,
+            "geometry_nominal": geometry_nominal,
             "geometry_effective": geometry_effective,
             "consistency_raw": consistency_raw,
+            "consistency_effective": consistency_effective,
             "recurrence_raw": recurrence_raw,
+            "recurrence_scaled": recurrence_scaled,
+            "recurrence_effective": recurrence_effective,
         },
         metadata={
             "objective_contract_version": OBJECTIVE_CONTRACT_VERSION,
+            "objective_policy": {
+                "name": objective_policy.name,
+                "consistency_weight": objective_policy.consistency_weight,
+                "geometry_weight": objective_policy.geometry_weight,
+                "recurrence_weight": objective_policy.recurrence_weight,
+                "fixed_block_denominators": True,
+            },
             "objective_constants": {
                 "rho_subbag": RHO_SUBBAG,
                 "geometry_effective_weight": GEOMETRY_EFFECTIVE_WEIGHT,
